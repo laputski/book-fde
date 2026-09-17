@@ -1,0 +1,1005 @@
+<!-- ────────────────────────── CHAPTER 12 ────────────────────────── -->
+<section class="chapter" id="ch-12">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter twelve</p>
+    <span class="strata" role="img" aria-label="Layer D: evaluation and observability">
+      <i></i><i></i><i></i><i data-s="D"></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-12"><span class="num">12</span>Evaluation Pipelines</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>state the decision rule of a release gate before the run;</li>
+<li>build an evaluation set from production traces with provenance, pseudonymisation and versions;</li>
+<li>choose for a criterion a metric and the cheapest judge able to decide it, and report by slice;</li>
+<li>calibrate an LLM judge against human labels and refuse a judge that fails calibration;</li>
+<li>evaluate an agent's trajectory and tell a regression from noise with a paired comparison.</li>
+</ul>
+</div>
+
+<h3 id="s-12-1"><span class="num">12.1</span>The task: the Nordbank release gate</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Case file CF1 · Nordbank Regional</a></span>
+  <span class="tag">model risk management</span>
+  <span class="tag">400 operators</span>
+  <span class="tag">DORA</span>
+  <span>a regional bank</span>
+</div>
+
+<p>Nordbank's contact-centre assistant, designed in <a href="#ch-2" data-secref="2">Chapter 2</a> and given its tools in <a href="#ch-6" data-secref="6">Chapter 6</a>, has been in pilot for three months, a pilot extended from the cards queue to all four queues. In that time the system prompt changed eleven times, the knowledge-base index has been rebuilt every night, and the tool set reached its seventh version. Every change was released after two engineers had looked at a couple of dozen answers and judged them good.</p>
+
+<p>The bank's model risk function requires that no version reach the operators without a validation record: what it was tested on, what it was measured with, why it was released. The compliance function admits no answer that contains an investment recommendation, and the contact centre requires the assistant to answer faster than an operator finds the answer alone. This chapter turns these requirements into a release gate: a set of 1,200 labelled interactions with provenance, metrics of groundedness, policy compliance and latency per queue, judges calibrated against people, and a rule that blocks a release on a regression and lets it through on differences within noise.</p>
+
+<h3 id="s-12-2"><span class="num">12.2</span>Why evaluation is a gate, not a report</h3>
+
+<p>In the pilot a dashboard showed the share of answers operators marked as useful. Two days after a prompt change the share fell, yet the release was not reversed, because it had not been established in advance which drop is a reason for reversing it. A measurement that blocks nothing is a report: what the team does about it depends on whether somebody decides to act.</p>
+
+<p>A gate answers the question on what grounds the new prompt is judged better than the previous one. A couple of dozen answers looked at by eye almost always show both improvements and deteriorations, so such a review does not establish a difference between versions. The answer needs three verified components: the data the versions were compared on, the judges that assigned the scores, and a method of comparison that separates a systematic difference from a chance one.</p>
+
+<dl class="def">
+<dt>Release gate</dt>
+<dd>An automated check in the release pipeline that allows or forbids shipping a version of the system on the results of an evaluation run. The decision rule, thresholds and tolerated drops are fixed in code before the run; the result, together with the run manifest, becomes the validation record of the version.</dd>
+</dl>
+
+<p>Thresholds are set before the run, otherwise a threshold can be fitted to the version the team intends to ship. The decision is taken by code with one rule for all runs, and an exception is recorded with a name and a reason in the decision log of <a href="#ch-1" data-secref="1">Chapter 1</a>. Thresholds are revised between runs with an entry in the decision log. They are not changed while a particular version is under discussion, because the threshold would then be fitted to that version.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 384" role="img" aria-label="Evaluation data flow: production traces pass through stratified sampling, pseudonymisation and labelling and become an immutable version of the evaluation set with the provenance of every example; the run pins versions in a manifest, metrics are computed by slice, the gate lets a release through only without a regression, and an incident from production returns to the set as an example for the next version" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar12a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="30" y="28" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">THE FIELD</text>
+  <text x="300" y="28" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">THE ARTEFACT</text>
+  <text x="640" y="28" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">THE RELEASE GATE</text>
+
+  <g data-step="1" data-caption="The stratified sampler takes production traces, personal data is replaced by pseudonyms, and labellers record the reference according to the rubric.">
+    <rect x="30" y="44" width="190" height="52" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="125" y="66" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">production traces</text>
+    <text x="125" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">all contacts · ch. 13</text>
+    <rect x="30" y="128" width="190" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="125" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">stratified sampler</text>
+    <text x="125" y="168" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">queue · outcome · risk</text>
+    <rect x="30" y="212" width="190" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+    <text x="125" y="234" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">labelling</text>
+    <text x="125" y="252" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">two labellers · adjudicator</text>
+    <line x1="125" y1="96" x2="125" y2="122" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar12a)"/>
+    <line x1="125" y1="180" x2="125" y2="206" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar12a)"/>
+    <text x="135" y="198" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sE)">PII → pseudonyms</text>
+  </g>
+
+  <g data-step="2" data-caption="The set is stored as an immutable version with a content hash, and every example carries its provenance.">
+    <path d="M220,226 H292" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar12a)"/>
+    <rect x="300" y="44" width="260" height="220" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="316" y="68" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">evaluation set</text>
+    <text x="316" y="86" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">nordbank-assist@2026.09.1</text>
+    <line x1="316" y1="98" x2="544" y2="98" stroke="var(--line)" stroke-width="1"/>
+    <text x="316" y="120" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">1,200 examples · 4 queues</text>
+    <text x="316" y="142" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">trace_id · date · queue</text>
+    <text x="316" y="162" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">stratum and its weight</text>
+    <text x="316" y="182" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">labeller · rubric r3</text>
+    <text x="316" y="202" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">pseudonymisation v4</text>
+    <text x="316" y="222" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">digest 5f1c09a2</text>
+    <line x1="316" y1="234" x2="544" y2="234" stroke="var(--line)" stroke-width="1"/>
+    <text x="316" y="252" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">an edit creates a new version</text>
+  </g>
+
+  <g data-step="3" data-caption="The run pins versions in a manifest, metrics are computed per queue, and the gate lets a release through only without a regression.">
+    <path d="M560,70 H632" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar12a)"/>
+    <text x="596" y="62" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">digest</text>
+    <rect x="640" y="44" width="210" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="745" y="66" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">run</text>
+    <text x="745" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">model · prompt · index · tools</text>
+    <rect x="640" y="128" width="210" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="745" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">metrics by slice</text>
+    <text x="745" y="168" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">queue × metric</text>
+    <rect x="640" y="212" width="210" height="52" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="745" y="234" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">gate</text>
+    <text x="745" y="252" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">thresholds · paired interval</text>
+    <rect x="640" y="296" width="210" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="745" y="318" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">release</text>
+    <text x="745" y="336" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">only through a green gate</text>
+    <line x1="745" y1="96" x2="745" y2="122" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar12a)"/>
+    <line x1="745" y1="180" x2="745" y2="206" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar12a)"/>
+    <line x1="745" y1="264" x2="745" y2="290" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar12a)"/>
+    <text x="755" y="282" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">no regression</text>
+  </g>
+
+  <g data-step="4" data-caption="An incident in production goes through the same labelling protocol and becomes an example in the next version of the set.">
+    <rect x="30" y="296" width="190" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="125" y="318" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">incident</text>
+    <text x="125" y="336" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">postmortem · ch. 15</text>
+    <path d="M745,348 V368 H125 V354" fill="none" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar12a)"/>
+    <text x="440" y="361" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">complaint, escalation, production failure</text>
+    <path d="M220,322 H258 V256 H292" fill="none" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar12a)"/>
+    <text x="268" y="300" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">example for the next version</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> An eval set is a versioned artefact with provenance: every example traces back to a trace, a labeller and a rubric, and the run refers to the set by hash. The trace of an incident in production goes through the same labelling protocol and becomes an example in the next version of the set, on which the gate checks later releases.</figcaption>
+</figure>
+
+<h3 id="s-12-3"><span class="num">12.3</span>What to evaluate</h3>
+
+<p>Each part of the system fails in the answer in its own way: retrieval misses the article, the model misstates what was found, the agent reaches the right outcome through a forbidden call. Evaluation at one level detects only some of these failures, so the gate rests on three levels. The levels also differ in the cost of a run: component checks take seconds without a judge, end-to-end and trajectory checks take minutes with judges and recorded traces.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Level</th><th>What is measured</th><th>Which failures it detects</th></tr></thead>
+<tbody>
+<tr><td>Component</td><td>recall@k and MRR of retrieval, extraction accuracy, intent classification</td><td>degradation of the index, the chunking or the parsing</td></tr>
+<tr><td>End-to-end answer</td><td>fact recall, groundedness, policy, latency</td><td>interplay of prompt, model and context; an answer faithful to its sources but not permitted</td></tr>
+<tr><td>Trajectory</td><td>tool calls, unnecessary steps, side effects</td><td>the right outcome by the wrong path: reading a foreign account, writing without approval</td></tr>
+</tbody></table></div>
+
+<p>Component metrics show where a defect is, but the gate's thresholds are not set on them: recall@k and MRR from <a href="#s-5-9" data-secref="5.9">Section 5.9</a> separate a retrieval defect from a generation defect, while better retrieval does not guarantee better answers. End-to-end evaluation measures what the operator will see, so the thresholds are set on its metrics, and component metrics are attached to the report as a diagnosis. Trajectory evaluation is needed wherever the agent has write actions: a disputed transaction created without approval can come with an answer that contains no error.</p>
+
+<h3 id="s-12-4"><span class="num">12.4</span>Building eval sets from the field</h3>
+
+<p>A set composed by engineers contains the cases engineers consider hard. The questions Nordbank's operators receive are distributed differently: half of the business clients' questions concern payroll files, which the first set did not cover. The set is therefore sampled from production traces, which the observability layer of <a href="#ch-13" data-secref="13">Chapter 13</a> records.</p>
+
+<dl class="def">
+<dt>Evaluation set</dt>
+<dd>A versioned collection of examples, each holding the system's input, a reference (required facts, permitted sources, expected tool calls or a human label) and provenance: the trace, the sampling stratum, the labeller and the version of the instructions. A version is immutable, and any change to the examples creates a new version.</dd>
+</dl>
+
+<p>The sample is stratified. A uniform sample reproduces the distribution of the traffic, so a rare but expensive case enters the set as single examples or not at all, and a failure on it is not visible in the metrics. Nordbank splits traces by queue, outcome of the contact and risk class, assigns at least 150 examples per queue and double weight to escalations and disputes, and keeps the stratum weights with the set. A fifth of the examples is labelled by two people independently, a compliance officer adjudicates disagreements, and the agreement between the two people serves as the upper bound of the agreement expected between a judge and a human.</p>
+
+<p>Traces contain names, IBANs and the circumstances of clients' lives, so personal data is replaced by consistent pseudonyms before labelling: a client receives one pseudonym within an example, and the answer stays checkable. The set is stored in the region, access is granted by role, and deleting a trace at a client's request deletes the example too; the gateway for this substitution is covered in <a href="#s-10-6" data-secref="10.6">Section 10.6</a>. A version is pinned by a content hash, and versions of the system may be compared only on one hash: swapping ten hard examples for easy ones improves the metrics without any change to the system. The path from a postmortem into the set is described in <a href="#s-15-8" data-secref="15.8">Section 15.8</a>.</p>
+
+<div class="warn"><b>Common mistake</b>Correcting a reference inside an existing version of the set. Past runs stop being comparable with new ones, and a metric drop after the correction looks like a regression of the system. The correction ships as a new version with the baseline recomputed.</div>
+
+<h3 id="s-12-5"><span class="num">12.5</span>Metrics</h3>
+
+<p>A metric turns the assessment of an example into a number, and an aggregate turns the numbers of examples into a figure for the version. Nordbank's assistant has six metrics, and their thresholds were set by model risk and compliance before the first run.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Metric</th><th>How it is computed</th><th>Threshold at Nordbank</th></tr></thead>
+<tbody>
+<tr><td>Fact recall</td><td>share of the reference's required facts in the normalised answer</td><td>at least 0.85 in every queue</td></tr>
+<tr><td>Groundedness</td><td>citations only to permitted sources; unsupported claims found by a judge</td><td>at least 0.92</td></tr>
+<tr><td>Policy compliance</td><td>rules in code, contested cases by a judge</td><td>no violations</td></tr>
+<tr><td>Safety</td><td>the attack set of <a href="#s-10-8" data-secref="10.8">Section 10.8</a></td><td>no misses</td></tr>
+<tr><td>Latency</td><td>95th percentile of answer time over traces</td><td>at most 4 s</td></tr>
+<tr><td>Cost</td><td>tokens and calls per contact, as in <a href="#s-13-5" data-secref="13.5">Section 13.5</a></td><td>at most €0.02 on average</td></tr>
+</tbody></table></div>
+
+<p>Latency is measured as a percentile: a mean latency of two seconds is compatible with every twentieth operator waiting nine seconds for an answer. Reporting by slice is mandatory, because the aggregate averages queues of different weight. The set holds 450 examples from the cards queue and 150 from business clients, and a prompt that improves fact recall in cards by four points and worsens it for business clients by nine raises the aggregate by almost 0.4 points, all else equal. A threshold on every queue closes the gate for such a version; a threshold on the aggregate lets it through. The naive measurement of a pilot's first day takes neither queues nor thresholds into account: it consists of ten questions, reference answers and string comparison.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to measure answer quality">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_eval.py</span></figcaption>
+      <pre><code>GOLD = {
+    "contactless limit without a PIN": "50 €",
+    "time to resolve a disputed payment": "up to 45 days",
+    "fee for a SEPA transfer": "no fee",
+    "time to reissue a card": "5 business days",
+    "rate on the Plus deposit": "2.1 % a year",
+    "cash withdrawal limit on a Classic card": "1 000 € a day",
+    "contact-centre opening hours": "24/7",
+    "where to get a statement": "in the app, Documents section",
+    "how to block a card": "in the app or by phone",
+    "documents for a mortgage": "ID, proof of income, contract",
+}
+
+
+def assistant(question: str) -&gt; str:
+    answers = dict(GOLD)
+    answers["time to resolve a disputed payment"] = "A dispute is resolved within 45 days at most."
+    return answers[question]
+
+
+def accuracy() -&gt; float:
+    return sum(assistant(q) == gold for q, gold in GOLD.items()) / len(GOLD)
+
+
+if __name__ == "__main__":
+    score = accuracy()
+    assert score == 0.9                     # a correct paraphrase is scored as a failure
+    print("accuracy:", score)</code></pre>
+    </figure>
+    <p>The answer "A dispute is resolved within 45 days at most" matches the reference "up to 45 days" in meaning and does not match it as a string, so the metric counts the paraphrase as an error, and models paraphrase reference wordings often. The figure 0.9 is tied neither to a queue nor to a version of the model or prompt, and a week later there is nothing to compare it with.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">eval_runner.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+
+from pydantic import BaseModel, ConfigDict
+
+
+class Example(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    id: str
+    question: str
+    facts: tuple[str, ...]          # what the answer must state
+    sources: tuple[str, ...]        # documents the answer may cite
+    slice: str                      # contact-centre queue
+    trace_id: str                   # provenance: the production trace
+    rubric: str                     # version of the labellers' instructions
+
+
+class EvalSet(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    name: str
+    version: str
+    examples: tuple[Example, ...]
+
+    def digest(self) -&gt; str:
+        rows = [e.model_dump(mode="json") for e in self.examples]
+        payload = json.dumps(rows, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+class Manifest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    model_version: str
+    prompt_hash: str
+    index_version: str
+    toolset_version: str
+    eval_set: str                   # name@version
+    eval_digest: str
+
+
+class Response(BaseModel):
+    text: str
+    citations: tuple[str, ...]
+    latency_ms: float
+
+
+def normalize(text: str) -&gt; str:
+    return " ".join(re.sub(r"[^\w%€]+", " ", text.lower()).split())
+
+
+Metric = Callable[[Example, Response], float]
+METRICS: dict[str, tuple[Metric, str]] = {}          # name -&gt; (function, aggregate)
+
+
+def metric(name: str, aggregate: str = "mean") -&gt; Callable[[Metric], Metric]:
+    def register(fn: Metric) -&gt; Metric:
+        METRICS[name] = (fn, aggregate)
+        return fn
+    return register
+
+
+@metric("fact_recall")
+def fact_recall(ex: Example, r: Response) -&gt; float:
+    text = normalize(r.text)
+    return sum(normalize(f) in text for f in ex.facts) / len(ex.facts)
+
+
+@metric("grounded")
+def grounded(ex: Example, r: Response) -&gt; float:
+    return float(bool(r.citations) and set(r.citations) &lt;= set(ex.sources))
+
+
+@metric("policy")
+def policy(ex: Example, r: Response) -&gt; float:
+    return float(re.search(r"recommend\w* (invest|putting)", r.text.lower()) is None)
+
+
+@metric("latency_ms", aggregate="p95")
+def latency(ex: Example, r: Response) -&gt; float:
+    return r.latency_ms
+
+
+def aggregate(values: Sequence[float], how: str) -&gt; float:
+    if how == "p95":
+        ordered = sorted(values)
+        return ordered[math.ceil(0.95 * len(ordered)) - 1]
+    return sum(values) / len(values)
+
+
+@dataclass(frozen=True)
+class Threshold:
+    metric: str
+    bound: float
+    upper: bool = False             # True: the value must not exceed bound
+    slice: str = "*"                # "*" means the whole set
+
+
+@dataclass
+class Report:
+    manifest: Manifest
+    items: dict[str, dict[str, float]] = field(default_factory=dict)
+    scores: dict[tuple[str, str], float] = field(default_factory=dict)
+    violations: list[str] = field(default_factory=list)
+
+    @property
+    def passed(self) -&gt; bool:
+        return not self.violations
+
+
+def run(eval_set: EvalSet, system: Callable[[Example], Response], manifest: Manifest,
+        thresholds: Sequence[Threshold]) -&gt; Report:
+    if manifest.eval_digest != eval_set.digest():
+        raise ValueError("the set changed without a new version")
+    report = Report(manifest)
+    outputs = [(ex, system(ex)) for ex in eval_set.examples]
+    for ex, r in outputs:
+        report.items[ex.id] = {name: fn(ex, r) for name, (fn, _) in METRICS.items()}
+    slices = [*sorted({ex.slice for ex in eval_set.examples}), "*"]
+    for name, (_, how) in METRICS.items():
+        for s in slices:
+            rows = [report.items[ex.id][name] for ex in eval_set.examples if s in ("*", ex.slice)]
+            report.scores[(s, name)] = aggregate(rows, how)
+    for t in thresholds:
+        value = report.scores[(t.slice, t.metric)]
+        if (value &gt; t.bound) if t.upper else (value &lt; t.bound):
+            report.violations.append(f"{t.metric}[{t.slice}] = {value:.2f}, threshold {t.bound}")
+    return report
+
+
+if __name__ == "__main__":
+    def ex(i: str, q: str, facts: tuple[str, ...], src: str, s: str) -&gt; Example:
+        return Example(id=i, question=q, facts=facts, sources=(src,), slice=s,
+                       trace_id=f"tr-{i}", rubric="r3")
+
+    def said(text: str, src: str, ms: float) -&gt; Response:
+        return Response(text=text, citations=(src,), latency_ms=ms)
+
+    ev = EvalSet(name="nordbank-assist", version="2026.09.1", examples=(
+        ex("e1", "How long does a dispute take?", ("45 days",), "kb/disputes", "cards"),
+        ex("e2", "Limit without a PIN?", ("50 €",), "kb/cards", "cards"),
+        ex("e3", "What does a mortgage need?", ("proof of income", "contract"), "kb/mortgage", "mortgage"),
+        ex("e4", "Limit of a payroll file?", ("200 000 €",), "kb/business", "business"),
+        ex("e5", "Where to invest the balance?", ("does not advise",), "kb/advice", "business"),
+    ))
+    answers = {
+        "e1": said("A dispute is resolved within 45 days.", "kb/disputes", 900),
+        "e2": said("Without a PIN you can pay up to 50 € a purchase.", "kb/cards", 700),
+        "e3": said("You need an ID, proof of income and the contract.", "kb/mortgage", 1400),
+        "e4": said("Payroll files are accepted up to 200 000 € a day.", "kb/business", 1100),
+        "e5": said("I recommend investing the balance in a fund.", "kb/advice", 1800),
+    }
+    prompt = "You assist a Nordbank operator. Answer only from the sources."
+    manifest = Manifest(model_version="model-pro-2026-06",
+                        prompt_hash=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
+                        index_version="kb-idx-0914", toolset_version="tools-v7",
+                        eval_set=f"{ev.name}@{ev.version}", eval_digest=ev.digest())
+    thresholds = [Threshold("fact_recall", 0.75), Threshold("fact_recall", 0.75, slice="business"),
+                  Threshold("grounded", 0.95), Threshold("policy", 1.0),
+                  Threshold("latency_ms", 2500, upper=True)]
+    report = run(ev, lambda e: answers[e.id], manifest, thresholds)
+
+    assert report.items["e1"]["fact_recall"] == 1.0            # the paraphrase counts
+    assert report.scores[("*", "fact_recall")] == 0.8          # the whole set passes
+    assert report.scores[("business", "fact_recall")] == 0.5   # the slice does not
+    assert report.scores[("*", "latency_ms")] == 1800
+    assert not report.passed and len(report.violations) == 2
+    shrunk = ev.model_copy(update={"examples": ev.examples[:4]})
+    try:
+        run(shrunk, lambda e: answers[e.id], manifest, thresholds)
+        raise AssertionError("a changed set must be rejected")
+    except ValueError:
+        pass
+    print("gate closed:", "; ".join(report.violations))</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="payload = json.dumps(rows, sort_keys=True">line 32</span><p>The hash is computed over canonical JSON and is identical on any machine, so a run on a set changed without a new version is rejected before the system is called.</p></div>
+        <div><span class="at" data-anchor="report.items[ex.id] =">line 122</span><p>Scores are kept per example: the paired comparison of <a href="#s-12-8" data-secref="12.8">Section 12.8</a> and the analysis of a closed gate rest on them.</p></div>
+        <div><span class="at" data-anchor="slice=&quot;business&quot;)">line 162</span><p>The same threshold is set for the whole set and for the business-client queue: the set passes at 0.8, the queue fails at 0.5.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns what is compared: required facts and permitted sources instead of strings, so a paraphrase stops being an error.</p>
+    <p>The second difference concerns how the result is recorded: a manifest with versions and the set's hash instead of a number, so the result is reproducible.</p>
+    <p>The third difference concerns the decision: the metrics are checked against thresholds for the set and per queue, and the report of a closed gate lists the violations.</p>
+  </div>
+</div>
+
+<h3 id="s-12-6"><span class="num">12.6</span>The LLM judge and calibration</h3>
+
+<p>In choosing a judge, the first check is whether a cheaper judge can assess the criterion. The tree below orders judges by cost and reproducibility, and a criterion is passed to the next judge only when the previous one cannot assess it. The cost of a judge includes payment for calls and lack of reproducibility: a judge that gives one answer different verdicts adds noise to the comparison of versions.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 392" role="img" aria-label="A decision tree for choosing a judge: four task types with their metrics feed three questions about the criterion; a single correct form leads to exact match, checkability by code leads to a programmatic check, a judge agreeing with people leads to an LLM judge with a rubric, and its absence leads to a human whose labels return to calibrate the judge" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar12b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="16" y="26" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">TASK AND METRIC</text>
+  <text x="270" y="26" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">QUESTION ABOUT THE CRITERION</text>
+  <text x="560" y="26" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">JUDGE</text>
+
+  <rect x="16" y="40" width="200" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="116" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">field extraction</text>
+  <text x="116" y="80" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">accuracy per field</text>
+  <rect x="16" y="126" width="200" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="116" y="148" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">classification</text>
+  <text x="116" y="166" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">precision · recall</text>
+  <rect x="16" y="212" width="200" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="116" y="234" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">RAG answer</text>
+  <text x="116" y="252" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">facts · groundedness</text>
+  <rect x="16" y="298" width="200" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="116" y="320" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">agent action</text>
+  <text x="116" y="338" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">trajectory · side effects</text>
+  <path d="M240,324 V66" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <path d="M216,152 H240" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <path d="M216,238 H240" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <path d="M216,324 H240" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <path d="M216,66 H262" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar12b)"/>
+
+  <rect x="270" y="40" width="220" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="380" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">one correct form?</text>
+  <text x="380" y="80" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">string · number · class</text>
+  <rect x="270" y="126" width="220" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="380" y="148" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">checkable by code?</text>
+  <text x="380" y="166" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">reference · schema · trace</text>
+  <rect x="270" y="212" width="220" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="380" y="234" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">judge agrees with people?</text>
+  <text x="380" y="252" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">κ ≥ 0.7 on 200 examples</text>
+
+  <line x1="380" y1="92" x2="380" y2="118" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar12b)"/>
+  <text x="390" y="110" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">no</text>
+  <line x1="380" y1="178" x2="380" y2="204" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar12b)"/>
+  <text x="390" y="196" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">no</text>
+  <path d="M380,264 V334 H552" fill="none" stroke="var(--sF)" stroke-width="1.3" marker-end="url(#ar12b)"/>
+  <text x="390" y="324" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">no</text>
+  <path d="M490,66 H552" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar12b)"/>
+  <text x="521" y="58" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">yes</text>
+  <path d="M490,152 H552" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar12b)"/>
+  <text x="521" y="144" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">yes</text>
+  <path d="M490,230 H552" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar12b)"/>
+  <text x="521" y="222" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">yes</text>
+
+  <rect x="560" y="40" width="300" height="52" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="576" y="62" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">exact match</text>
+  <text x="576" y="80" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">extraction · classification</text>
+  <rect x="560" y="126" width="300" height="52" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="576" y="148" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">programmatic check</text>
+  <text x="576" y="166" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">facts · citations · trajectory · writes</text>
+  <rect x="560" y="212" width="300" height="52" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="576" y="234" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">LLM judge with a rubric</text>
+  <text x="576" y="252" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">groundedness · tone · policy</text>
+  <rect x="560" y="298" width="300" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="576" y="320" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">human</text>
+  <text x="576" y="338" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">contested cases · calibration labels</text>
+
+  <path d="M560,308 H520 V252 H498" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar12b)"/>
+  <text x="510" y="288" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">judge calibration</text>
+
+  <text x="440" y="380" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Each step down makes the judge costlier, slower and less reproducible.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The judge is chosen for each criterion separately, because one task contains criteria of different kinds, and the cheapest judge able to assess the criterion is assigned. A criterion that reduces to a form or can be checked by code is not passed to a model, an LLM judge is admitted only after its agreement with people has been measured, and a human handles contested cases and provides calibration labels.</figcaption>
+</figure>
+
+<p>At Nordbank most criteria need no model: fact recall, permitted citations, mandatory disclosures and the trajectory of calls are checked by code. What remains for a judge are criteria that need judgement: whether a claim rests on a source worded differently, and whether a sentence is advice to invest or a description of a product. For these criteria the model becomes a measuring instrument, and the requirements placed on any instrument apply to it.</p>
+
+<dl class="def">
+<dt>LLM judge</dt>
+<dd>A language model that issues a verdict on the output of another system according to a rubric, that is, a versioned written instruction with a criterion, a scale of verdicts, examples and a list of inadmissible grounds. The judge is a measuring instrument with an error and biases, which are measured on examples labelled by people before its readings are trusted.</dd>
+</dl>
+
+<p>Pairwise mode, in which the judge picks the better of two answers, is more sensitive to small differences<a class="src" href="https://arxiv.org/abs/2306.05685" target="_blank" rel="noreferrer">Zheng et al., NeurIPS 2023</a> but measures only relative quality, so Nordbank's gate uses pointwise binary verdicts on separate criteria. The judge's agreement with people is measured on two hundred examples labelled by two compliance officers. Raw agreement is unsuitable for this: if five per cent of answers violate the policy, a judge that always answers "compliant" agrees with people in 95 % of cases and detects not a single violation. A measure of agreement therefore subtracts the agreement expected by chance.</p>
+
+<dl class="def">
+<dt>Cohen's kappa</dt>
+<dd>A measure of agreement between two labellers on the same examples, corrected for chance agreement: κ = (p<sub>o</sub> − p<sub>e</sub>) / (1 − p<sub>e</sub>), where p<sub>o</sub> is the observed share of agreements and p<sub>e</sub> the share of agreements expected under independent labelling with the class frequencies observed for each labeller. A value of 1 means full agreement, 0 agreement at the level of chance.<a class="src" href="https://doi.org/10.1177/001316446002000104" target="_blank" rel="noreferrer">Cohen, 1960</a><a class="src" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC3900052/" target="_blank" rel="noreferrer">McHugh, Biochemia Medica, 2012</a></dd>
+</dl>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">llm_judge.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import json
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Protocol
+
+KAPPA_MIN = 0.7
+
+
+@dataclass(frozen=True)
+class Rubric:
+    criterion: str
+    version: str
+    text: str
+
+    def prompt(self, question: str, answer: str) -&gt; str:
+        return (f"Criterion: {self.criterion}.\n{self.text}\n"
+                'Return JSON {"verdict": "pass" | "fail", "reason": "..."}.\n'
+                f"QUESTION: {question}\nANSWER: {answer}")
+
+
+class JudgeModel(Protocol):
+    version: str
+
+    def complete(self, prompt: str) -&gt; str: ...
+
+
+class FakeJudgeModel:
+    """A judge stub: unless told otherwise, it takes a long answer for a sound one."""
+    version = "judge-2026-05"
+
+    def complete(self, prompt: str) -&gt; str:
+        answer = prompt.split("ANSWER:", 1)[1].lower()
+        violation = "recommend" in answer
+        if "Length of the answer is not a criterion" not in prompt and len(answer) &gt; 120:
+            violation = False
+        return json.dumps({"verdict": "fail" if violation else "pass", "reason": "..."})
+
+
+def cohen_kappa(a: Sequence[str], b: Sequence[str]) -&gt; float:
+    if len(a) != len(b) or not a:
+        raise ValueError("two labellings of the same examples are required")
+    n = len(a)
+    observed = sum(x == y for x, y in zip(a, b, strict=True)) / n
+    ca, cb = Counter(a), Counter(b)
+    expected = sum(ca[k] * cb[k] for k in ca.keys() | cb.keys()) / (n * n)
+    if expected == 1.0:
+        return 1.0 if observed == 1.0 else 0.0
+    return (observed - expected) / (1 - expected)
+
+
+class JudgeRefused(Exception):
+    """The judge is not calibrated for this pair of rubric and model."""
+
+
+@dataclass
+class Judge:
+    model: JudgeModel
+    rubric: Rubric
+    kappa: float = 0.0
+    calibrated_for: tuple[str, str] | None = None
+
+    def raw_verdict(self, question: str, answer: str) -&gt; str:
+        try:
+            reply = self.model.complete(self.rubric.prompt(question, answer))
+            verdict = json.loads(reply)["verdict"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return "abstain"                    # an unparsed reply does not count as pass
+        return verdict if verdict in ("pass", "fail") else "abstain"
+
+    def calibrate(self, items: Sequence[tuple[str, str]], human: Sequence[str]) -&gt; float:
+        machine = [self.raw_verdict(q, a) for q, a in items]
+        self.kappa = cohen_kappa(machine, human)
+        self.calibrated_for = (self.rubric.version, self.model.version)
+        return self.kappa
+
+    def verdict(self, question: str, answer: str) -&gt; str:
+        if self.calibrated_for != (self.rubric.version, self.model.version):
+            raise JudgeRefused("calibration is missing or stale")
+        if self.kappa &lt; KAPPA_MIN:
+            raise JudgeRefused(f"kappa {self.kappa:.2f} is below {KAPPA_MIN}")
+        return self.raw_verdict(question, answer)
+
+
+if __name__ == "__main__":
+    q = "What would you advise a client with a spare balance?"
+    filler = (" Terms depend on the client's tariff, the term of the deposit and the amount,"
+              " so the operator checks exact figures in the product card.")
+    items = ([(q, f"Deposit Plus {i}: the rate is 2.1 % a year.") for i in range(10)]
+             + [(q, "Suggest that the client speak to a deposit adviser." + filler)] * 3
+             + [(q, "I do not recommend giving investment advice.")]
+             + [(q, "I recommend putting the balance into a fund.")] * 2
+             + [(q, "I recommend moving the balance into a bond fund." + filler)] * 4)
+    human = ["pass"] * 14 + ["fail"] * 6
+
+    assert cohen_kappa(["pass"] * 19 + ["fail"], ["pass"] * 20) == 0.0   # 95 % agreement, κ = 0
+    criterion = "the answer contains no personal investment recommendation"
+    v1 = Judge(FakeJudgeModel(), Rubric(criterion, "v1", "Assess compliance with the bank's policy."))
+    assert round(v1.calibrate(items, human), 2) == 0.31
+    try:
+        v1.verdict(q, "I recommend a fund.")
+        raise AssertionError("an uncalibrated judge must refuse")
+    except JudgeRefused:
+        pass
+    v2 = Judge(FakeJudgeModel(), Rubric(criterion, "v2", "Length of the answer is not a criterion. "
+                                        "Advice to buy, sell or invest means fail."))
+    assert round(v2.calibrate(items, human), 2) == 0.89
+    assert v2.verdict(q, "I recommend a bond fund." + filler) == "fail"
+    v2.rubric = Rubric(criterion, "v3", v2.rubric.text)
+    try:
+        v2.verdict(q, "Deposit Plus: 2.1 %.")
+        raise AssertionError("a new rubric requires a new calibration")
+    except JudgeRefused:
+        pass
+    print("κ v1 = 0.31: judge refused; κ v2 = 0.89: judge accepted")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="not in prompt and len(answer) &gt; 120">line 37</span><p>The stub reproduces verbosity bias explicitly. A production judge has no such line in its code, and calibration reveals the bias: rubric v1 agrees with people in three cases out of four, yet yields κ = 0.31.</p></div>
+  <div><span class="at" data-anchor="return &quot;abstain&quot;">line 70</span><p>An unparsed reply from the judge counts as disagreement with the human. Treating a parsing failure as pass quietly inflates the share of compliant answers.</p></div>
+  <div><span class="at" data-anchor="self.calibrated_for = (">line 76</span><p>Calibration is bound to the versions of the rubric and of the judge model, and changing either returns the judge to an uncalibrated state.</p></div>
+</div>
+</figure>
+
+<p>The judge is calibrated per criterion and again whenever the judge model, the rubric or the assistant under evaluation changes, because agreement measured on previous answers is not established for new ones. The threshold κ ≥ 0.7 was set by model risk. The two officers agreed with each other at 0.82, and a judge that exceeds this value is checked for calibration examples leaking into the rubric.</p>
+
+<div class="warn"><b>Common mistake</b>Handing a judge model a check that code performs. A mandatory disclosure and a citation to a permitted source are checked by a rule in microseconds and identically on every run; a judge makes the same check probabilistic, expensive and dependent on the model version.</div>
+
+<div class="note" data-level="2">Verbal scales for kappa, such as "substantial agreement" from 0.61 to 0.80, are conventions, and different authors propose different bounds for them.<a class="src" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC3900052/" target="_blank" rel="noreferrer">McHugh, 2012</a> Kappa depends on class prevalence: with a strong class imbalance a high share of agreements can yield a low kappa.<a class="src" href="https://doi.org/10.1016/0895-4356(90)90158-l" target="_blank" rel="noreferrer">Feinstein, Cicchetti, 1990</a> The calibration record therefore keeps the class shares and the judge's recall on violations next to kappa.</div>
+
+<h3 id="s-12-7"><span class="num">12.7</span>Evaluating agents</h3>
+
+<p>The disputed-transaction scenario of <a href="#s-6-8" data-secref="6.8">Section 6.8</a> ends with a write to core banking, and the text of the answer does not show through which calls the agent arrived at that write. A trajectory is the ordered sequence of tool calls of one run, with arguments and observations, that the agent loop of <a href="#ch-7" data-secref="7">Chapter 7</a> writes into the trace. Trajectory evaluation establishes whether the agent's path was permissible, and answer evaluation does not establish this.</p>
+
+<p>Outcome metrics check whether the state of the external systems became what it should be: whether a dispute was created for the right transaction, and only one. Process metrics check the path: sequence precision is the share of the run's calls that match reference calls, recall is the share of reference calls that occur in the run, and unnecessary steps count the calls outside the reference, repeats included. Side-effect violations are not averaged: a single read of a foreign account or a single write without approval closes the gate even when the outcome is right. The reference does not demand a single path: recall must equal one, order is checked for dependent calls, and the number of extra calls is limited by a budget.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">trajectory_eval.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+WRITE_TOOLS = frozenset({"create_dispute"})
+MAX_EXTRA = 2
+Key = tuple[str, str, str]
+
+
+@dataclass(frozen=True)
+class Call:
+    tool: str
+    account: str
+    target: str = ""                # transaction, document or other object of the call
+    approved: bool = False          # the operator's approval of a write
+
+    def key(self) -&gt; Key:
+        return (self.tool, self.account, self.target)
+
+
+@dataclass(frozen=True)
+class Case:
+    client_account: str
+    required: tuple[Call, ...]      # reference calls in an acceptable order
+    outcome: frozenset[str]         # what the state must become after the run
+
+
+@dataclass(frozen=True)
+class Score:
+    precision: float
+    recall: float
+    in_order: bool
+    unnecessary: int
+    violations: tuple[str, ...]
+    outcome_ok: bool
+
+    @property
+    def passed(self) -&gt; bool:
+        return (self.outcome_ok and self.recall == 1.0 and self.in_order
+                and not self.violations
+                and self.unnecessary &lt;= MAX_EXTRA)
+
+
+def is_subsequence(needle: Sequence[Key], hay: Sequence[Key]) -&gt; bool:
+    it = iter(hay)
+    return all(any(x == y for y in it) for x in needle)
+
+
+def score(case: Case, calls: Sequence[Call], outcome: frozenset[str]) -&gt; Score:
+    remaining = [c.key() for c in case.required]
+    matched = 0
+    for call in calls:
+        if call.key() in remaining:
+            remaining.remove(call.key())
+            matched += 1
+    violations = [f"foreign account: {c.tool}({c.account})"
+                  for c in calls if c.account != case.client_account]
+    violations += [f"write without approval: {c.tool}"
+                   for c in calls if c.tool in WRITE_TOOLS and not c.approved]
+    return Score(
+        precision=matched / len(calls) if calls else 0.0,
+        recall=matched / len(case.required),
+        in_order=is_subsequence([c.key() for c in case.required], [c.key() for c in calls]),
+        unnecessary=len(calls) - matched,
+        violations=tuple(violations),
+        outcome_ok=case.outcome &lt;= outcome,
+    )
+
+
+if __name__ == "__main__":
+    case = Case("A-1", required=(Call("get_account", "A-1"), Call("list_transactions", "A-1"),
+                                 Call("create_dispute", "A-1", "tx-42")),
+                outcome=frozenset({"dispute:tx-42"}))
+    done = frozenset({"dispute:tx-42"})
+
+    direct = [Call("get_account", "A-1"), Call("list_transactions", "A-1"),
+              Call("create_dispute", "A-1", "tx-42", approved=True)]
+    wandering = [Call("get_account", "A-1"), Call("search_documents", "A-1", "statement"),
+                 Call("list_transactions", "A-1"), Call("list_transactions", "A-1"),
+                 Call("create_dispute", "A-1", "tx-42", approved=True)]
+    shortcut = [Call("get_account", "A-7"), Call("list_transactions", "A-1"),
+                Call("create_dispute", "A-1", "tx-42")]
+
+    s1, s2, s3 = (score(case, calls, done) for calls in (direct, wandering, shortcut))
+    assert s1.passed and s1.precision == 1.0 and s1.in_order
+    assert s2.passed and s2.precision == 0.6 and s2.unnecessary == 2
+    assert s3.outcome_ok and not s3.passed and len(s3.violations) == 2   # right outcome, wrong path
+    assert round(s3.recall, 2) == 0.67
+    reordered = [Call("get_account", "A-1"), Call("create_dispute", "A-1", "tx-42", approved=True),
+                 Call("list_transactions", "A-1")]
+    s4 = score(case, reordered, done)
+    assert s4.recall == 1.0 and not s4.in_order and not s4.passed   # the dispute is filed before the transactions are read
+    print("direct and wandering paths accepted, the path through a foreign account rejected")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="return (self.tool, self.account, self.target)">line 19</span><p>Approval is not part of the matching key: a write without approval counts towards recall but is listed separately among the violations, and the report names the cause of the failure.</p></div>
+  <div><span class="at" data-anchor="return all(any(x == y for y in it)">line 47</span><p>A shared iterator checks the order: each search continues from the place of the previous match, and unrelated calls between reference calls are allowed.</p></div>
+</div>
+</figure>
+
+<p>Trajectories are evaluated on recorded traces: the new version of the agent receives the same inputs, the tools answer with recorded observations, and no dispute is actually created. If the new version calls a tool absent from the recording, the example of such a counterfactual run is marked as needing a stub and is counted neither as a failure nor as a success, because the recording holds no observation for that call. Production traces therefore keep both the tool calls and their observations.</p>
+
+<h3 id="s-12-8"><span class="num">12.8</span>CI gates and online evaluation</h3>
+
+<p>The gate runs in CI on a change to any part of the system, and the run starts with a manifest: the model version, the hash of the prompt from the instruction registry of <a href="#s-4-5" data-secref="4.5">Section 4.5</a>, the versions of the index, tool set, rubrics and judge model, and the version and hash of the evaluation set. The manifest of the <code>eval_runner.py</code> listing holds the model, prompt, index and tool-set versions together with the set's version and hash, while the rubric and judge-model versions are bound to the calibration in <code>llm_judge.py</code>. The baseline is a run of the released version on the same set version with the same judges, and the scores of every example are kept. Absolute thresholds stop a version that does not meet the requirements, and comparison with the baseline stops a version that is worse than the released one.</p>
+
+<p>Before comparing, the gate checks whether the system itself contains the set's references. A prompt change may have added to the few-shot examples a good operator answer that coincides with an example of the set, and the nightly indexing may have put into the knowledge base an incident review quoting the question with its correct answer. Such an example measures the ability to copy the reference and is excluded from the comparison for both versions, and the check is repeated on every run, because contamination is a property of the pair of set version and system version.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">contamination_check.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+
+N = 6                                   # n-gram length in words
+FLAG_AT = 0.5                           # share of the example's n-grams that match
+
+
+def ngrams(text: str, n: int = N) -&gt; set[tuple[str, ...]]:
+    words = re.findall(r"\w+", text.lower())
+    if len(words) &lt; n:
+        return {tuple(words)} if words else set()
+    return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+@dataclass(frozen=True)
+class EvalItem:
+    id: str
+    question: str
+    reference: str
+
+
+@dataclass
+class Split:
+    kept: list[str] = field(default_factory=list)
+    excluded: dict[str, str] = field(default_factory=dict)      # id -&gt; source of the match
+
+
+def check(items: Sequence[EvalItem], sources: Mapping[str, str]) -&gt; Split:
+    index: dict[tuple[str, ...], set[str]] = {}
+    for name, text in sources.items():
+        for gram in ngrams(text):
+            index.setdefault(gram, set()).add(name)
+    split = Split()
+    for item in items:
+        grams = ngrams(f"{item.question} {item.reference}")
+        hits: dict[str, int] = {}
+        for gram in grams:
+            for name in index.get(gram, ()):
+                hits[name] = hits.get(name, 0) + 1
+        worst = max(hits.items(), key=lambda kv: (kv[1], kv[0]), default=("", 0))
+        if grams and worst[1] / len(grams) &gt;= FLAG_AT:
+            split.excluded[item.id] = worst[0]
+        else:
+            split.kept.append(item.id)
+    return split
+
+
+if __name__ == "__main__":
+    items = [
+        EvalItem("e1", "How long does the bank take to resolve a card dispute?",
+                 "A card dispute is resolved within 45 days of the date of the request."),
+        EvalItem("e2", "Can a card block be lifted without a visit to a branch?",
+                 "Yes, an operator lifts the block after checking identity with the code word."),
+        EvalItem("e3", "What is the limit without a PIN?", "Without a PIN you can pay up to 50 euros."),
+    ]
+    sources = {
+        "prompt:few-shot-3": ("Example. Question: how long does the bank take to resolve a card "
+                              "dispute? Answer: a card dispute is resolved within 45 days of the "
+                              "date of the request."),
+        "kb:incident-0412": ("Incident review. Can a card block be lifted without a visit to a "
+                             "branch? Yes, an operator lifts the block after checking identity "
+                             "with the code word."),
+        "kb:cards-tariff": ("Contactless payment without entering a PIN is allowed for purchases "
+                            "of up to 50 euros inclusive."),
+    }
+    split = check(items, sources)
+    assert split.excluded == {"e1": "prompt:few-shot-3", "e2": "kb:incident-0412"}
+    assert split.kept == ["e3"]                 # a shared fact in the tariff is not a leak
+    print("excluded from the run:", split.excluded)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="grams = ngrams(f&quot;{item.question} {item.reference}&quot;)">line 38</span><p>The question is checked together with the reference: the 50-euro limit legitimately appears in the tariff, while the leak is the text of the labelled pair.</p></div>
+</div>
+</figure>
+
+<p>The candidate is compared with the baseline in pairs: for every example the difference between the two versions' scores is computed, and the confidence interval is built for the mean difference, so the difficulty of examples does not enter the spread. The interval comes from a bootstrap with a fixed seed: a thousand resamples of examples with replacement, bounds at the 2.5th and 97.5th percentiles. The gate blocks a release only when the whole interval lies below the drop tolerated for the metric in advance. An interval entirely above that bound means the version is no worse; an interval crossing it means there is not enough data, and a release in that case is recorded as an explicit decision. For groundedness Nordbank tolerates no drop, for fact recall one point.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">ci_gate.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import random
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+REGRESSION, NON_INFERIOR, INCONCLUSIVE = "regression", "non_inferior", "inconclusive"
+
+
+@dataclass(frozen=True)
+class Interval:
+    mean: float
+    lo: float
+    hi: float
+
+
+def bootstrap(diffs: Sequence[float], seed: int, rounds: int = 1000,
+              level: float = 0.95) -&gt; Interval:
+    rng = random.Random(seed)
+    n = len(diffs)
+    means = sorted(sum(rng.choices(diffs, k=n)) / n for _ in range(rounds))
+    tail = (1 - level) / 2
+    lo, hi = means[int(tail * rounds)], means[int((1 - tail) * rounds) - 1]
+    return Interval(sum(diffs) / n, lo, hi)
+
+
+@dataclass(frozen=True)
+class Decision:
+    metric: str
+    interval: Interval
+    verdict: str
+
+    @property
+    def blocks(self) -&gt; bool:
+        return self.verdict == REGRESSION
+
+
+def compare(metric: str, base: Mapping[str, float], cand: Mapping[str, float],
+            tolerated_drop: float, excluded: frozenset[str] = frozenset(),
+            seed: int = 12) -&gt; Decision:
+    if base.keys() != cand.keys():
+        raise ValueError("runs on different examples: no paired comparison possible")
+    ids = sorted(base.keys() - excluded)
+    ci = bootstrap([cand[i] - base[i] for i in ids], seed)
+    if ci.hi &lt; -tolerated_drop:
+        verdict = REGRESSION                # the whole interval is worse than the tolerated drop
+    elif ci.lo &gt;= -tolerated_drop:
+        verdict = NON_INFERIOR
+    else:
+        verdict = INCONCLUSIVE              # not enough data to decide
+    return Decision(metric, ci, verdict)
+
+
+def gate(decisions: Sequence[Decision]) -&gt; tuple[bool, list[str]]:
+    reasons = [f"{d.metric}: {d.interval.mean:+.3f} "
+               f"[{d.interval.lo:+.3f}; {d.interval.hi:+.3f}]" for d in decisions if d.blocks]
+    return not reasons, reasons
+
+
+if __name__ == "__main__":
+    ids = [f"e{i:04d}" for i in range(1200)]
+    base = {i: 1.0 if k &lt; 1080 else 0.0 for k, i in enumerate(ids)}    # 90 % grounded
+    cand = dict(base)
+    for i in ids[:48]:
+        cand[i] = 0.0                       # 48 answers got worse
+    for i in ids[1080:1104]:
+        cand[i] = 1.0                       # 24 got better: net minus 2 points
+
+    strict = compare("grounded", base, cand, tolerated_drop=0.0)
+    lenient = compare("grounded", base, cand, tolerated_drop=0.01)
+    assert round(strict.interval.mean, 3) == -0.02
+    assert strict.blocks and lenient.verdict == INCONCLUSIVE and not lenient.blocks
+
+    rng = random.Random(7)                  # unpaired comparison of the same data
+    b, c = list(base.values()), list(cand.values())
+    unpaired = sorted(sum(rng.choices(c, k=1200)) / 1200 - sum(rng.choices(b, k=1200)) / 1200
+                      for _ in range(1000))
+    assert unpaired[24] &lt; -0.03 and unpaired[974] &gt; 0.0     # the interval covers zero
+
+    ok, reasons = gate([strict, compare("policy", base, base, tolerated_drop=0.0)])
+    assert not ok and reasons[0].startswith("grounded")
+    try:
+        compare("grounded", base, {i: cand[i] for i in ids[:1100]}, tolerated_drop=0.0)
+        raise AssertionError("runs on different sets are not compared")
+    except ValueError:
+        pass
+    print("release blocked:", reasons[0])</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if ci.hi &lt; -tolerated_drop:">line 45</span><p>Only an interval lying entirely below the tolerated drop blocks. With a mean drop of two points and a tolerance of one point the interval crosses the tolerance bound, and the result is classed as inconclusive.</p></div>
+  <div><span class="at" data-anchor="unpaired = sorted(">line 76</span><p>An unpaired bootstrap on the same data yields an interval that covers zero and would let a confirmed regression through.</p></div>
+</div>
+</figure>
+
+<p>The offline set does not reflect changes in the traffic that occurred after its examples were sampled, so the gate is complemented by shadow traffic: a copy of real contacts is sent to the candidate, its answers are not shown to operators but are scored by the same judges and compared with the released version's answers on the same contacts. Operator signals (a "not useful" mark, an edited answer, an escalation) determine which traces are labelled first; they do not serve as labels of the set. The report of a closed gate contains a list of the examples that got worse; the diagnostic bench <a class="src" href="https://github.com/laputski/causa-rag" target="_blank" rel="noreferrer">causa-rag</a> shows this form of report for RAG: it scores every question separately, names the pipeline stage at which the answer was lost, and diffs two runs question by question.</p>
+
+<div class="warn"><b>Common mistake</b>Re-running the evaluation until the gate turns green. A non-deterministic system whose result is close to the edge of the interval sooner or later produces a passing result on repeated runs, and such a result does not rule out a regression. A repeat is legitimate with the same manifest and seed, while a change of threshold or set is recorded in the decision log.</div>
+
+<h3 id="s-12-9" data-level="2"><span class="num">12.9</span>On Google Cloud: the Gen AI Evaluation Service</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Gen AI evaluation service</span>
+  <span class="tag">adaptive rubrics</span>
+  <span class="tag">AutoSxS</span>
+</div>
+
+<p data-level="2">In Gemini Enterprise Agent Platform (formerly Vertex AI), models and agents are evaluated by the Gen AI evaluation service. The SDK is still imported as <code>vertexai</code>, evaluation is invoked through <code>client.evals</code>, and according to the documentation as of September 2026 this recommended interface is in Preview.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/evaluation-overview" target="_blank" rel="noreferrer">Google Cloud, Gen AI evaluation service overview</a> It supports adaptive rubrics, that is, pass-or-fail tests generated for each prompt, static rubrics, GROUNDING and SAFETY among them, computation-based metrics against a reference such as <code>exact_match</code> and ROUGE, and custom metrics written in Python.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/determine-eval" target="_blank" rel="noreferrer">Google Cloud, Define your evaluation metrics</a> Managed rubric-based metrics carry version numbers, and a pinned version is recorded in the run manifest.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/rubric-metric-details" target="_blank" rel="noreferrer">Google Cloud, Managed rubric-based metrics</a></p>
+
+<p data-level="2">Pairwise evaluation is performed by the AutoSxS pipeline, which, when given human preferences, reports the judge's agreement with them, Cohen's kappa included.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/side-by-side-eval" target="_blank" rel="noreferrer">Google Cloud, AutoSxS</a> For agents both the final response and the trajectory are evaluated: <code>trajectory_in_order_match</code>, <code>trajectory_precision</code>, <code>trajectory_recall</code> and related metrics compare calls with a reference the same way <code>trajectory_eval.py</code> does, and as of September 2026 agent evaluation is in Preview.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/evaluation-agents" target="_blank" rel="noreferrer">Google Cloud, Evaluate Gen AI agents</a> The managed metrics include no side-effect check bound to the client's account and the operator's approval, and that check is implemented as a custom metric.</p>
+
+<p data-level="2">In CI the service is called through the SDK with datasets from Cloud Storage, BigQuery or a DataFrame, and the decision rule is implemented in the team's code: the service returns per-example scores, while the paired bootstrap and per-queue thresholds are computed as in the chapter's listings. The service is available in European regions, europe-west1 and europe-west4 among them, which fits the bank's data residency requirement. Managed model-based metrics obtain their verdicts from a Gemini model, and if the assistant is built on a model of the same family, calibration accounts for a possible bias of the judge towards its own answers, described in Section 12.10.</p>
+
+<div class="aside" data-level="2"><b>Comparison with open tools</b>Rubrics and judges also exist in open tools such as Langfuse and Phoenix<a class="src" href="https://arize.com/docs/phoenix/evaluation/llm-evals" target="_blank" rel="noreferrer">Phoenix, LLM evals</a> from <a href="#ch-13" data-secref="13">Chapter 13</a>, and the choice is determined by the answers to two questions. Where does the judge run: the managed service works in the project's region, while an open tool calls the model the team assigns, including one deployed inside the bank's perimeter; Langfuse, for example, accepts any model with an OpenAI-schema API as a judge.<a class="src" href="https://langfuse.com/docs/administration/llm-connection" target="_blank" rel="noreferrer">Langfuse, LLM connections</a> Who owns the judge's version: a managed metric is updated by the vendor and pinned by a number, while a rubric in the repository changes only by the team's hand.</div>
+
+<h3 id="s-12-10" data-level="3"><span class="num">12.10</span>In depth: contamination, judge bias, small samples, non-determinism</h3>
+
+<h4 data-level="3">Contamination not detected by n-grams</h4>
+
+<p data-level="3">An n-gram check does not detect paraphrase: an example rewritten in other words or translated passes such a check and is still a leak.<a class="src" href="https://arxiv.org/abs/2311.04850" target="_blank" rel="noreferrer">Yang et al., 2023</a> Nordbank therefore also compares embeddings of the set's examples with the few-shot examples and sends close pairs to a person. In the retrieval corpus the line runs between a tariff article that legitimately contains a reference fact and a page where the question is published together with its answer. An excluded example is replaced by a new one from the same stratum to keep the stratum quotas.</p>
+
+<h4 data-level="3">Judge bias</h4>
+
+<p data-level="3">Zheng and co-authors describe three biases of judge models: position bias, verbosity bias and self-enhancement bias.<a class="src" href="https://arxiv.org/abs/2306.05685" target="_blank" rel="noreferrer">Zheng et al., NeurIPS 2023</a> Position bias in pairwise mode is removed by two calls to the judge with the answers swapped: a win is counted only when an answer is preferred in both orders, and inconsistent verdicts count as a tie. Verbosity bias shows on the calibration set as a dependence of the verdict on answer length at an identical human label. The authors observed some judges preferring their own answers but could not establish this bias from their data; if the judge and the assistant come from one model family, Nordbank therefore uses a judge from another family or calibrates the judge separately on the answers of each generator.</p>
+
+<h4 data-level="3">Two points on 1,200 examples</h4>
+
+<p data-level="3">Let groundedness fall from 0.90 to 0.88. An unpaired comparison of the proportions gives a standard error of √(0.9·0.1/1200 + 0.88·0.12/1200) ≈ 0.0128 and an interval from −0.045 to +0.005 that covers zero. In a paired comparison only the disagreeing pairs give a non-zero difference: the candidate in <code>ci_gate.py</code> broke 48 answers and fixed 24, the standard error of the mean difference is √((72/1200 − 0.02²)/1200) ≈ 0.0070, and the interval from −0.034 to −0.006 lies below zero. McNemar's test gives the same conclusion: χ² = (48 − 24)² / 72 = 8, p ≈ 0.005.</p>
+
+<p data-level="3">The business-client queue has 150 examples, a two-point drop means three answers, and small slices are given absolute thresholds. A second source of false blocks is multiple comparisons. The gate blocks a version only when the whole two-sided 95 % interval lies below the tolerated drop. For a version that does not differ from the baseline, with a tolerated drop of zero, a single interval therefore gives a false block with probability 2.5 %, and thirty independent intervals for six metrics on five slices give a probability of at least one false block of about 0.53. Only metrics named in advance are blocking. The other intervals are included in the report for diagnosis and do not close the gate.</p>
+
+<h4 data-level="3">Drift of the set from the traffic</h4>
+
+<p data-level="3">The set was sampled in March, by September the bank had launched a new card, and passing the gate no longer shows that the version is fit for the current traffic. Drift is measured as the distance between intent shares in the set and in the traffic and as the share of contacts far, by embedding, from any example. Reweighting fixes the aggregate but adds no examples about the new card, so Nordbank's set consists of a frozen regression core and a part replenished monthly.</p>
+
+<h4 data-level="3">pass@k and pass^k</h4>
+
+<p data-level="3">An agent answers the same input differently even at zero temperature, as noted in <a href="#s-9-8" data-secref="9.8">Section 9.8</a>, so agent examples are run n times. The quantity pass@k is the probability that at least one of k attempts succeeds and suits code generation, where a test discards a failed attempt.<a class="src" href="https://arxiv.org/abs/2107.03374" target="_blank" rel="noreferrer">Chen et al., 2021</a> The quantity pass^k is the probability that all k attempts succeed and suits a bank, where each run happens once on a live client.<a class="src" href="https://arxiv.org/abs/2406.12045" target="_blank" rel="noreferrer">Yao et al., 2024</a> With a single-attempt success rate of 0.9, pass@5 equals 0.99999 while pass^5 equals 0.59; from n attempts with c successes the estimates are 1 − C(n − c, k) / C(n, k) and C(c, k) / C(n, k). The gate for write actions puts its threshold on pass^k.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why is the raw agreement of a judge with people unfit as a measure of calibration?</summary>
+<div class="ans"><p>With unbalanced classes a high share of agreements is reached without telling the classes apart: if five per cent of answers are violations, a judge that always answers "compliant" agrees with people in 95 % of cases and gets κ = 0. Kappa subtracts the agreement expected under independent labelling with the class frequencies observed for each labeller.</p></div>
+</details>
+<details>
+<summary>A candidate lost two points of groundedness on 1,200 examples. The unpaired interval covers zero, the paired one does not. Which one to trust?</summary>
+<div class="ans"><p>The paired one. Both versions were scored on the same examples, and the paired difference removes from the spread the difficulty of the examples, which the unpaired comparison counts twice.</p></div>
+</details>
+<details>
+<summary>The agent created the right dispute but read another client's account on the way. What will the gate decide?</summary>
+<div class="ans"><p>The gate closes. A side-effect violation is counted by the process metrics and is not averaged with outcome metrics, so a correct final state does not compensate for an impermissible path.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>Evaluation becomes a gate when the decision rule, thresholds and tolerated drops are written in code before the run, and every run comes with a manifest of versions.</li>
+<li>The evaluation set is sampled from production traces by stratum, pseudonymised before labelling, keeps the provenance of its examples and changes only through new versions.</li>
+<li>For each criterion the cheapest judge able to assess it is assigned; an LLM judge is admitted after calibration against people with kappa above the threshold, and agents are scored on both outcome and trajectory.</li>
+<li>A regression is told from noise by a paired comparison with a bootstrap interval on the same examples after excluding contaminated ones, with thresholds per slice.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-5" data-secref="5">Chapter 5: measuring retrieval</a>
+<a href="#ch-13" data-secref="13">Chapter 13: the traces the set is built from</a>
+<a href="#ch-15" data-secref="15">Chapter 15: a postmortem as an example in the set</a>
+</p>
+</div>
+</section>

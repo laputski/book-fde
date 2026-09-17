@@ -1,0 +1,943 @@
+<!-- ────────────────────────── CHAPTER 4 ────────────────────────── -->
+<section class="chapter" id="ch-4">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter four</p>
+    <span class="strata" role="img" aria-label="Layer B: the model and agent layer">
+      <i></i><i data-s="B"></i><i></i><i></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-4"><span class="num">4</span>Context Engineering</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>decompose the context of a request into blocks with a source, a size and a priority;</li>
+<li>set a budget for the window and truncate the context by whole blocks according to their priority;</li>
+<li>draw the cache boundary so that the prefix matches byte for byte across requests;</li>
+<li>keep memory as facts with a provenance and a lifetime;</li>
+<li>record the composition of every context so that a cache miss and a wrong answer are explained from the log.</li>
+</ul>
+</div>
+
+<h3 id="s-4-1"><span class="num">4.1</span>The task: agent assist at Orion</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-4" data-secref="G.4">Case file CF4 · Orion Telecom</a></span>
+  <span class="tag">BSS/OSS</span>
+  <span class="tag">billing</span>
+  <span class="tag">contact-centre chat</span>
+  <span>telecom</span>
+</div>
+
+<p>The Orion Telecom contact centre takes around forty thousand chats a day, and an operator runs up to four conversations at once. The operator's assistant proposes an answer in real time: it sees the subscriber's profile from the CRM, the charges from billing, the knowledge base articles and the history of the case, and it produces a draft that the operator edits and sends. The model is the same for all five business units, while the data and the rules of each unit are its own.</p>
+
+<p>The constraints of the task are expressed in tokens and milliseconds. One request is allowed thirty-two thousand input tokens although the model accepts more: the price of a chat and the time to the first token both grow with the length of the input, and the platform charges the business units for what they consume. Assembling the context fits into four hundred milliseconds, because the suggestion has to appear before the operator finishes typing the answer unaided. Both quantities are checked on every request.</p>
+
+<p>This chapter covers the part of the solution that determines the content of the model's window: the context assembler, the instruction registry, memory with provenance and the record of composition. The quality of retrieval, that is, choosing three passages out of a hundred thousand, is covered in <a href="#ch-5" data-secref="5">Chapter 5</a>, and the loop that calls tools on top of the assembled context in <a href="#ch-7" data-secref="7">Chapter 7</a>.</p>
+
+<h3 id="s-4-2"><span class="num">4.2</span>Why the composition of the context affects the answer more than wording</h3>
+
+<p>Having received a wrong suggestion, a team usually starts by rewriting the system instruction. Rewording changes the style of the answer, sometimes its format and rarely its factual correctness. A factual error is usually produced by the composition of the context: the model answers correctly with respect to the data it was shown, but that data is incomplete or wrong.</p>
+
+<dl class="def">
+<dt>Context engineering</dt>
+<dd>The design of which data enters the model's context window, in which order, and what is excluded when the budget runs short. Unlike prompt engineering, which works on the wording of an instruction, context engineering works on the composition, the order and the size of blocks, and therefore determines the quality of the answer, the cost of the call and the cache hit rate at the same time.</dd>
+</dl>
+
+<p>An analysis of three complaints from Orion's operators shows the causes of the errors. In the first, the context held a subscriber profile read from a nightly mart, and the model reported a tariff withdrawn a week earlier. In the second, three knowledge base articles entered the context, two of them belonging to another business unit, and the model mixed up the refund rules. In the third, the block with the charges had been evicted by the chat history, and the model answered about a charge it had never seen. None of the three is removed by rewording an instruction.</p>
+
+<p>The working proposition of this chapter: the context window is a budgeted, ordered and cacheable resource. The budget determines how much data fits into the window, the order determines what ends up in the stable beginning, and cacheability determines the cost of the chosen order. <a href="#ch-3" data-secref="3">Chapter 3</a> treated a model call as a dependency with a contract; the context is the input of that contract, and the unit of measure remains the token of <a href="#s-3-3" data-secref="3.3">Section 3.3</a>.</p>
+
+<div class="warn"><b>Common mistake</b>Comparing two wordings of an instruction without fixing the composition of the context. If the set of retrieved articles or the length of the history changed between runs, the comparison measures a difference in data, and the effect of the instruction cannot be separated from it. A run on an evaluation set fixes the composition and the order of blocks in the same way as it fixes the model version.</div>
+
+<h3 id="s-4-3"><span class="num">4.3</span>Anatomy of the context</h3>
+
+<p>The content of the window divides into five kinds that differ in source, rate of change and size. The system instructions set the role, the boundaries and the format of the answer. The tool definitions describe what the agent may call and come from <a href="#ch-6" data-secref="6">Chapter 6</a>. The retrieved passages contain information absent from the model. The dialogue history contains what has already been said. The scratchpad keeps the intermediate results of the agent's own work.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Block</th><th>Source</th><th>Tokens</th><th>Rate of change</th><th>Zone</th></tr></thead>
+<tbody>
+<tr><td>System instructions</td><td>instruction registry</td><td>1,180</td><td>a release every few weeks</td><td>prefix</td></tr>
+<tr><td>Tool definitions</td><td>MCP server</td><td>2,400</td><td>a release every few weeks</td><td>prefix</td></tr>
+<tr><td>Format and escalation policy</td><td>instruction registry</td><td>620</td><td>a release every few weeks</td><td>prefix</td></tr>
+<tr><td>Subscriber profile</td><td>CRM</td><td>300</td><td>every chat</td><td>suffix</td></tr>
+<tr><td>Charges and debits</td><td>billing</td><td>740</td><td>every chat</td><td>suffix</td></tr>
+<tr><td>Knowledge base passages</td><td>retrieval</td><td>5,900</td><td>every turn</td><td>suffix</td></tr>
+<tr><td>Memory summary</td><td>memory</td><td>260</td><td>every turn</td><td>suffix</td></tr>
+<tr><td>Last turns of the chat</td><td>session</td><td>1,850</td><td>every turn</td><td>suffix</td></tr>
+<tr><td>The operator's question</td><td>interface</td><td>40</td><td>every turn</td><td>suffix</td></tr>
+</tbody></table></div>
+
+<p>The agent's scratchpad is absent from the table because it is empty in agent assist: the suggestion is produced by a single call. In the long-running scenarios of <a href="#ch-9" data-secref="9">Chapter 9</a> the scratchpad grows faster than any other block, since the result of every tool call is written into it, and it is therefore the first to push the size of the context beyond the window. The budgeting rules below apply to it first of all.</p>
+
+<p>The blocks sum to thirteen thousand two hundred and ninety tokens against a budget of thirty-two thousand. The margin of two and a half times is exhausted by a long chat: a three-hour history and five articles instead of three take it up completely. The margin exists so that truncation happens predictably and in a place chosen in advance. The three top blocks of the table form the stable prefix, identical in every request, and the line beneath them, the cache boundary, separates it from the volatile part; both terms are defined in <a href="#s-4-5" data-secref="4.5">Section 4.5</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="A stack of the context window's blocks with their sizes in tokens: three blocks of the stable prefix on top, a horizontal cache boundary beneath them and six volatile blocks below, with the totals of both zones and the free remainder of the window labelled on the right" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="34" y="36" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">WINDOW 32,000 TOKENS · USED 13,290</text>
+
+  <rect x="34" y="46" width="480" height="112" rx="8" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="44" y="56" width="460" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="58" y="73" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">system instructions</text>
+  <text x="494" y="73" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">1 180</text>
+  <rect x="44" y="88" width="460" height="26" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="58" y="105" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">tool definitions</text>
+  <text x="494" y="105" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">2 400</text>
+  <rect x="44" y="120" width="460" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="58" y="137" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">format and escalation policy</text>
+  <text x="494" y="137" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">620</text>
+
+  <line x1="34" y1="164" x2="514" y2="164" stroke="currentColor" stroke-width="1.4"/>
+
+  <rect x="34" y="170" width="480" height="196" rx="8" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="44" y="180" width="460" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="58" y="197" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">subscriber profile</text>
+  <text x="494" y="197" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">300</text>
+  <rect x="44" y="212" width="460" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="58" y="229" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">charges and debits</text>
+  <text x="494" y="229" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">740</text>
+  <rect x="44" y="244" width="460" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="58" y="261" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">knowledge base passages</text>
+  <text x="494" y="261" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">5 900</text>
+  <rect x="44" y="276" width="460" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="58" y="293" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">memory summary</text>
+  <text x="494" y="293" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">260</text>
+  <rect x="44" y="308" width="460" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="58" y="325" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">last turns of the chat</text>
+  <text x="494" y="325" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">1 850</text>
+  <rect x="44" y="340" width="460" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="58" y="357" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">the operator's question</text>
+  <text x="494" y="357" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">40</text>
+
+  <line x1="524" y1="52" x2="524" y2="152" stroke="var(--line)" stroke-width="1.3"/>
+  <line x1="524" y1="176" x2="524" y2="360" stroke="var(--line)" stroke-width="1.3"/>
+  <line x1="524" y1="164" x2="560" y2="164" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4a)"/>
+
+  <text x="540" y="78" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">STABLE PREFIX</text>
+  <text x="540" y="98" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">4,200 tokens, the same in every chat</text>
+  <text x="540" y="116" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">instruction version 2026-03-04</text>
+  <text x="540" y="134" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">read from the cache, TTL 300 s</text>
+
+  <text x="570" y="158" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">CACHE BOUNDARY</text>
+  <text x="570" y="176" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">everything above matches byte for byte</text>
+
+  <text x="540" y="208" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">VOLATILE SUFFIX</text>
+  <text x="540" y="228" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">9,090 tokens, its own in every request</text>
+  <text x="540" y="246" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">the order is fixed, the composition is not</text>
+  <text x="540" y="264" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">paid for at the full input price</text>
+
+  <text x="540" y="312" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">FREE</text>
+  <text x="540" y="332" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">18,710 tokens for a long chat</text>
+  <text x="540" y="350" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">and for the model's answer</text>
+
+  <text x="34" y="388" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Moving a block across the boundary does not change the meaning of the context and does change its price.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The cache boundary is set by a design decision: the engineer determines which blocks match byte for byte across all requests, and thereby determines the cost of every subsequent chat.</figcaption>
+</figure>
+
+<h3 id="s-4-4"><span class="num">4.4</span>Budgeting and priority truncation</h3>
+
+<p>The budget is set for the task and can be smaller than the model's window. The model accepts more than thirty-two thousand tokens, but every extra input token is paid for and adds to the time to the first token discussed in <a href="#s-3-3" data-secref="3.3">Section 3.3</a>. For Orion the budget was derived bottom up: the price of a chat multiplied by forty thousand chats a day must not exceed the figure agreed with the business units, and the time to the first token must stay within a second and a half.</p>
+
+<p>When there is more data than budget, truncation applies, and the naive and the considered solutions perform it differently. Naive truncation cuts off the end of the string or deletes the oldest turns. The first way breaks the syntax of a block and can cut off the question itself if the question stands last. The second way deletes the start of the conversation, where the substance of the case is usually named.</p>
+
+<p>Considered truncation uses a priority assigned to each block independently of its position in the text. Every block carries a priority, a size in tokens, a zone and a required flag. The budget allocator selects blocks in increasing order of priority until the budget runs out, and places what it selected in a fixed order. A budget too small for a required block leads to a refusal to assemble. The refusal is written to the log, whereas a silent shortening of the block would leave no trace.</p>
+
+<div class="note" data-level="2">The token count inside the assembler is approximate: the exact number is known only to the vendor's tokeniser and depends on the version of the model. The assembler therefore counts tokens with a fast approximation, keeps a margin of about ten per cent, and reconciles the estimate against the actual input token count from the response, the way the meter of <a href="#s-3-8" data-secref="3.8">Section 3.8</a> does.</div>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to assemble the context">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="20">
+      <figcaption><span class="file">naive_context.py</span></figcaption>
+      <pre><code>SYSTEM = ("You are the assistant of an Orion Telecom chat operator. Answer in the "
+          "customer's language, briefly, and never promise compensation yourself.")
+BUDGET_TOKENS = 32_000
+
+
+def build_prompt(profile: str, invoices: str, kb: str,
+                 history: list[str], question: str) -&gt; str:
+    """Building the prompt by concatenation, in the order the data arrived."""
+    text = "Customer: " + profile + "\n"
+    text += "Invoices: " + invoices + "\n"
+    text += SYSTEM + "\n"
+    text += "Knowledge base: " + kb + "\n"
+    for turn in history:
+        text += turn + "\n"
+    return text + "Question: " + question
+
+
+if __name__ == "__main__":
+    kb = "Double charge: check the date of the billing cycle, then issue a refund. " * 1200
+    history = [f"customer: message number {i} about the charge and the tariff\n"
+               f"operator: reply number {i} quoting the terms of the tariff" for i in range(800)]
+
+    first = build_prompt("Peter Ilyin, tariff Orion S", "invoice 1204 for 1490 roubles",
+                         kb, history, "why was I charged twice?")
+    second = build_prompt("Maria Kim, tariff Orion L", "invoice 8831 for 3200 roubles",
+                          kb, history, "why was I charged twice?")
+
+    assert count_tokens(first) &gt; BUDGET_TOKENS          # the window overflows with history
+    shared = 0
+    for a, b in zip(first, second):
+        if a != b:
+            break
+        shared += 1
+    assert shared &lt; 12                                  # no common prefix left to cache
+    print(count_tokens(first), "tokens, common prefix:", shared, "characters")</code></pre>
+    </figure>
+    <p>Assembly by concatenation has neither a budget nor a priority. The history grows without a limit, and by the eight-hundredth turn the prompt is one and a half times the window; the error is returned by the vendor, because the code does not check the size. The subscriber's profile stands first, so two requests diverge at the eleventh character and there is nothing left to cache. Finally, the composition of the context is recorded nowhere: this prompt cannot tell anyone what stayed outside it.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">context_assembler.py</span></figcaption>
+      <pre><code>import hashlib
+from dataclasses import dataclass, field
+from typing import Literal
+
+BUDGET_TOKENS = 32_000
+Zone = Literal["prefix", "suffix"]
+
+INSTRUCTIONS = "## ROLE\nThe assistant of an Orion Telecom chat operator.\n" + "A rule of behaviour, one per line. " * 200
+TOOLS = "## TOOLS\n" + "get_invoice(subscriber_id, period) -&gt; Invoice\n" * 120
+POLICY = "## ANSWER FORMAT\nThe conclusion first, then a link to the invoice or the article.\n"
+
+
+class BudgetExceeded(Exception):
+    """The mandatory part of the context does not fit the window."""
+
+
+@dataclass(frozen=True)
+class ContextBlock:
+    """A piece of context with its price in tokens, a priority and a cache zone."""
+
+    name: str
+    text: str
+    priority: int                 # 1 is dropped last
+    zone: Zone = "suffix"
+    required: bool = False
+
+    @property
+    def tokens(self) -&gt; int:
+        return count_tokens(self.render())
+
+    def render(self) -&gt; str:
+        return f"&lt;{self.name}&gt;\n{self.text}\n&lt;/{self.name}&gt;\n"
+
+
+@dataclass
+class Assembly:
+    prefix: str
+    suffix: str
+    included: list[str] = field(default_factory=list)
+    excluded: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def text(self) -&gt; str:
+        return self.prefix + self.suffix
+
+    @property
+    def tokens(self) -&gt; int:
+        return count_tokens(self.text)
+
+    @property
+    def prefix_digest(self) -&gt; str:
+        return hashlib.blake2b(self.prefix.encode("utf-8"), digest_size=8).hexdigest()
+
+
+def assemble(blocks: list[ContextBlock], budget: int = BUDGET_TOKENS) -&gt; Assembly:
+    """Selection by priority, placement by the declared order."""
+    prefix_blocks = [b for b in blocks if b.zone == "prefix"]
+    suffix_blocks = [b for b in blocks if b.zone == "suffix"]
+    prefix = "".join(b.render() for b in prefix_blocks)
+    spent = count_tokens(prefix)
+    if spent &gt; budget:
+        raise BudgetExceeded(f"the prefix takes {spent} tokens of {budget}")
+
+    chosen: set[str] = set()
+    excluded: list[tuple[str, str]] = []
+    for block in sorted(suffix_blocks, key=lambda b: (b.priority, b.name)):
+        if spent + block.tokens &lt;= budget:
+            chosen.add(block.name)
+            spent += block.tokens
+        elif block.required:
+            raise BudgetExceeded(f"the required block {block.name} does not fit")
+        else:
+            excluded.append((block.name, f"budget: {block.tokens} against {budget - spent} left"))
+
+    ordered = [b for b in suffix_blocks if b.name in chosen]
+    return Assembly(prefix=prefix, suffix="".join(b.render() for b in ordered),
+                    included=[b.name for b in prefix_blocks] + [b.name for b in ordered],
+                    excluded=sorted(excluded))
+
+
+def request_blocks(profile: str, invoices: str, passages: list[str],
+                   summary: str, tail: list[str], question: str) -&gt; list[ContextBlock]:
+    """One agent-assist request: the unchanging zone, then the data of the chat."""
+    blocks = [
+        ContextBlock("instructions", INSTRUCTIONS, priority=1, zone="prefix", required=True),
+        ContextBlock("tools", TOOLS, priority=1, zone="prefix", required=True),
+        ContextBlock("policy", POLICY, priority=1, zone="prefix", required=True),
+        ContextBlock("profile", profile, priority=2),
+        ContextBlock("invoices", invoices, priority=2),
+    ]
+    blocks += [ContextBlock(f"kb:{i}", text, priority=3 + i) for i, text in enumerate(passages)]
+    blocks += [
+        ContextBlock("memory", summary, priority=2),
+        ContextBlock("history", "\n".join(tail), priority=2),
+        ContextBlock("question", question, priority=1, required=True),
+    ]
+    return blocks
+
+
+if __name__ == "__main__":
+    passages = ["A knowledge base article about a double charge on an account. " * 620,
+                "An article about moving a payment between two personal accounts of one subscriber. " * 480,
+                "An article about an outage in a network segment and the compensation for it. " * 500]
+    tail = [f"customer: turn {i}" for i in range(20)]
+
+    first = assemble(request_blocks("Peter Ilyin, Orion S", "invoice 1204 for 1490 roubles",
+                                    passages, "the customer complained in March already",
+                                    tail, "why was I charged twice?"))
+    second = assemble(request_blocks("Maria Kim, Orion L", "invoice 8831 for 3200 roubles",
+                                     passages, "no earlier contacts",
+                                     tail, "how do I move the payment?"))
+
+    assert first.tokens &lt;= BUDGET_TOKENS and second.tokens &lt;= BUDGET_TOKENS
+    assert first.prefix == second.prefix                  # the prefix matches byte for byte
+    assert first.prefix_digest == second.prefix_digest
+    assert "question" in first.included                   # the required block is there
+    assert [n for n, _ in first.excluded] == ["kb:2"]     # the worst priority is evicted
+    assert first.included.index("memory") &lt; first.included.index("question")
+
+    tight = assemble(request_blocks("Peter Ilyin, Orion S", "invoice 1204 for 1490 roubles",
+                                    passages, "the customer complained in March already",
+                                    tail, "why was I charged twice?"), budget=4_000)
+    assert tight.included[-1] == "question"               # the question survived
+    assert [n for n, _ in tight.excluded] == ["kb:0", "kb:1", "kb:2"]
+
+    try:
+        assemble(request_blocks("Peter Ilyin, Orion S", "invoice 1204 for 1490 roubles",
+                                passages, "", tail, "why?"), budget=1_000)
+        raise AssertionError("a budget shortfall must be a refusal, not a silent truncation")
+    except BudgetExceeded:
+        pass
+    print(f"assembled {first.tokens} tokens, prefix {first.prefix_digest}, "
+          f"evicted {len(first.excluded)}")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="priority: int">line 23</span><p>Priority is assigned to the block and does not depend on the block's place in the text. The decision of what to exclude is therefore taken once at design time and stays explicable: an evicted block has a number by which it was evicted.</p></div>
+        <div><span class="at" data-anchor="def render(self)">line 31</span><p>A block is wrapped in named brackets, so the model sees the boundaries of the data and the assembler sees that a block either entered whole or did not enter at all. Truncation inside a block is forbidden, because a cut and re-wrapped block is syntactically indistinguishable from a complete one.</p></div>
+        <div><span class="at" data-anchor="key=lambda b: (b.priority, b.name)">line 66</span><p>Selection goes by priority, with the name as the second key: at equal priorities the order has to be deterministic, otherwise two identical requests assemble differently and comparing their traces loses meaning.</p></div>
+        <div><span class="at" data-anchor="elif block.required:">line 70</span><p>A required block that does not fit stops the assembly. If the request were sent without the operator's question, the model would produce an answer to a missing question and would not report the omission: the model's input holds no information about the omitted block.</p></div>
+        <div><span class="at" data-anchor="ordered = [b for b in suffix_blocks">line 75</span><p>Selection and placement are separated: selection follows the priority, placement follows the declared order. If blocks were laid out in order of priority, the blocks of the suffix would change places from request to request, and the model would receive a different shape for the same data.</p></div>
+        <div><span class="at" data-anchor="hashlib.blake2b(self.prefix.encode">line 52</span><p>The digest of the prefix is computed by the assembler and lands in the log. The digest makes the claim that the prefix has not changed cheap to verify: comparing the texts themselves costs more than the assembly does.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns counting. Naive assembly does not compute the size of the context, and the overflow is reported by the vendor's error. Considered assembly computes the price of every block before sending and decides on exclusions before the model is called.</p>
+    <p>The second difference concerns a lack of room. The naive solution loses the end of the text, that is, the freshest data and the question. The considered solution excludes the whole block with the worst priority and records its name and the reason for the exclusion.</p>
+    <p>The third difference concerns the stability of the beginning. In naive assembly the subscriber's name stands before the instruction, and two requests share no beginning at all. In considered assembly the prefix is built from blocks independent of the chat and matches byte for byte, which the equality of the digests confirms.</p>
+  </div>
+</div>
+
+<p>The sources of context answer at different speeds, so a time budget is introduced alongside the token budget. The CRM answers within a hundred and twenty milliseconds, billing within a hundred and fifty, knowledge base retrieval within two hundred, and the history is read locally. The assembler queries the sources in parallel; for a source that has not answered in time it substitutes a replacement described in advance and records the substitution. A suggestion marked "billing data is unavailable" appears on time, whereas a suggestion waiting for billing would arrive a second and a half late, when the operator has already typed the answer unaided.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="The flow of context assembly: four sources with their own timeouts and replacements are queried in parallel, an assembler with a four-hundred-millisecond deadline hands what it has to the budget allocator, and the allocator lays the selected blocks into the prefix and the suffix of the request" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar4b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="125" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">SOURCES</text>
+  <text x="360" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ASSEMBLY</text>
+  <text x="575" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">BUDGET</text>
+  <text x="790" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">REQUEST</text>
+
+  <rect x="20" y="48" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="68" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CRM: subscriber profile</text>
+  <text x="34" y="86" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">timeout 120 ms</text>
+  <text x="34" y="102" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">replacement: account number</text>
+  <rect x="20" y="122" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="142" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">billing: charges</text>
+  <text x="34" y="160" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">timeout 150 ms</text>
+  <text x="34" y="176" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">replacement: "no data" mark</text>
+  <rect x="20" y="196" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="216" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">knowledge base: 3 passages</text>
+  <text x="34" y="234" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">timeout 200 ms</text>
+  <text x="34" y="250" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">replacement: no articles</text>
+  <rect x="20" y="270" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="290" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">session: turns and memory</text>
+  <text x="34" y="308" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">local, 5 ms</text>
+  <text x="34" y="324" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">no replacement needed</text>
+
+  <rect x="280" y="48" width="160" height="284" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="360" y="76" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">assembler</text>
+  <text x="360" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">deadline 400 ms</text>
+  <text x="360" y="112" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">waits for no laggard</text>
+
+  <rect x="490" y="120" width="170" height="140" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="575" y="152" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">allocator</text>
+  <text x="575" y="172" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">budget 32,000</text>
+  <text x="575" y="188" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">selection by priority</text>
+
+  <rect x="720" y="120" width="140" height="140" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+
+  <g data-step="1" data-caption="The four sources are queried in parallel, each with its own timeout and a replacement described in advance.">
+    <line x1="230" y1="79" x2="272" y2="79" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <line x1="230" y1="153" x2="272" y2="153" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <line x1="230" y1="227" x2="272" y2="227" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <line x1="230" y1="301" x2="272" y2="301" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+  </g>
+
+  <g data-step="2" data-caption="Billing did not answer within a hundred and fifty milliseconds: the assembler puts in the no-data mark and records the substitution.">
+    <rect x="14" y="116" width="222" height="74" rx="6" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <rect x="292" y="286" width="136" height="34" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <text x="360" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">billing: replacement</text>
+    <text x="360" y="314" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">written to the log</text>
+  </g>
+
+  <g data-step="3" data-caption="The allocator selects blocks by priority until the budget runs out and names the reason for every eviction.">
+    <line x1="440" y1="190" x2="482" y2="190" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <text x="575" y="216" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">evicted: kb:2</text>
+    <text x="575" y="232" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">reason: budget</text>
+  </g>
+
+  <g data-step="4" data-caption="What was selected is laid out in two zones: the unchanging prefix on top, the volatile suffix beneath it.">
+    <line x1="660" y1="190" x2="712" y2="190" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <rect x="734" y="136" width="112" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="790" y="159" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">prefix</text>
+    <rect x="734" y="186" width="112" height="58" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+    <text x="790" y="211" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">suffix</text>
+    <text x="790" y="229" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">9,090</text>
+  </g>
+
+  <text x="20" y="366" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">The time budget determines what arrived, the token budget determines what fitted.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The assembler turns a missing answer from a source into a marked absence of data. Waiting for the source does not work here: for the operator, a suggestion a second late is the same as no suggestion.</figcaption>
+</figure>
+
+<h3 id="s-4-5"><span class="num">4.5</span>Ordering for the cache</h3>
+
+<p>Prompt caching, defined in <a href="#s-3-8" data-secref="3.8">Section 3.8</a>, requires an exact match of the beginning of a request. The order of blocks therefore determines how many tokens are paid for at the full price and how long the input takes to process. For Orion, at forty thousand chats a day, the difference between a stable and a volatile beginning is measured in thousands of dollars a month and hundreds of milliseconds per suggestion.</p>
+
+<dl class="def">
+<dt>Stable prefix</dt>
+<dd>The opening part of the context, identical byte for byte across all requests of one tenant and one version of the solution. The stability is verified by the digest of the prefix recorded in the trace: requests with equal digests can hit the same cache entry, requests with different digests cannot.</dd>
+<dt>Cache boundary</dt>
+<dd>The place in the context below which the content changes from request to request. The boundary is chosen by the engineer: moving a block above it requires the block to stop depending on the particular case, and moving a block below it moves its tokens to the full input price.</dd>
+</dl>
+
+<p>Above the boundary at Orion sit the system instructions, the tool definitions and the format policy, that is, everything that depends on the version of the solution and on the business unit but not on the subscriber. Below it sits everything that changes in every chat. The test for membership of the prefix is a single question: would this text change if a different subscriber arrived at the same moment. An affirmative answer means the suffix.</p>
+
+<div class="warn"><b>Common mistake</b>Putting the current time, the session identifier or the operator's name into the system instruction "for context". One such fragment in the opening lines rules out cache hits for all requests, and the bill grows before the growth is connected with the edit to the instruction. The same data placed at the end of the context costs nothing beyond its own size.</div>
+
+<p>A cache entry has a lifetime, so with infrequent requests the entry expires before the next request and the request misses the cache. In Orion's scenario this regime occurs in two cases: at night, when the flow of chats falls, and at the boundary between business units, each of which has its own prefix and therefore its own cache entry. The third source of misses is created by the solution itself and is shown in the diagram: a change to the set of tools between turns makes the entry unusable entirely.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 300" role="img" aria-label="Six turns of one conversation on a time axis with the prefix cache entries above them: the first three turns hit the first entry, adding a tool at the fourth turn creates a second, and the sixth turn after a seven-minute pause hits neither because the lifetime has expired" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar4c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="34" y="34" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">A CACHE ENTRY IS VALID FOR 300 SECONDS AND ONLY WHILE THE PREFIX IS UNCHANGED</text>
+
+  <rect x="76" y="76" width="310" height="30" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="231" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">entry A · prefix 5f52 · 12 tools</text>
+  <rect x="466" y="122" width="220" height="30" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="576" y="142" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">entry B · prefix 9c0e · 13</text>
+  <rect x="742" y="76" width="110" height="30" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="797" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">entry C</text>
+
+  <line x1="100" y1="106" x2="100" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="230" y1="106" x2="230" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="360" y1="106" x2="360" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="490" y1="152" x2="490" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="620" y1="152" x2="620" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="797" y1="106" x2="797" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+
+  <line x1="34" y1="216" x2="856" y2="216" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar4c)"/>
+  <circle cx="100" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">1</text>
+  <circle cx="230" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="230" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">2</text>
+  <circle cx="360" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="360" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">3</text>
+  <circle cx="490" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="490" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">4</text>
+  <circle cx="620" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="620" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">5</text>
+  <circle cx="797" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="797" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">6</text>
+
+  <path d="M646,196 H771" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <text x="708" y="190" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">a 7-minute pause</text>
+
+  <text x="100" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0 s</text>
+  <text x="230" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">40 s</text>
+  <text x="360" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">95 s</text>
+  <text x="490" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">150 s</text>
+  <text x="620" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">205 s</text>
+  <text x="797" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">620 s</text>
+
+  <text x="100" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">miss</text>
+  <text x="230" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">hit</text>
+  <text x="360" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">hit</text>
+  <text x="490" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">miss</text>
+  <text x="620" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">hit</text>
+  <text x="797" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">miss</text>
+
+  <text x="100" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">the first entry</text>
+  <text x="490" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">a tool was added</text>
+  <text x="797" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">the lifetime expired</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The cache hit rate depends on two independent conditions: the immutability of the prefix, which the engineer ensures, and the intervals between requests relative to the lifetime of the entry, which are determined by the flow of requests; changing the set of tools mid-conversation breaks the first condition.</figcaption>
+</figure>
+
+<div class="note" data-level="2">Prompt caching differs from response caching. The first preserves the vendor's internal state for an unchanged beginning of a request and does not affect the content of the answer.<a class="src" href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching" target="_blank" rel="noreferrer">platform.claude.com, prompt caching</a> The second returns a ready answer to a similar question and therefore needs a separate decision about admissibility, since two similar questions from two subscribers concern two different accounts.</div>
+
+<p>The stability of the prefix is verified, and for the verification the text of the instruction has to be an artefact with a version and content addressed by a digest. The instruction registry keeps released versions, refuses to release a text without the required sections, and forbids changing a version already released. The digest it computes is the one that lands in the trace of a request, so the question "why did the cache not work" reduces to comparing two strings.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">prompt_registry.py</span></figcaption>
+<pre><code>import hashlib
+import re
+from dataclasses import dataclass, field
+
+REQUIRED_SECTIONS = ("ROLE", "BOUNDARIES", "ANSWER FORMAT", "ESCALATION")
+PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
+MAX_PREFIX_TOKENS = 4_000
+
+
+class PromptInvalid(Exception):
+    """The text of the instruction fails a check and never enters the registry."""
+
+
+@dataclass(frozen=True)
+class Prompt:
+    name: str
+    version: str                  # a release, not "the latest"
+    body: str
+
+    @property
+    def digest(self) -&gt; str:
+        return hashlib.blake2b(self.body.encode("utf-8"), digest_size=8).hexdigest()
+
+    def sections(self) -&gt; list[str]:
+        return [line[3:].strip() for line in self.body.splitlines() if line.startswith("## ")]
+
+
+def check(prompt: Prompt) -&gt; list[str]:
+    """The checks CI runs on every change to an instruction."""
+    problems = []
+    missing = [s for s in REQUIRED_SECTIONS if s not in prompt.sections()]
+    if missing:
+        problems.append(f"required sections are absent: {missing}")
+    if PLACEHOLDER.search(prompt.body):
+        problems.append("unresolved template braces remain")
+    if len(prompt.body) // 2 &gt; MAX_PREFIX_TOKENS:
+        problems.append("the instruction is longer than the prefix budget")
+    return problems
+
+
+@dataclass
+class PromptRegistry:
+    """Released instructions: a version is immutable, the text is addressed by hash."""
+
+    released: dict[tuple[str, str], Prompt] = field(default_factory=dict)
+
+    def release(self, prompt: Prompt) -&gt; Prompt:
+        problems = check(prompt)
+        if problems:
+            raise PromptInvalid("; ".join(problems))
+        key = (prompt.name, prompt.version)
+        earlier = self.released.get(key)
+        if earlier is not None and earlier.digest != prompt.digest:
+            raise PromptInvalid(f"version {prompt.version} was released with another text")
+        self.released[key] = prompt
+        return prompt
+
+    def get(self, name: str, version: str) -&gt; Prompt:
+        return self.released[(name, version)]
+
+
+BODY_V1 = """## ROLE
+The assistant of an Orion Telecom chat operator.
+## BOUNDARIES
+Never promise compensation: that decision belongs to the operator.
+## ANSWER FORMAT
+The conclusion, then a link to the invoice or the knowledge base article.
+## ESCALATION
+On a network outage, hand the chat to the engineer on duty.
+"""
+
+if __name__ == "__main__":
+    registry = PromptRegistry()
+    v1 = registry.release(Prompt("agent_assist", "2026-03-04", BODY_V1))
+    assert registry.get("agent_assist", "2026-03-04").digest == v1.digest
+    assert v1.digest == Prompt("agent_assist", "2026-03-04", BODY_V1).digest
+
+    without_escalation = BODY_V1.split("## ESCALATION")[0]
+    try:
+        registry.release(Prompt("agent_assist", "2026-03-05", without_escalation))
+        raise AssertionError("an instruction without an escalation section is not released")
+    except PromptInvalid as err:
+        assert "ESCALATION" in str(err)
+
+    try:
+        registry.release(Prompt("agent_assist", "2026-03-04", BODY_V1 + "One more rule.\n"))
+        raise AssertionError("a released version is immutable")
+    except PromptInvalid:
+        pass
+
+    v2 = registry.release(Prompt("agent_assist", "2026-03-11", BODY_V1 + "## LANGUAGE\nAnswer in the customer's language.\n"))
+    assert v2.digest != v1.digest                     # another prefix, another cache
+    assert check(Prompt("agent_assist", "x", BODY_V1 + "{{tenant}}")) != []
+    print(f"{len(registry.released)} versions released, current {v2.version} · {v2.digest}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="digest_size=8).hexdigest()">line 22</span><p>The content is addressed by a digest while the version stays a human name for a release. The pair of a name and a digest answers two different questions: which instruction was meant to be applied, and which text was in fact passed to the model.</p></div>
+  <div><span class="at" data-anchor="def sections(self)">line 24</span><p>Sections are extracted by their heading markup, which keeps the check for required sections cheap and runnable on every change. The substantive check of an instruction is performed by the evaluation sets of <a href="#ch-12" data-secref="12">Chapter 12</a>.</p></div>
+  <div><span class="at" data-anchor="if PLACEHOLDER.search(prompt.body):">line 34</span><p>Unresolved template braces are a frequent cause of a corrupted prefix: a line reading "tenant: {{tenant}}" goes to the model as it stands, looks plausible in the log and changes behaviour unpredictably.</p></div>
+  <div><span class="at" data-anchor="earlier.digest != prompt.digest">line 53</span><p>A released version is immutable. Without that prohibition a week-old trace would point at a version whose text has since changed, and an incident review would rest on an instruction that did not exist at the time.</p></div>
+</div>
+</figure>
+
+<p>The life cycle of this registry, that is, the review, the tests and the order of releasing a new version, is covered in <a href="#s-4-7" data-secref="4.7">Section 4.7</a>. For this section it matters that the stability of the prefix is secured by the prohibition on changing a released text and does not depend on a developer's discipline.</p>
+
+<h3 id="s-4-6"><span class="num">4.6</span>Memory and summarisation</h3>
+
+<p>Memory is needed when a conversation is longer than the window or a subscriber comes back a week later. Three kinds of memory are distinguished, which are stored differently and kept for different lengths of time.</p>
+
+<dl class="def">
+<dt>Short-term memory</dt>
+<dd>The last turns of the current conversation, held in the context verbatim. Bounded by the budget of the window and gone with the session.</dd>
+<dt>Episodic memory</dt>
+<dd>A compressed account of past parts of the conversation and of past cases: what happened, when and how it ended. Produced by summarisation and stored with a timestamp.</dd>
+<dt>Semantic memory</dt>
+<dd>Statements about the subscriber held to be true outside any particular conversation: the tariff, the preferred language, an open dispute. Stored as a set of facts, each with its own source and lifetime, and therefore requiring a provenance.</dd>
+</dl>
+
+<p>Rolling summarisation solves the problem of short-term memory: once the turns pass a threshold, all but the last few are folded into a handful of statements that take the room of one paragraph instead of twenty. The fold is performed by a model and costs money and time, so it runs on a threshold, and its result is reused until the conversation grows again. In addition, the fold loses information irreversibly: the original turns cannot be recovered from the summary, and the decision about what to fold is taken once.</p>
+
+<p>Every fact of memory is stored together with its source and the moment until which it is held true. The source determines trust: a billing record of a charge and a subscriber's phrase "I was promised free roaming" have different reliability, although they look alike in the text of the context. The lifetime determines when a fact is deleted automatically: CRM data goes stale in a week, a subscriber's words in a day, an operator's decision is kept for a month. Provenance and lifetime together protect against the class of vulnerabilities discussed in <a href="#s-4-10" data-secref="4.10">Section 4.10</a>.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">memory_summarizer.py</span></figcaption>
+<pre><code>from dataclasses import dataclass, field
+
+DAY = 24 * 3600.0
+TRUST = {"billing": 3, "crm": 3, "operator": 2, "customer": 1}
+TTL = {"billing": 7 * DAY, "crm": 7 * DAY, "operator": 30 * DAY, "customer": 1 * DAY}
+
+
+@dataclass(frozen=True)
+class Fact:
+    """A statement of memory together with where it came from and when it expires."""
+
+    text: str
+    source: str                   # a system of record, the operator, or the customer's words
+    created_at: float
+
+    @property
+    def ttl_s(self) -&gt; float:
+        return TTL[self.source]
+
+    @property
+    def trust(self) -&gt; int:
+        return TRUST[self.source]
+
+    def alive(self, now: float) -&gt; bool:
+        return now - self.created_at &lt; self.ttl_s
+
+
+@dataclass
+class Memory:
+    facts: list[Fact] = field(default_factory=list)
+
+    def remember(self, fact: Fact) -&gt; None:
+        self.facts.append(fact)
+
+    def live(self, now: float) -&gt; list[Fact]:
+        return [f for f in self.facts if f.alive(now)]
+
+    def render(self, now: float, budget_tokens: int, min_trust: int = 1) -&gt; str:
+        """The summary for the context: trusted sources first, then recency."""
+        rows = [f for f in self.live(now) if f.trust &gt;= min_trust]
+        rows.sort(key=lambda f: (-f.trust, -f.created_at))
+        lines: list[str] = []
+        spent = 0
+        for fact in rows:
+            line = f"- {fact.text} [{fact.source}, t={fact.created_at:.0f}]"
+            cost = count_tokens(line)
+            if spent + cost &gt; budget_tokens:
+                break
+            lines.append(line)
+            spent += cost
+        return "\n".join(lines)
+
+
+def roll(history: list[str], memory: Memory, llm: LLMClient, now: float,
+         keep: int = 4) -&gt; list[str]:
+    """Fold everything but the last keep turns into one fact with a provenance."""
+    if len(history) &lt;= keep:
+        return history
+    folded, tail = history[:-keep], history[-keep:]
+    reply = llm.complete("Compress the dialogue into two or three statements:\n" + "\n".join(folded))
+    memory.remember(Fact(reply.text, "customer", now))
+    return tail
+
+
+if __name__ == "__main__":
+    memory = Memory()
+    memory.remember(Fact("account 4402, tariff Orion S", "crm", created_at=0.0))
+    memory.remember(Fact("a double charge of 1490 roubles on 3 March", "billing", created_at=120.0))
+    memory.remember(Fact("the customer says free roaming was promised to him", "customer",
+                         created_at=0.0))
+
+    history = [f"customer: turn {i}" for i in range(12)]
+    llm = FakeLLM(["the customer complains about a charge and asks for a refund"])
+    tail = roll(history, memory, llm, now=600.0)
+    assert tail == history[-4:] and len(memory.live(600.0)) == 4
+
+    summary = memory.render(now=600.0, budget_tokens=200)
+    assert summary.splitlines()[0].startswith("- a double charge")   # billing above the words
+    assert "[customer" in summary and "t=" in summary                # the model sees the source
+
+    trusted = memory.render(now=600.0, budget_tokens=200, min_trust=2)
+    assert "roaming" not in trusted                 # the customer's words do not become a fact
+    later = memory.render(now=2 * DAY, budget_tokens=200)
+    assert "roaming" not in later                   # the lifetime expired on its own
+    assert "[billing" in later
+
+    narrow = memory.render(now=600.0, budget_tokens=30)
+    assert len(narrow.splitlines()) &lt; len(summary.splitlines())   # a short budget drops the lower lines
+    print(f"{len(memory.live(600.0))} facts in memory, {len(summary.splitlines())} lines in the summary")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="TTL = {">line 5</span><p>The lifetime is set per source. The retention policy is therefore surveyable: to find out how long a subscriber's words are kept, it is enough to look at one table.</p></div>
+  <div><span class="at" data-anchor="rows.sort(key=lambda f: (-f.trust, -f.created_at))">line 41</span><p>The order of the summary is set first by trust, then by recency. A fresh unverified phrase must not end up above a confirmed record of a system: when the budget is short the summary is cut from the bottom, and the order determines which facts reach the context.</p></div>
+  <div><span class="at" data-anchor="folded, tail = history[:-keep], history[-keep:]">line 59</span><p>The last turns stay verbatim. The summary is applied to the distant parts of a conversation, because the last turns hold the clarifications for whose sake the subscriber asked again, and folding would lose them.</p></div>
+  <div><span class="at" data-anchor="memory.remember(Fact(reply.text,">line 61</span><p>The summary of a conversation is given the source "the subscriber's words". It was produced from the subscriber's turns, and assigning it the source "the system" on the grounds that a model generated the text would hide the origin of the statement.</p></div>
+</div>
+</figure>
+
+<p>What may not be kept beyond the case is determined by the residency and data protection requirements of <a href="#ch-10" data-secref="10">Chapter 10</a>, and the mechanics of long-lived state that survives a restart are covered in <a href="#ch-9" data-secref="9">Chapter 9</a>. Under Orion's rule memory receives a conclusion from the conversation, for example "the subscriber disputes the charge of 3 March", without a transcript of the conversation.</p>
+
+<h3 id="s-4-7"><span class="num">4.7</span>Instructions as code</h3>
+
+<p>An instruction stored in a configuration field of a web interface has no history, no review and no connection to a release. An instruction stored in a repository travels the same path as code: a branch, a review, tests, a released version. The difference between the two regimes shows up at the first incident, when it has to be established which text was passed to the model three days ago.</p>
+
+<p>Tests of an instruction check its structure and size. The check for required sections prevents releasing a text from which the boundaries or the escalation rules have disappeared, and removing these sections is a frequent edit made in a hurry. The check for unresolved braces catches a broken template. The check on length keeps the prefix inside its budget, since every added line of the instruction is paid for on every request. Substantive checks, that is, the change in the quality of answers, are performed by the evaluation sets of <a href="#ch-12" data-secref="12">Chapter 12</a>.</p>
+
+<p>Releasing a new version follows the same order as the change of a model version in <a href="#s-3-8" data-secref="3.8">Section 3.8</a>: a shadow run on recorded traffic, a comparison with the current version, then the switch. The digest of the prefix is recorded in the trace of every request, so the weekly quality report breaks down by instruction version without extra labelling, and a drop in the cache hit rate is tied to a particular release by its time.</p>
+
+<p>Orion's multi-tenancy adds one requirement to this. The five business units have their own rules, and one possible solution is a single instruction with conditional inserts. A conditional insert in the prefix produces as many different prefixes as there are branches, and these prefixes cannot be inspected separately. Five explicit versions, one per unit, give five stable prefixes, five cache entries and five separate reports.</p>
+
+<h3 id="s-4-8"><span class="num">4.8</span>Context transparency</h3>
+
+<p>The question "what did the model see" is asked in every review of a wrong answer, and the answer to it is taken from a record. Reconstruction from the time and the subscriber identifier is impossible: the sources have moved on, retrieval will return other passages, the history has grown. A record of the composition of a context costs a few hundred bytes per request and answers the question in seconds.</p>
+
+<p>What is recorded is the composition of the context: the list of blocks with their zone, size in tokens, inclusion flag and reason for exclusion, and next to it the digest of the prefix and the version of the instruction. The text of the context is not recorded, for two reasons: volume, since thirty-two thousand tokens per request across forty thousand chats amount to 1.28 billion tokens a day even at one request per chat, and data protection, since the context holds subscriber data that must be kept in the systems of record. The rules for retaining traces and for keeping the full text selectively are covered in <a href="#s-13-9" data-secref="13.9">Section 13.9</a>.</p>
+
+<p>A difference is derived from two such records, and it answers two practical questions. The first: why an answer to a similar question came out differently, and the answer is usually a different set of evicted blocks. The second: why a request missed the cache, and the answer is a change in the prefix, named block by block.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">context_audit.py</span></figcaption>
+<pre><code>import hashlib
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BlockRecord:
+    name: str
+    zone: str                     # "prefix" or "suffix"
+    tokens: int
+    included: bool
+    reason: str = ""              # why the block stayed out
+
+
+@dataclass(frozen=True)
+class ContextRecord:
+    """What the model saw in one request, and what it did not."""
+
+    request_id: str
+    prompt_version: str
+    blocks: tuple[BlockRecord, ...]
+
+    def names(self, zone: str) -&gt; list[str]:
+        return [b.name for b in self.blocks if b.zone == zone and b.included]
+
+    @property
+    def prefix_digest(self) -&gt; str:
+        seed = self.prompt_version + "|" + "|".join(
+            f"{b.name}:{b.tokens}" for b in self.blocks if b.zone == "prefix" and b.included)
+        return hashlib.blake2b(seed.encode("utf-8"), digest_size=8).hexdigest()
+
+    @property
+    def tokens(self) -&gt; int:
+        return sum(b.tokens for b in self.blocks if b.included)
+
+    def dropped(self) -&gt; list[tuple[str, str]]:
+        return [(b.name, b.reason) for b in self.blocks if not b.included]
+
+
+def diff(before: ContextRecord, after: ContextRecord) -&gt; list[str]:
+    """How the second request differs from the first, and why the cache missed."""
+    lines: list[str] = []
+    if before.prompt_version != after.prompt_version:
+        lines.append(f"instruction version: {before.prompt_version} to {after.prompt_version}")
+    for zone in ("prefix", "suffix"):
+        was, now = before.names(zone), after.names(zone)
+        added = [n for n in now if n not in was]
+        removed = [n for n in was if n not in now]
+        if added:
+            lines.append(f"{zone}: added {added}")
+        if removed:
+            lines.append(f"{zone}: removed {removed}")
+        if not added and not removed and was != now:
+            lines.append(f"{zone}: order changed from {was} to {now}")
+    if before.prefix_digest != after.prefix_digest:
+        lines.append("prompt cache: a miss, the prefix changed")
+    return lines
+
+
+def record(request_id: str, version: str, prefix: list[tuple[str, int]],
+           suffix: list[tuple[str, int]], dropped: list[tuple[str, int, str]]) -&gt; ContextRecord:
+    blocks = [BlockRecord(n, "prefix", t, True) for n, t in prefix]
+    blocks += [BlockRecord(n, "suffix", t, True) for n, t in suffix]
+    blocks += [BlockRecord(n, "suffix", t, False, why) for n, t, why in dropped]
+    return ContextRecord(request_id, version, tuple(blocks))
+
+
+if __name__ == "__main__":
+    turn_1 = record("req-1", "2026-03-04",
+                    prefix=[("instructions", 1_180), ("tools", 2_400), ("policy", 620)],
+                    suffix=[("profile", 300), ("invoices", 740), ("kb:0", 5_900),
+                            ("memory", 260), ("history", 1_850), ("question", 40)],
+                    dropped=[("kb:1", 6_100, "budget: 6100 against 640 left")])
+    turn_2 = record("req-2", "2026-03-04",
+                    prefix=[("instructions", 1_180), ("tools", 2_620), ("policy", 620)],
+                    suffix=[("profile", 300), ("invoices", 740), ("kb:0", 5_900),
+                            ("memory", 300), ("history", 2_100), ("question", 44)],
+                    dropped=[("kb:1", 6_100, "budget: 6100 against 380 left")])
+
+    assert turn_1.tokens == 13_290 and turn_1.dropped() == [
+        ("kb:1", "budget: 6100 against 640 left")]
+    assert turn_1.prefix_digest != turn_2.prefix_digest       # the tool list has grown
+
+    report = diff(turn_1, turn_2)
+    assert report == ["prompt cache: a miss, the prefix changed"]
+
+    turn_3 = record("req-3", "2026-03-11",
+                    prefix=[("instructions", 1_240), ("tools", 2_620), ("policy", 620)],
+                    suffix=[("profile", 300), ("question", 44)],
+                    dropped=[("kb:0", 5_900, "by the tenant rule: an article of another unit")])
+    lines = diff(turn_2, turn_3)
+    assert lines[0].startswith("instruction version")
+    assert any("removed" in line and "kb:0" in line for line in lines)
+    assert turn_3.dropped()[0][1].startswith("by the tenant rule")
+    print(f"request {turn_1.request_id}: {turn_1.tokens} tokens; divergence: {report}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="seed = self.prompt_version">line 27</span><p>The digest of the prefix is computed from the version of the instruction and the list of blocks with their sizes, so the log keeps no content. It still detects a substitution: a change to the instruction changes its version, and a change to other blocks of the prefix as a rule changes their size.</p></div>
+  <div><span class="at" data-anchor="if not added and not removed and was != now:">line 52</span><p>Reordering is tracked separately from addition and removal. A set of blocks swapped around yields the same list of names and the same context size but a different prefix, and without this check the cache miss would remain unexplained in the log.</p></div>
+  <div><span class="at" data-anchor="for n, t, why in dropped]">line 63</span><p>Excluded blocks are recorded alongside the included ones, together with the reason. This line answers the question "why did the model not know about the charge": the block existed, its size is known, and the rule by which it stayed out is named.</p></div>
+</div>
+</figure>
+
+<h3 id="s-4-9" data-level="2"><span class="num">4.9</span>On Google Cloud: context caching and Memory Bank</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Gemini Developer API</span>
+  <span class="tag">Gemini Enterprise Agent Platform</span>
+  <span class="tag">Agent Platform Memory Bank</span>
+</div>
+
+<p data-level="2">Context caching in the Gemini Developer API and Gemini Enterprise Agent Platform (formerly Vertex AI) exists in two modes, and the choice of mode expresses the decision about the cache boundary in the platform's terms. The explicit mode creates, for a specific model, a cached content resource with a time to live, 60 minutes by default: the engineer puts the system instruction, the tool definitions and large unchanging documents into it, receives the name of the resource and refers to it in every request; the content of the resource does not change after creation, so a changed instruction requires a new resource.<a class="src" href="https://ai.google.dev/api/caching" target="_blank" rel="noreferrer">ai.google.dev, CachedContent</a> The implicit mode is on by default and gives a discount when the beginning of a request matches, without creating a resource. The minimum size of cached content depends on the model and ranges from 2,048 to 6,144 tokens; for explicit caching on Gemini 3 models the threshold is 4,096 tokens, and Orion's prefix of four thousand two hundred tokens was chosen with that threshold in mind.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview" target="_blank" rel="noreferrer">cloud.google.com, context caching</a> The figures follow the documentation as of September 2026.</p>
+
+<p data-level="2">The explicit mode guarantees a discount on tokens that refer to the cache and adds a line of cost: storage is billed for the time the resource exists, so a resource with a long lifetime and rare use can cost more than resending the prefix. For Orion's five business units five cache resources are created, whose lifetimes follow the actual rate of chats: minutes for the daytime flow; for the nightly flow no resource is created.</p>
+
+<p data-level="2">Long-term memory is served by a separate service, Agent Platform Memory Bank. It generates memories from conversations with a language model, consolidates new information with existing memories, keeps memories isolated per scope, for example per user identifier, retrieves them by similarity search and deletes them when their time to live expires.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank" target="_blank" rel="noreferrer">cloud.google.com, Memory Bank</a> The source of a fact can be written into the memory's metadata, and the <code>REQUIRE_EXACT_MATCH</code> merge strategy prevents consolidation of memories with different metadata.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank/generate-memories" target="_blank" rel="noreferrer">cloud.google.com, generating memories</a> The service assigns no trust levels to sources, and the trust threshold for selecting facts into the context is set by the engineer.</p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>Vendors differ in how the cached part is specified, in the lifetime of an entry and in the minimum prefix size. With Anthropic the cache boundary is marked in the request itself by the <code>cache_control</code> field on a block or at the top level of the request; an entry is kept for five minutes and the lifetime restarts on every use, an hour is available at extra cost, the minimum size is 512 to 4,096 tokens depending on the model, and a change to the tool definitions invalidates the entire cache.<a class="src" href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching" target="_blank" rel="noreferrer">platform.claude.com, prompt caching</a> OpenAI caches a matching beginning of a request by default, lets cache breakpoints be marked explicitly for GPT-5.6 and later models, and caches prefixes from 1,024 tokens.<a class="src" href="https://developers.openai.com/api/docs/guides/prompt-caching" target="_blank" rel="noreferrer">developers.openai.com, prompt caching</a> The decision about which blocks have to be stable does not depend on the vendor and carries between platforms unchanged.</div>
+
+<h3 id="s-4-10" data-level="3"><span class="num">4.10</span>In depth: cache invalidation, the two zones, memory poisoning</h3>
+
+<h4 data-level="3">Cache invalidation by the order of tools</h4>
+
+<p data-level="3">Tool definitions are part of the prefix of the context, and their composition is set by the tool server. A change on the side of the MCP server of <a href="#s-6-10" data-secref="6.10">Section 6.10</a> therefore invalidates the cache of the application that calls it. If the server emits its tool list in the iteration order of a dictionary with a non-deterministic traversal, the prefix changes between requests while the set of tools stays the same.</p>
+
+<p data-level="3">Three rules follow from this. The tool list is sorted by name before serialisation, and the order is fixed by a test. The tool set is versioned as a whole: an agent that receives a new tool during a conversation pays the full input price for the first request after every addition. The notification of a changed list (<code>notifications/tools/list_changed</code>), provided for by the protocol, is disabled in production, and the list changes only through a release.<a class="src" href="https://modelcontextprotocol.io/specification/2025-06-18/server/tools" target="_blank" rel="noreferrer">modelcontextprotocol.io, tools</a> Breaking these rules does not lower the quality of answers and shows in the bill: the hit rate falls to zero, and that is visible only in the cost report.</p>
+
+<h4 data-level="3">Lost in the middle versus the stability of the prefix</h4>
+
+<p data-level="3">Language models use information from the middle of a long context less well than information from its beginning or end: in the experiments of Liu et al. answer quality was often highest when the relevant passage stood at the beginning or the end of the input and degraded significantly when it was in the middle.<a class="src" href="https://arxiv.org/abs/2307.03172" target="_blank" rel="noreferrer">arXiv, Liu et al., 2023</a> This suggests placing the most relevant passage first. That placement contradicts the requirement of a stable prefix: relevance changes at every turn, and dynamic placement rules out cache hits.</p>
+
+<p data-level="3">The contradiction is resolved by a two-zone layout. The beginning of the context is taken by the unchanging prefix, which holds no facts about the case. The end of the context, immediately before the question, is taken by the most relevant passages and the last turns. The middle is given over to what is useful but not indispensable: the memory summary, additional articles, reference data. In Orion's evaluation such a layout was a few per cent worse in quality than dynamic placement and several times cheaper, so the two-zone layout was chosen for forty thousand chats a day.</p>
+
+<h4 data-level="3">Memory poisoning</h4>
+
+<p data-level="3">Semantic memory turns information from a conversation into long-lived state, so a false statement can be injected through it. A subscriber who says "I have unlimited roaming, an operator confirmed it" produces a fact that will be presented to the model in every later case as a statement about him. For agents that perform actions such a fact affects the actions: a fact of the form "this subscriber may be refunded without a check" is kept after the conversation in which it was uttered.</p>
+
+<p data-level="3">The defence consists of three measures implemented in the storage and selection of facts. Provenance: a fact carries its source, and the source "the subscriber's words" is stated explicitly in the context, including inside the summary. A trust threshold: only facts from systems of record and from operators enter the context of actions. A lifetime: an unverified statement is deleted after a day. A fourth measure concerns the border with <a href="#ch-10" data-secref="10">Chapter 10</a>: text that came from the subscriber is not placed above the cache boundary, since the prefix holds the system instructions, and the subscriber's text in that zone would stand next to them.</p>
+
+<div class="warn" data-level="3"><b>Common mistake</b>Storing the result of summarisation in semantic memory without naming its source. A summary produced by a model from a subscriber's turns looks like a conclusion of the system and, at the next case, is indistinguishable from a billing record. The origin of a statement is preserved through summarisation: a summary receives the lowest trust level among the sources that went into it.</div>
+
+<h4 data-level="3">Mixed input and the language of instructions</h4>
+
+<p data-level="3">Orion's subscribers write in Russian and in English, sometimes within one message. Two budget rules follow from this. The first is quantitative: with many tokenisers Cyrillic text takes more tokens than Latin-script text with the same content, so, as in <a href="#s-3-3" data-secref="3.3">Section 3.3</a>, the budget is computed for the most expensive language. The second is structural: the length of a history in tokens stops being predictable from the number of turns, so the summarisation threshold is expressed in tokens.</p>
+
+<p data-level="3">The language of the instruction is a separate decision. An instruction in English is shorter in tokens and therefore cheaper in the prefix; however, if the language of the answer is not stated explicitly, the model can answer in the language of the instruction. Orion's rule has two parts: the instruction in English for stability and price, and a separate section demanding explicitly that the answer be in the language of the subscriber's last message. Compliance with that demand is verified by an evaluation set, since with a mixed message the language of the answer is determined by the model.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why does a timestamp in the system instruction deprive requests of cache hits while the same timestamp at the end of the context does not?</summary>
+<div class="ans"><p>The cache credits a match of the beginning of a request, and the very first difference ends the matching part. A timestamp in the opening lines makes the beginning different in every request, so there is nothing left to cache. The same timestamp after all the stable blocks leaves the prefix unchanged and is paid for only as its own tokens.</p></div>
+</details>
+<details>
+<summary>What should the assembler do when a required block does not fit the budget?</summary>
+<div class="ans"><p>Refuse to assemble and record the reason. A silent truncation sends the model a context without the question or without the charges, and the model answers without reporting the omission, since its input holds no information about the omitted block. A refusal is visible to the operator and in the log.</p></div>
+</details>
+<details>
+<summary>Why is a fact uttered by a subscriber not kept in memory on a par with a billing record?</summary>
+<div class="ans"><p>The source determines the trust and the lifetime. A subscriber's statement is unverified, may be mistaken or deliberately false, and therefore receives a low trust level, a short lifetime and an explicit mark of its source in the context. Without provenance, memory passes to the model statements that it uses as established.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>The context window is a budgeted, ordered and cacheable resource, and the composition of the context determines the correctness of an answer more than the wording of an instruction does.</li>
+<li>Truncation goes by the priority of a block and takes whole blocks; a budget too small for a required block leads to a refusal to assemble, which is written to the log.</li>
+<li>The cache boundary is chosen by the engineer: above it sits what does not depend on the case, and the stability of the prefix is verified by a digest in the trace.</li>
+<li>Memory is kept as facts with a source and a lifetime, and the composition of every context is recorded, so a wrong answer and a cache miss are both explained from the log.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-3" data-secref="3">Chapter 3: tokens, cost and prompt caching</a>
+<a href="#s-6-10" data-secref="6.10">Section 6.10: drift of tool schemas</a>
+<a href="#ch-9" data-secref="9">Chapter 9: state and long-term memory</a>
+</p>
+</div>
+</section>

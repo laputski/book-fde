@@ -1,0 +1,10 @@
+The text and the diagrams of the book "Forward Deployed Engineering"
+(the prose of parts/, the SVG diagrams, and the assembled fde-advanced.html
+with the exception of the code listings and the page script) are licensed
+under the Creative Commons Attribution 4.0 International licence
+(CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+
+Attribution: Alexander Laputski, fde.ragworld.org.
+
+The code listings and the page script are covered by the MIT licence in
+LICENSE.

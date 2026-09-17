@@ -1,0 +1,1063 @@
+<!-- ────────────────────────── CHAPTER 9 ────────────────────────── -->
+<section class="chapter" id="ch-9">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter nine</p>
+    <span class="strata" role="img" aria-label="Layers B, C and E: model and agent, tools, security">
+      <i></i><i data-s="B"></i><i data-s="C"></i><i></i><i data-s="E"></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-9"><span class="num">9</span>State, Memory and Long-Running Agents</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>tell a session, a thread, a run, a checkpoint and an event apart and assign each a store and a retention class;</li>
+<li>place checkpoints around a side effect so that a crashed process does not repeat the action;</li>
+<li>design human approval with a token bound to the action, an expiry and re-validation of preconditions;</li>
+<li>choose between managed sessions, a graph checkpointer and a workflow engine by their guarantees;</li>
+<li>keep memory and the event log so that the audit can be reconstructed and personal data erased on request.</li>
+</ul>
+</div>
+
+<h3 id="s-9-1"><span class="num">9.1</span>The task: KYC remediation</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Case file CF1 · Nordbank Regional</a></span>
+  <span class="tag">KYC</span>
+  <span class="tag">50,000 files</span>
+  <span class="tag">compliance</span>
+  <span>a regional bank</span>
+</div>
+
+<p>After a supervisory review, Nordbank must update the know-your-customer (KYC) due-diligence data in 50,000 customer files within twelve weeks. Each file's documents and contact history must be read, checked against the requirements and answered with an action: close the file, request documents, or raise the risk rating. Six compliance officers cannot review that volume within the deadline, so the review goes to an agent working with the bank's systems through the MCP server of <a href="#ch-6" data-secref="6">Chapter 6</a>.</p>
+
+<p>Two of the agent's actions, added to the server for this task, change data in external systems. The <code>request_documents</code> tool sends the customer a request through the CRM, and the customer perceives a duplicate request as a bank error. The <code>set_risk_rating</code> tool writes the rating into core banking, and raising it to high needs an officer's approval, which takes hours, or five days over a weekend. Both tools accept an idempotency key under the rules of <a href="#s-6-8" data-secref="6.8">Section 6.8</a>.</p>
+
+<p>Hence three requirements the agent of <a href="#ch-7" data-secref="7">Chapter 7</a> did not face. The process runs for weeks and continues after deploys, model-provider outages and the nightly maintenance window of core banking without losing a file or repeating an action. Waiting for an approval holds neither a process nor a thread. When the supervisor asks, for any customer, what the agent read, what it proposed and who approved it, the answer is taken from the event log.</p>
+
+<h3 id="s-9-2"><span class="num">9.2</span>Why agents pause, crash and resume</h3>
+
+<p>The agent of Chapter 7 worked within one request, so its state could be kept in process memory: the run finished before the process did. In remediation the relation is reversed: a file stays in progress for minutes to weeks, while a worker process runs until the next deploy. The five causes of stopping differ in duration: the weekly deploy, limits such as forty requests per second to core banking or the model provider's quota, the two-hour nightly maintenance window of core banking, an officer's wait of days, and a provider outage of hours.</p>
+
+<p>A process is not held through a wait: thousands of runs waiting for officers would occupy thousands of idle threads that terminate at every deploy or node preemption. The run is therefore described as data: its step, what it has done, what it awaits and which model versions it has pinned. A worker takes the run from the store, advances it and puts it back into the store, so waiting for a human is represented by a record in the store.</p>
+
+<dl class="def">
+<dt>Durable execution</dt>
+<dd>A way of executing a program in which its progress is saved to an external store at step boundaries, so that after a process stops any other process continues from the last saved boundary without repeating completed steps. In this scheme the process is a replaceable worker, and the run is carried by its saved state.</dd>
+</dl>
+
+<h3 id="s-9-3"><span class="num">9.3</span>The state model</h3>
+
+<p>The word "state" means different things in agent frameworks, and mixing them up causes storage mistakes: a copy of a passport ends up in a log kept for years, and an officer's decision in a cache kept for a day. The state model separates five entities, each with its own meaning, lifetime and place of storage. The definitions are stated independently of the API of any particular framework.</p>
+
+<dl class="def">
+<dt>Session</dt>
+<dd>The frame of an agent's work on one subject on behalf of one principal; at Nordbank, the review of one customer's file from queueing to the final action. A session records who is responsible, the purpose and the retention policies, and exists as long as the subject exists.</dd>
+<dt>Thread</dt>
+<dd>The ordered context history within a session that the model sees at the next step. A session may hold several threads, for instance the first review of a file and a second one after the customer replies.</dd>
+<dt>Run</dt>
+<dd>One attempt to execute the agent over a thread from start to a terminal state. A run pins the versions of the model, the prompts and the tool set, and carries a status by which the scheduler finds it.</dd>
+<dt>Checkpoint</dt>
+<dd>A snapshot of a run at a step boundary: the next step number, the state, the pending action and the record version. It is written conditionally on the version and is the point from which a resume starts.</dd>
+<dt>Event</dt>
+<dd>An immutable record of what happened: a model or tool call with its result, an interrupt, an approval, a resume. Events are only appended; a checkpoint is computed by folding events, and events cannot be reconstructed from a checkpoint.</dd>
+</dl>
+
+<p>Every field of these entities is assigned a retention class, which determines how long the record lives and what happens to it when the customer asks for erasure. The class is assigned when the data schema is designed. Nordbank has four classes.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Class</th><th>What it holds</th><th>Term</th><th>On an erasure request</th></tr></thead>
+<tbody>
+<tr><td>Operational</td><td>checkpoints, threads, working copies</td><td>until the run ends plus 30 days</td><td>deleted</td></tr>
+<tr><td>Audit</td><td>sessions, runs and the event skeleton: who, what, when, references to records, decisions</td><td>years, under anti-money-laundering law</td><td>kept</td></tr>
+<tr><td>Content</td><td>tool results and model answers with personal data</td><td>as operational</td><td>redacted, the skeleton stays</td></tr>
+<tr><td>Memory</td><td>facts about the customer across sessions</td><td>the record's term, with consent</td><td>deleted when consent is withdrawn</td></tr>
+</tbody></table></div>
+
+<p>A single event thus splits into parts of different classes: the skeleton is kept for years, while content such as a passport's text is kept for the term of working data. Hence the schema rule: the agent's state holds references to records in the systems of record and the versions of those records. Copies of documents are not placed in the state, because the bank keeps the original by law in the system of record, and a copy in a checkpoint creates one more instance of personal data.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 390" role="img" aria-label="Data model of state: a session contains threads, a thread contains runs, a run produces checkpoints and events; a checkpoint is derived by folding events, long-term memory is linked to the session through the subject, and each entity shows its store and its retention class, with the skeleton and the content of an event assigned to different classes" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar9a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="111" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Session</text>
+  <text x="111" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">principal · purpose · file</text>
+  <text x="111" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">relational DB</text>
+  <rect x="38" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="111" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">audit · years</text>
+
+  <rect x="238" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="329" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Thread</text>
+  <text x="329" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">context history</text>
+  <text x="329" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">relational DB</text>
+  <rect x="256" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="329" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">operational · 30 d</text>
+
+  <rect x="456" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="547" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Run</text>
+  <text x="547" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">pinned model and prompts</text>
+  <text x="547" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">relational DB</text>
+  <rect x="474" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="547" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">audit · years</text>
+
+  <rect x="674" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="765" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Checkpoint</text>
+  <text x="765" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">step · state · version</text>
+  <text x="765" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">conditional write</text>
+  <rect x="692" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="765" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">operational · 30 d</text>
+
+  <rect x="20" y="236" width="400" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="220" y="262" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Long-term memory</text>
+  <text x="220" y="282" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">subject · provenance · lifetime</text>
+  <text x="220" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">memory bank</text>
+  <rect x="130" y="318" width="180" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="220" y="333" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">lifetime · consent</text>
+
+  <rect x="456" y="236" width="400" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="656" y="262" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Event</text>
+  <text x="656" y="282" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">model or tool call · approval · resume</text>
+  <text x="656" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">append-only log</text>
+  <rect x="476" y="318" width="170" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="561" y="333" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">skeleton: audit · years</text>
+  <rect x="666" y="318" width="170" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="751" y="333" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">content: until erasure</text>
+
+  <line x1="202" y1="110" x2="230" y2="110" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="220" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="420" y1="110" x2="448" y2="110" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="438" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="638" y1="110" x2="666" y2="110" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="656" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="547" y1="176" x2="547" y2="228" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="555" y="206" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="765" y1="236" x2="765" y2="184" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar9a)"/>
+  <text x="773" y="214" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">fold of events</text>
+  <line x1="111" y1="176" x2="111" y2="228" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar9a)"/>
+  <text x="119" y="206" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">by subject</text>
+
+  <text x="440" y="380" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">A pill marks the retention class: how long the record lives and what happens to it on an erasure request.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> A checkpoint is computed by folding events, and events cannot be reconstructed from a checkpoint, so audit and replay rely on the event log, and the checkpoint shortens resumption. A retention class is assigned to each field, because within a single event the skeleton is kept for years while the content is erased on request.</figcaption>
+</figure>
+
+<h3 id="s-9-4"><span class="num">9.4</span>Checkpoint and resume semantics</h3>
+
+<p>Between two checkpoints a step executes, and after a crash all that is known about it is that it started. If the process stopped after the step but before the next checkpoint, the resumed run executes the step again, so every step executes at least once. Repeating a read increases cost, and repeating a write sends the customer a second letter, so write steps need a stronger guarantee.</p>
+
+<dl class="def">
+<dt>Effectively-once step</dt>
+<dd>A step that may execute several times but whose external effect is observed exactly once, because the recipient recognises the repetitions. It is achieved by combining an idempotency key at the tool with a side-effect ledger at the worker.</dd>
+<dt>Side-effect ledger</dt>
+<dd>A durable table of a run's side-effect intents and outcomes, keyed by idempotency key. The intent is written before the call and the outcome after; an intent without an outcome means the result is unknown and must be obtained by a retry with the same key or by a read at the recipient.</dd>
+</dl>
+
+<p>The placement rule: the checkpoint is written before the side effect, and the outcome is recorded after it. The step, the arguments and the key reach the store before the call, so a resumed run calls the tool with the same key; the outcome reaches the ledger after the call, and only then does the checkpoint advance. The ledger covers the steps marked by the side-effect flag that the loop of <a href="#s-7-3" data-secref="7.3">Section 7.3</a> already uses, and here the flag is kept in the durable store.</p>
+
+<p>The loop budget of <a href="#s-7-5" data-secref="7.5">Section 7.5</a> is state too and is kept in the checkpoint. A worker that resumes a run with reset counters grants it a fresh budget after every crash, and a run that keeps crashing on the same step spends tokens without limit. For the same reason the time budget is counted from the start of the run: a count from the start of the process would reset at every crash. Waiting for a human is not counted against this budget: the wait has its own deadline, set in <a href="#s-9-5" data-secref="9.5">Section 9.5</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 380" role="img" aria-label="State machine of a run: a KYC file enters the running state, inside which a side-effect step goes through a checkpoint, a call with a key and a record of the outcome; an interrupt moves the run to waiting for a human, an approval with a token moves it to resumed with re-validation of preconditions and back to running, after seven days the wait ends as expired, and from running the run reaches completed or failed; a process crash returns the run to its last checkpoint" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar9b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="160" width="110" height="40" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="75" y="185" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">KYC file</text>
+
+  <rect x="160" y="120" width="340" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="330" y="146" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Running</text>
+  <text x="486" y="146" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">running</text>
+  <rect x="176" y="162" width="88" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <text x="220" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">checkpoint</text>
+  <rect x="286" y="162" width="88" height="34" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="330" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">call, key</text>
+  <rect x="396" y="162" width="88" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <text x="440" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">record</text>
+  <line x1="264" y1="179" x2="284" y2="179" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar9b)"/>
+  <line x1="374" y1="179" x2="394" y2="179" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar9b)"/>
+  <text x="330" y="222" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">before · effect · after</text>
+
+  <rect x="560" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="650" y="66" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Waiting for human</text>
+  <text x="650" y="86" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">waiting_for_human</text>
+
+  <rect x="560" y="150" width="180" height="60" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="650" y="176" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Resumed</text>
+  <text x="650" y="196" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">re-validate preconditions</text>
+
+  <rect x="792" y="50" width="74" height="40" rx="20" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="829" y="75" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Expired</text>
+  <rect x="176" y="290" width="130" height="40" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="241" y="315" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Completed</text>
+  <rect x="354" y="290" width="130" height="40" rx="20" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="419" y="315" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Failed</text>
+
+  <line x1="130" y1="180" x2="152" y2="180" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <path d="M440,120 V70 H552" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="496" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">interrupt</text>
+  <line x1="650" y1="100" x2="650" y2="142" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="662" y="125" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">approval, token</text>
+  <line x1="740" y1="70" x2="784" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="762" y="62" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">7 days</text>
+  <line x1="560" y1="180" x2="508" y2="180" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <line x1="241" y1="240" x2="241" y2="282" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="251" y="268" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">result recorded</text>
+  <line x1="419" y1="240" x2="419" y2="282" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="429" y="268" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">non-retryable error</text>
+  <path d="M208,120 V96 H296 V112" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar9b)"/>
+  <text x="252" y="86" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">crash: resume from checkpoint</text>
+
+  <rect x="435" y="93" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <rect x="645" y="111" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <rect x="529" y="175" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <rect x="236" y="251" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+
+  <rect x="20" y="353" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <text x="40" y="362" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">a checkpoint is written on the transition; inside a side-effect step it precedes the call</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The checkpoint is written before the side effect and the outcome after it, so a run that crashes at any point continues from its last checkpoint, and waiting for a human is kept as a record in the store. An approval moves the run to re-validation of preconditions, and the action executes only after that re-validation.</figcaption>
+</figure>
+
+<p>An interrupt moves the run into waiting for a human and frees the process, an approval returns it to execution through re-validation of preconditions, and after seven days without an answer the run ends as expired. The naive version keeps state in process memory and loses it together with the process. The difference between the versions shows only when a process stops, so the considered version is tested by injecting failures at two points of a side-effect step.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Two ways to keep a run's state">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_state.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class Crm:
+    """External system: keeps its data across a restart of the worker."""
+    letters: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Worker:
+    crm: Crm
+    runs: dict[str, dict[str, Any]] = field(default_factory=dict)   # kept in process memory
+
+    def advance(self, customer: str) -&gt; str:
+        run = self.runs.setdefault(customer, {"step": "assess"})
+        if run["step"] == "assess":
+            run["missing"] = ["proof_of_address"]
+            run["step"] = "request"
+        elif run["step"] == "request":
+            self.crm.letters.append(customer)          # document request to the customer
+            run["step"] = "wait_for_customer"
+        return str(run["step"])
+
+
+if __name__ == "__main__":
+    crm = Crm()
+    worker = Worker(crm)
+    worker.advance("C-104233")
+    assert worker.advance("C-104233") == "wait_for_customer" and len(crm.letters) == 1
+
+    worker = Worker(crm)                               # a deploy: a new process
+    assert worker.runs == {}                           # files in progress are forgotten
+    worker.advance("C-104233")
+    worker.advance("C-104233")
+    assert len(crm.letters) == 2                       # the customer got a second request
+    print("the restart erased the state, and the customer was asked twice")</code></pre>
+    </figure>
+    <p>The runs' state is kept in a process dictionary, and while the process runs the files advance without errors. A deploy creates a process with an empty dictionary. The new worker has no record of which files were in progress, so it starts the file again, and the customer receives a second request. The record of the first request was kept in the same dictionary and was lost with it.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">checkpoint_store.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+
+class Crash(Exception):
+    """The worker process stopped: a deploy, node preemption, out of memory."""
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    run_id: str
+    next_step: int
+    state: dict[str, Any]
+    version: int
+
+
+class CheckpointStore(Protocol):
+    def load(self, run_id: str) -&gt; Checkpoint | None: ...
+    def save(self, checkpoint: Checkpoint) -&gt; None: ...
+
+
+@dataclass
+class InMemoryCheckpointStore:
+    rows: dict[str, Checkpoint] = field(default_factory=dict)
+
+    def load(self, run_id: str) -&gt; Checkpoint | None:
+        return self.rows.get(run_id)
+
+    def save(self, checkpoint: Checkpoint) -&gt; None:
+        current = self.rows.get(checkpoint.run_id)
+        if checkpoint.version != (current.version if current else 0) + 1:
+            raise RuntimeError("the run was already advanced by another worker")
+        self.rows[checkpoint.run_id] = checkpoint
+
+
+@dataclass
+class SideEffectLedger:
+    """Intents and outcomes of side effects by idempotency key."""
+    intents: dict[str, dict[str, Any]] = field(default_factory=dict)
+    outcomes: dict[str, str] = field(default_factory=dict)
+
+    def intend(self, key: str, tool: str, args: dict[str, Any]) -&gt; None:
+        self.intents.setdefault(key, {"tool": tool, "args": args})
+
+    def record(self, key: str, outcome: str) -&gt; None:
+        self.outcomes[key] = outcome
+
+    def pending(self) -&gt; list[str]:
+        return [k for k in self.intents if k not in self.outcomes]
+
+
+@dataclass
+class FakeCrm:
+    """Tools of the Chapter 6 MCP server: the document request remembers keys."""
+    letters: list[str] = field(default_factory=list)
+    by_key: dict[str, str] = field(default_factory=dict)
+    calls: int = 0
+    reads: int = 0
+
+    def documents(self, customer: str) -&gt; list[str]:
+        self.reads += 1
+        return ["passport"]
+
+    def request_documents(self, key: str, customer: str, missing: list[str]) -&gt; str:
+        self.calls += 1
+        if key not in self.by_key:
+            self.letters.append(customer)
+            self.by_key[key] = f"REQ-{len(self.letters)}"
+        return self.by_key[key]
+
+
+def effect_key(run_id: str, step: int, tool: str, args: dict[str, Any]) -&gt; str:
+    raw = json.dumps([run_id, step, tool, args], sort_keys=True, ensure_ascii=False)
+    return hashlib.blake2b(raw.encode("utf-8"), digest_size=12).hexdigest()
+
+
+Step = Callable[[str, int, dict[str, Any]], dict[str, Any]]
+REQUIRED = {"passport", "proof_of_address"}
+
+
+@dataclass
+class Runner:
+    store: CheckpointStore
+    ledger: SideEffectLedger
+    crm: FakeCrm
+    crash_at: str = ""                  # fault injection point for the check
+
+    def run(self, run_id: str, customer: str) -&gt; dict[str, Any]:
+        steps: list[Step] = [self.read, self.assess, self.request, self.close]
+        cp = self.store.load(run_id) or Checkpoint(run_id, 0, {"customer": customer}, 0)
+        state, version = dict(cp.state), cp.version
+        for n in range(cp.next_step, len(steps)):
+            state = steps[n](run_id, n, state)
+            version += 1
+            self.store.save(Checkpoint(run_id, n + 1, state, version))
+        return state
+
+    def read(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        return {**state, "docs": self.crm.documents(state["customer"])}
+
+    def assess(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        return {**state, "missing": sorted(REQUIRED - set(state["docs"]))}
+
+    def request(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        args = {"customer": state["customer"], "missing": state["missing"]}
+        key = effect_key(run_id, n, "request_documents", args)
+        if key in self.ledger.outcomes:                      # outcome recorded: do not call
+            return {**state, "request": self.ledger.outcomes[key]}
+        self.ledger.intend(key, "request_documents", args)   # before the side effect
+        outcome = self.crm.request_documents(key, args["customer"], args["missing"])
+        if self.crash_at == "after_call":
+            raise Crash("the outcome of the call was not recorded")
+        self.ledger.record(key, outcome)                     # after the side effect
+        if self.crash_at == "after_record":
+            raise Crash("the checkpoint was not advanced")
+        return {**state, "request": outcome}
+
+    def close(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        return {**state, "status": "waiting_for_customer"}
+
+
+if __name__ == "__main__":
+    for crash_at, calls in (("after_call", 2), ("after_record", 1)):
+        store, ledger, crm = InMemoryCheckpointStore(), SideEffectLedger(), FakeCrm()
+        try:
+            Runner(store, ledger, crm, crash_at=crash_at).run("run-1", "C-104233")
+            raise AssertionError("the failure must happen")
+        except Crash:
+            pass
+        saved = store.load("run-1")
+        assert saved is not None and saved.next_step == 2       # reads and assessment are saved
+        assert len(ledger.pending()) == (1 if crash_at == "after_call" else 0)
+        final = Runner(store, ledger, crm).run("run-1", "C-104233")   # a new process
+        assert final["status"] == "waiting_for_customer" and final["request"] == "REQ-1"
+        assert crm.letters == ["C-104233"] and crm.calls == calls and crm.reads == 1
+        assert ledger.pending() == []
+    print("the run resumed from its checkpoint, the customer got one letter")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="if checkpoint.version != (current.version">line 36</span><p>The checkpoint is accepted only with a version one greater than the stored one. Two workers that picked up the same run do not overwrite each other's work: the second one is refused.</p></div>
+        <div><span class="at" data-anchor="def pending(self)">line 53</span><p>An intent without an outcome tells "there was no call" from "the outcome is unknown". For a tool without a key, the unknown outcome is established by a read at the recipient, and if the read is impossible the file is handed to a human.</p></div>
+        <div><span class="at" data-anchor="raw = json.dumps([run_id, step, tool, args]">line 78</span><p>The key is derived from the run, the step and the arguments taken from the checkpoint, so the resumed process computes the same key as the crashed one.</p></div>
+        <div><span class="at" data-anchor="self.ledger.intend(key">line 114</span><p>The intent is written before the call and serves as the checkpoint before the side effect. If the outcome is already recorded (this is checked before the intent is written), a repeated step reduces to a read of the ledger.</p></div>
+        <div><span class="at" data-anchor="for crash_at, calls in">line 128</span><p>The check runs through both failure points. After a failure before the outcome is recorded, the CRM receives a second call and recognises the key; after a failure before the checkpoint there is no second call. Either way there is one letter, and the documents are read once.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns where the run is stored. In the naive version the run's state is lost with the process; in the considered one it is kept in an external store, and the process can be replaced in the middle of a step.</p>
+    <p>The second difference is granularity. A checkpoint at every step boundary lets a resume skip repeated reads and assessments.</p>
+    <p>The third difference concerns the handling of the side effect. When the intent is written before the call and the outcome after it, a failure at any point leads either to a read of the ledger or to a retry that the recipient recognises by its key.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Common mistake</b>Writing the checkpoint only after the write tool's call, "to save the result together with the step". A crash between the call and the write leaves the store in its pre-step state, and if the key depends on the time or an attempt counter, the resumed run derives a new key and the recipient executes the retry as a new action.</div>
+
+<div class="note" data-level="2">The store and the ledger of the listing are kept in process memory so that the listing can be checked without external systems. In production, recording the outcome and advancing the checkpoint happen in one transaction conditional on the version; without the transaction one more failure window opens between the two writes, and it needs its own test.</div>
+
+<h3 id="s-9-5"><span class="num">9.5</span>The human in the loop</h3>
+
+<p>Raising the risk rating requires an officer's decision, and days pass between the agent's proposal and the human's decision. The mechanism linking the two moments answers three questions: which action was approved, until when, and whether the grounds of the proposal still hold at the moment of execution. The answers are the interrupt, the approval token and the re-validation of preconditions.</p>
+
+<dl class="def">
+<dt>Human-in-the-loop interrupt</dt>
+<dd>A transition of the run into waiting in which the worker writes a checkpoint with the proposed action, a snapshot of the preconditions and a response deadline, and frees the process. The run continues only on an external event: an approval, a rejection or the deadline passing.</dd>
+<dt>Approval token</dt>
+<dd>A signed record of a human decision bound to the run, to a hash of the action's name and arguments, and to an expiry. The token permits only the action the approver saw and loses force on any change to the arguments.</dd>
+</dl>
+
+<p>Binding to the arguments closes a variant of the confused deputy vulnerability of <a href="#s-6-10" data-secref="6.10">Section 6.10</a>: the officer's approval is a right the agent does not have, and without the binding the agent would apply that right to a different action. The officer approves the action together with its arguments: "rating high for customer C-104233 on a match with the politically exposed persons list", and if the resumed model proposes restricting the account instead, the token does not permit that action. The expiry follows how fast the grounds go stale: seven days at Nordbank, after which the run ends as expired and the file returns to the queue. The interface that shows the officer the arguments, grounds and expiry is covered in <a href="#s-11-4" data-secref="11.4">Section 11.4</a>.</p>
+
+<p>A valid token is not sufficient for execution: in five days the customer may have uploaded a new passport, and another process may have changed the risk rating. On resume the worker therefore reads again the preconditions recorded in the interrupt. A match permits the action, and a mismatch returns the run to review, because the approval refers to the grounds the officer saw.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">hitl_interrupt.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Any
+
+DAY = 86_400.0
+SIGNING_KEY = b"demo-only"              # in production the signing key is kept in KMS
+
+
+@dataclass(frozen=True)
+class Action:
+    tool: str
+    args: dict[str, Any]
+
+    def digest(self) -&gt; str:
+        raw = json.dumps({"tool": self.tool, "args": self.args}, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class Interrupt:
+    run_id: str
+    action: Action
+    preconditions: dict[str, Any]       # what the proposal rests on
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class ApprovalToken:
+    run_id: str
+    action_digest: str
+    approver: str
+    expires_at: float
+    signature: str
+
+
+def sign(run_id: str, digest: str, approver: str, expires_at: float) -&gt; str:
+    message = f"{run_id}|{digest}|{approver}|{expires_at}".encode()
+    return hmac.new(SIGNING_KEY, message, hashlib.sha256).hexdigest()
+
+
+def approve(interrupt: Interrupt, approver: str) -&gt; ApprovalToken:
+    digest = interrupt.action.digest()
+    return ApprovalToken(interrupt.run_id, digest, approver, interrupt.expires_at,
+                         sign(interrupt.run_id, digest, approver, interrupt.expires_at))
+
+
+class ResumeRefused(Exception):
+    def __init__(self, code: str) -&gt; None:
+        super().__init__(code)
+        self.code = code
+
+
+def resume(interrupt: Interrupt, token: ApprovalToken, action: Action, now: float,
+           read_preconditions: Callable[[], dict[str, Any]]) -&gt; Action:
+    """Allows the action only if exactly it was approved, in time and on the same grounds."""
+    expected = sign(token.run_id, token.action_digest, token.approver, token.expires_at)
+    if not hmac.compare_digest(expected, token.signature):
+        raise ResumeRefused("bad_signature")
+    if token.run_id != interrupt.run_id or token.action_digest != action.digest():
+        raise ResumeRefused("action_changed")
+    if now &gt;= token.expires_at:
+        raise ResumeRefused("expired")
+    if read_preconditions() != interrupt.preconditions:
+        raise ResumeRefused("preconditions_changed")
+    return action
+
+
+if __name__ == "__main__":
+    bank = {"risk_rating": "medium", "account": "active", "kyc_docs_version": 3,
+            "screening_date": "2026-03-02"}
+    action = Action("set_risk_rating", {"customer": "C-104233", "rating": "high", "reason": "pep_match"})
+    interrupt = Interrupt("run-7", action, dict(bank), expires_at=7 * DAY)
+    token = approve(interrupt, approver="officer-12")
+
+    def outcome(act: Action, now: float, tok: ApprovalToken = token) -&gt; str:
+        try:
+            resume(interrupt, tok, act, now, lambda: dict(bank))
+        except ResumeRefused as refused:
+            return refused.code
+        return "allowed"
+
+    assert outcome(action, now=2 * DAY) == "allowed"
+    other = Action("restrict_account", {"customer": "C-104233"})
+    assert outcome(other, now=2 * DAY) == "action_changed"         # the model changed the action
+    assert outcome(action, now=8 * DAY) == "expired"
+    assert outcome(action, 2 * DAY, replace(token, approver="agent")) == "bad_signature"
+    bank["kyc_docs_version"] = 4                                    # the customer uploaded a document
+    assert outcome(action, now=5 * DAY) == "preconditions_changed"
+    print("the approval is bound to the action, expires and does not survive new grounds")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def digest(self)">line 19</span><p>The hash is built over the name and the arguments with sorted keys, so it does not depend on the order of fields and changes when any argument changes.</p></div>
+  <div><span class="at" data-anchor="preconditions: dict[str, Any]">line 28</span><p>The snapshot holds only the data the proposal depends on: the risk rating, the account status, the version of the document set.</p></div>
+  <div><span class="at" data-anchor="message = f">line 42</span><p>The signature binds the run, the action hash, the approver and the expiry, so the token can be kept in a checkpoint and passed through a queue without trusting the store or the queue.</p></div>
+  <div><span class="at" data-anchor="if now">line 66</span><p>The expiry is checked at the moment of execution against a clock passed from outside. An approval executed after a deploy on the eighth day has expired, even if it was received in time.</p></div>
+  <div><span class="at" data-anchor="if read_preconditions() != interrupt.preconditions:">line 68</span><p>A precondition mismatch is handled separately from token errors: the run returns to review, and a new proposal goes through a new interrupt.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Storing the approval as an <code>approved: true</code> flag in the run's state. The flag holds no record of what was approved or when, so it permits any action the model proposes after resuming and has no expiry.</div>
+
+<h3 id="s-9-6"><span class="num">9.6</span>Durable execution</h3>
+
+<p>The checkpoint, the ledger and the interrupts are implemented in application code or provided by a platform. Durable execution platforms fall into three families that differ in how much of the guarantee they take on. The families are compared here by a single question: what happens if the process stops in the middle of a write tool's call.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 420" role="img" aria-label="Sequence diagram with four participants, the worker, the state store, the MCP server and the CRM: the worker writes a checkpoint and an intent with a key, the call creates a letter in the CRM, but a deploy stops the process before the outcome is recorded; a new process loads the checkpoint, sees an intent without an outcome and retries the call with the same key, the server returns the stored result without calling the CRM, and the worker records the outcome and advances the checkpoint" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar9c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="105" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">worker</text>
+  <rect x="250" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="335" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">state store</text>
+  <rect x="480" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="565" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">MCP server</text>
+  <rect x="700" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.6"/>
+  <text x="785" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CRM</text>
+  <line x1="105" y1="48" x2="105" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="335" y1="48" x2="335" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="565" y1="48" x2="565" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="785" y1="48" x2="785" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="Before the side effect the worker saves a checkpoint and writes an intent with the idempotency key to the ledger.">
+    <line x1="105" y1="78" x2="327" y2="78" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="71" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">checkpoint: step 2</text>
+    <line x1="105" y1="104" x2="327" y2="104" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="97" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">intent k-7f3: pending</text>
+  </g>
+
+  <g data-step="2" data-caption="The call reaches the CRM and creates a letter, the server remembers the key, but the response is lost and a deploy stops the process before the outcome is recorded.">
+    <line x1="105" y1="132" x2="557" y2="132" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="450" y="125" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">request_documents(k-7f3)</text>
+    <line x1="565" y1="156" x2="777" y2="156" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <rect x="770" y="162" width="30" height="16" rx="3" fill="var(--sA)" opacity="0.85"/>
+    <text x="808" y="175" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">letter no. 1</text>
+    <line x1="777" y1="192" x2="573" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="675" y="186" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">REQ-1</text>
+    <rect x="550" y="198" width="30" height="16" rx="3" fill="var(--sC)" opacity="0.85"/>
+    <text x="588" y="211" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">k-7f3 → REQ-1</text>
+    <line x1="557" y1="230" x2="113" y2="230" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="450" y="224" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">response lost</text>
+    <rect x="90" y="238" width="30" height="16" rx="3" fill="currentColor" opacity="0.85"/>
+    <text x="128" y="251" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">process A stopped by a deploy</text>
+  </g>
+
+  <g data-step="3" data-caption="A new process loads the checkpoint and finds an intent without an outcome in the ledger: the result of the call is unknown.">
+    <line x1="20" y1="266" x2="860" y2="266" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="675" y="260" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">process B takes the run</text>
+    <line x1="105" y1="290" x2="327" y2="290" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="283" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">load run-1</text>
+    <line x1="335" y1="316" x2="113" y2="316" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="309" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">step 2 · k-7f3: pending</text>
+  </g>
+
+  <g data-step="4" data-caption="The server recognises the retry with the same key and returns the stored result without calling the CRM; the worker records the outcome and advances the checkpoint.">
+    <line x1="105" y1="344" x2="557" y2="344" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="450" y="337" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">retry with k-7f3</text>
+    <rect x="550" y="350" width="30" height="16" rx="3" fill="var(--sC)" opacity="0.85"/>
+    <text x="588" y="363" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">key known, CRM not called</text>
+    <line x1="557" y1="382" x2="113" y2="382" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="450" y="375" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">REQ-1</text>
+    <line x1="105" y1="406" x2="327" y2="406" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="399" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">outcome · checkpoint: step 3</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The data of the state store or the engine cannot show whether a call whose response was lost has executed. The effect happens once because of an intent in the worker's ledger and an idempotency key at the recipient: the recipient answers the retry after a crash with the stored result. The buttons under the diagram reveal it step by step.</figcaption>
+</figure>
+
+<p>The guarantees of any platform end at the tool call: the platform makes writes to its own store atomic and does not control actions in the CRM. So no family makes an external effect happen once without an idempotency key at the recipient. The families differ in which remaining work they perform, as the table shows.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Family</th><th>What is saved</th><th>What it guarantees</th><th>What is left to the engineer</th></tr></thead>
+<tbody>
+<tr><td>Managed sessions</td><td>session events and state</td><td>history and state across processes</td><td>step boundaries, the side-effect ledger, interrupts</td></tr>
+<tr><td>Graph checkpointer (LangGraph)</td><td>a graph snapshot after every step</td><td>resume from the last step, interrupts</td><td>idempotent nodes</td></tr>
+<tr><td>Workflow engine (Temporal)</td><td>an event history with activity results</td><td>code replay without repeating completed activities, timers lasting days</td><td>deterministic code, idempotent activities, code versions</td></tr>
+</tbody></table></div>
+
+<p>Managed sessions keep the events written by the application and do not determine where to resume a run: a call event without a result is handled by application code. A graph checkpointer saves a snapshot of the state after every step and resumes a thread from the last completed step.<a class="src" href="https://docs.langchain.com/oss/python/langgraph/checkpointers" target="_blank" rel="noreferrer">docs.langchain.com, LangGraph checkpointers</a> On resume, the node that raised the interrupt executes from its beginning, so a side effect placed in the node before the <code>interrupt</code> call repeats on every resume.<a class="src" href="https://docs.langchain.com/oss/python/langgraph/interrupts" target="_blank" rel="noreferrer">docs.langchain.com, LangGraph interrupts</a> A workflow engine replays the workflow code over its event history and substitutes the recorded results of completed activities for new calls, so the workflow code must be deterministic.<a class="src" href="https://docs.temporal.io/workflow-definition" target="_blank" rel="noreferrer">docs.temporal.io, Workflow Definition</a> An activity whose completion did not reach the history is executed again, so one activity may execute more than once.<a class="src" href="https://docs.temporal.io/activity-definition" target="_blank" rel="noreferrer">docs.temporal.io, Activity Definition</a></p>
+
+<p>The replay mechanism is also used for the audit of <a href="#s-9-8" data-secref="9.8">Section 9.8</a>; the listing shows the mechanism in minimal form. The agent code reaches the model and the tools through an interface with two implementations: an executing one that calls and records every outcome, and a replaying one that only reads the log.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">replay.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class Event:
+    seq: int
+    kind: str                           # "model" or "tool"
+    name: str
+    args: dict[str, Any]
+    result: str
+
+
+class ReplayDivergence(Exception):
+    """On replay the code asked for something other than what the log records."""
+
+
+class AgentIO(Protocol):
+    def call_model(self, prompt: str) -&gt; str: ...
+    def call_tool(self, name: str, args: dict[str, Any]) -&gt; str: ...
+
+
+@dataclass
+class LiveIO:
+    """Execution: calls the model and the tools and records every outcome."""
+    model: Callable[[str], str]
+    tools: dict[str, Callable[[dict[str, Any]], str]]
+    log: list[Event] = field(default_factory=list)
+
+    def _append(self, kind: str, name: str, args: dict[str, Any], result: str) -&gt; str:
+        self.log.append(Event(len(self.log), kind, name, args, result))
+        return result
+
+    def call_model(self, prompt: str) -&gt; str:
+        return self._append("model", "generate", {"prompt": prompt}, self.model(prompt))
+
+    def call_tool(self, name: str, args: dict[str, Any]) -&gt; str:
+        return self._append("tool", name, args, self.tools[name](args))
+
+
+@dataclass
+class ReplayIO:
+    """Replay: returns the recorded outcomes in order and calls nothing."""
+    log: list[Event]
+    position: int = 0
+
+    def _next(self, kind: str, name: str, args: dict[str, Any]) -&gt; str:
+        if self.position &gt;= len(self.log):
+            raise ReplayDivergence(f"the log ended at event {self.position}")
+        event = self.log[self.position]
+        if (event.kind, event.name, event.args) != (kind, name, args):
+            raise ReplayDivergence(f"event {self.position}: recorded {event.name}, requested {name}")
+        self.position += 1
+        return event.result
+
+    def call_model(self, prompt: str) -&gt; str:
+        return self._next("model", "generate", {"prompt": prompt})
+
+    def call_tool(self, name: str, args: dict[str, Any]) -&gt; str:
+        return self._next("tool", name, args)
+
+
+def assess_file(io: AgentIO, customer: str) -&gt; dict[str, str]:
+    """Agent code: the same in execution and on replay."""
+    docs = io.call_tool("search_documents", {"customer": customer})
+    screening = io.call_tool("screen_sanctions", {"customer": customer})
+    decision = io.call_model(f"documents: {docs}\nscreening: {screening}")
+    return {"customer": customer, "decision": decision}
+
+
+if __name__ == "__main__":
+    documents = {"C-104233": "passport 2019, no proof of address"}
+    sanctions = {"C-104233": "no match"}
+    calls = {"tools": 0, "model": 0}
+
+    def table_tool(table: dict[str, str]) -&gt; Callable[[dict[str, Any]], str]:
+        def handler(args: dict[str, Any]) -&gt; str:
+            calls["tools"] += 1
+            return table[args["customer"]]
+        return handler
+
+    def sampled_model(prompt: str) -&gt; str:
+        calls["model"] += 1
+        return f"request_proof_of_address (sample {calls['model']})"
+
+    live = LiveIO(sampled_model, {"search_documents": table_tool(documents),
+                                  "screen_sanctions": table_tool(sanctions)})
+    decided = assess_file(live, "C-104233")
+    stored = json.dumps([asdict(e) for e in live.log], ensure_ascii=False)
+
+    documents["C-104233"] = "passport 2026, electricity bill"        # the data has changed
+    sanctions["C-104233"] = "possible match"
+    log = [Event(**row) for row in json.loads(stored)]
+    assert assess_file(ReplayIO(log), "C-104233") == decided
+    assert calls == {"tools": 2, "model": 1}                        # the replay called nothing
+
+    def changed_agent(io: AgentIO, customer: str) -&gt; dict[str, str]:
+        io.call_tool("get_account", {"customer": customer})          # a step of the new code version
+        return assess_file(io, customer)
+
+    try:
+        changed_agent(ReplayIO(log), "C-104233")
+        raise AssertionError("a divergence between code and log must be detected")
+    except ReplayDivergence:
+        pass
+    print("the decision was restored from the log without calling the model or tools")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="class AgentIO(Protocol):">line 22</span><p>The agent code reaches external systems only through this interface, so everything non-deterministic ends up in the log. Reaching the network or the clock around the interface would make the replay wrong.</p></div>
+  <div><span class="at" data-anchor="if (event.kind, event.name, event.args) != (kind, name, args):">line 55</span><p>The replay checks each request against the record. Without the check, changed code would receive the results of other requests in order and, without reporting an error, build a different decision out of past data.</p></div>
+  <div><span class="at" data-anchor="assert calls ==">line 99</span><p>The call counters did not change, although the documents and the screening differ by the time of the replay: the replay restored the decision made on the data available at execution time.</p></div>
+  <div><span class="at" data-anchor="except ReplayDivergence:">line 108</span><p>A code version with an additional step diverges from the log at the first event, and the replay ends with a <code>ReplayDivergence</code> exception.</p></div>
+</div>
+</figure>
+
+<h3 id="s-9-7"><span class="num">9.7</span>Long-term memory</h3>
+
+<p>Some facts are needed after the run and the session have ended: at the periodic review a year later, the agent needs to know that the customer reported a move and that the officer rejected a risk increase. The kinds of memory are described in <a href="#s-4-6" data-secref="4.6">Section 4.6</a>. This section covers storage: the origin of a record, how long it is kept and the legal ground for keeping it.</p>
+
+<p>Every memory record carries provenance, its source and a reference into it, and the source fixes the record's kind. Data from systems of record and officers' decisions are facts the agent may act on. The customer's words are claims: "moved to Oslo in March" stays a claim until a document confirms the address, and never becomes a precondition of an action, however often the customer repeats it.</p>
+
+<p>The lifetime is set by how fast the record goes stale: an unconfirmed claim is kept for a few days, an officer's decision until the next review. The legal ground for processing data for KYC is the bank's legal obligation, and memory across sessions is not required by that obligation. Nordbank therefore keeps such memory only with the customer's consent, and withdrawing consent deletes its records.</p>
+
+<p>Some things are never remembered, whatever the consent. A suspicion of money laundering is not written to stores from which it could reach a conversation with the customer, because anti-money-laundering law forbids telling the customer that information about a suspicious transaction is being transmitted.<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32015L0849" target="_blank" rel="noreferrer">eur-lex.europa.eu, Directive (EU) 2015/849, Art. 39</a> Special categories of personal data, credentials and document numbers are not remembered either. The ban is expressed as a list of topics that code checks before writing, so it does not depend on whether the model follows instructions.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">memory_bank.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+DAY = 86_400.0
+NEVER_REMEMBER = frozenset({"suspicious_activity", "special_category", "credentials", "document_number"})
+
+
+class Source(StrEnum):
+    SYSTEM_OF_RECORD = "system_of_record"
+    OFFICER = "officer"
+    CUSTOMER = "customer"
+
+
+@dataclass(frozen=True)
+class Record:
+    subject: str
+    topic: str
+    text: str
+    source: Source
+    source_ref: str                     # a record in the source or a log event
+    created_at: float
+    ttl_s: float
+
+    @property
+    def is_claim(self) -&gt; bool:
+        return self.source is Source.CUSTOMER          # the customer's words: a claim, not a fact
+
+
+class ForbiddenTopic(Exception):
+    """This topic is never remembered, whatever the consent."""
+
+
+@dataclass
+class MemoryBank:
+    now: Callable[[], float]
+    consent: dict[str, bool] = field(default_factory=dict)
+    rows: list[Record] = field(default_factory=list)
+
+    def remember(self, record: Record) -&gt; bool:
+        if record.topic in NEVER_REMEMBER:
+            raise ForbiddenTopic(record.topic)
+        if not self.consent.get(record.subject, False):
+            return False
+        self.rows.append(record)
+        return True
+
+    def recall(self, subject: str) -&gt; list[Record]:
+        t = self.now()
+        return [r for r in self.rows if r.subject == subject and t - r.created_at &lt; r.ttl_s]
+
+    def facts_for_action(self, subject: str) -&gt; list[Record]:
+        return [r for r in self.recall(subject) if not r.is_claim]
+
+    def render(self, subject: str) -&gt; list[str]:
+        return [f"customer claims ({r.source_ref}): {r.text}" if r.is_claim
+                else f"fact ({r.source.value}, {r.source_ref}): {r.text}"
+                for r in self.recall(subject)]
+
+    def withdraw_consent(self, subject: str) -&gt; int:
+        self.consent[subject] = False
+        before = len(self.rows)
+        self.rows = [r for r in self.rows if r.subject != subject]
+        return before - len(self.rows)
+
+
+if __name__ == "__main__":
+    clock = {"t": 0.0}
+    bank = MemoryBank(now=lambda: clock["t"])
+    moved = Record("C-104233", "address", "moved to Oslo in March", Source.CUSTOMER,
+                   "event:run-1/14", created_at=0.0, ttl_s=7 * DAY)
+    assert not bank.remember(moved) and bank.rows == []           # no consent: nothing is stored
+
+    bank.consent["C-104233"] = True
+    decision = Record("C-104233", "risk_decision", "risk increase rejected", Source.OFFICER,
+                      "approval:run-1/officer-12", created_at=0.0, ttl_s=365 * DAY)
+    assert bank.remember(moved) and bank.remember(decision)
+    clock["t"] = 2 * DAY
+    assert [r.topic for r in bank.facts_for_action("C-104233")] == ["risk_decision"]
+    assert bank.render("C-104233")[0].startswith("customer claims")
+    clock["t"] = 10 * DAY
+    assert [r.topic for r in bank.recall("C-104233")] == ["risk_decision"]   # the claim has expired
+    try:
+        bank.remember(Record("C-104233", "suspicious_activity", "…", Source.OFFICER, "sar:17", 0.0, DAY))
+        raise AssertionError("a suspicion is not remembered")
+    except ForbiddenTopic:
+        pass
+    assert bank.withdraw_consent("C-104233") == 2 and bank.recall("C-104233") == []
+    print("memory tells facts from claims, expires and respects consent")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="NEVER_REMEMBER = frozenset(">line 8</span><p>Forbidden topics are checked before consent and do not depend on it. An attempt to record such a topic is a bug in the calling code and is therefore expressed as an exception.</p></div>
+  <div><span class="at" data-anchor="def is_claim(self)">line 28</span><p>The kind of a record is computed from its source, so the writing code cannot declare the customer's words a fact.</p></div>
+  <div><span class="at" data-anchor="r.created_at &lt; r.ttl_s">line 52</span><p>Expired records are not returned even if not yet physically deleted, and the correctness of reads does not depend on the schedule of the deletion job.</p></div>
+  <div><span class="at" data-anchor="def withdraw_consent(self">line 62</span><p>Withdrawing consent deletes the records from memory, while the systems of record keep their data: the officer's decision is kept in core banking, and the memory record was a copy of it.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Writing the agent's conclusions about a customer's suspiciousness into long-term memory "so that the next conversation is informed". Memory is added to the context of any agent that works with the customer, including the contact-centre assistant, and a conclusion about a suspicion may be voiced in a conversation with the customer.</div>
+
+<h3 id="s-9-8"><span class="num">9.8</span>Audit and replay</h3>
+
+<p>The supervisor asks why the risk rating of customer C-104233 was raised in March. The answer consists of the run's events: the documents read, the screening, the proposal, the officer, the approval time, the matching preconditions. The audit reduces to reading the log, provided the log suffices to reconstruct the decision without consulting systems that have changed since.</p>
+
+<p>Hence the rule: the log keeps both the arguments and the results of calls, although this increases the size of the log. Repeating the call six months later returns the current version of the documents and the current sanctions list, and such data yields the decision the agent would take today. Replay therefore reads the results from the log and never calls tools, as in the <code>replay.py</code> listing.</p>
+
+<p>Nor is the model called during replay: resampling does not guarantee the same text even at zero temperature. Calling the model on past data is used in a counterfactual run of a new version, which is part of evaluation and is described in <a href="#s-12-7" data-secref="12.7">Section 12.7</a>. An audit that recomputes decisions obtains the result of a new computation, which may differ from the decision that was made.</p>
+
+<p>A log with tool results contains personal data, and the requirement to keep the log for audit conflicts with the data subject's right to erasure.<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679" target="_blank" rel="noreferrer">eur-lex.europa.eu, GDPR, Art. 17</a> The retention classes of <a href="#s-9-3" data-secref="9.3">Section 9.3</a> resolve the conflict: the event skeleton stays for the term set by law,<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32015L0849" target="_blank" rel="noreferrer">eur-lex.europa.eu, Directive (EU) 2015/849, Art. 40</a> while the content is redacted. If the customer is under investigation, erasure is deferred, and the deferred request is also written to the audit.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">retention.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+DAY = 86_400.0
+REDACTED = "[erased]"
+
+
+@dataclass
+class Record:
+    run_id: str
+    subject: str
+    kind: str                           # "event": audit; "checkpoint": operational class
+    skeleton: dict[str, str]            # what, who, when, references to systems of record
+    content: dict[str, str]             # copies of personal data
+    run_ended_at: float | None = None
+
+
+@dataclass
+class RetentionEnforcer:
+    records: list[Record]
+    legal_hold: set[str] = field(default_factory=set)
+    operational_ttl_s: float = 30 * DAY
+    audit: list[dict[str, str]] = field(default_factory=list)
+
+    def erase(self, subject: str, request_id: str, now: float) -&gt; str:
+        if subject in self.legal_hold:
+            self.audit.append({"request": request_id, "subject": subject, "outcome": "deferred"})
+            return "deferred"
+        erased = 0
+        for r in self.records:
+            if r.subject == subject and any(v != REDACTED for v in r.content.values()):
+                r.content = dict.fromkeys(r.content, REDACTED)
+                r.skeleton = {**r.skeleton, "erased_by": request_id}
+                erased += 1
+        self.audit.append({"request": request_id, "subject": subject, "outcome": "erased",
+                           "records": str(erased), "at": str(now)})
+        return "erased"
+
+    def purge_operational(self, now: float) -&gt; int:
+        def expired(r: Record) -&gt; bool:
+            return (r.kind == "checkpoint" and r.run_ended_at is not None
+                    and now - r.run_ended_at &gt; self.operational_ttl_s)
+        before = len(self.records)
+        self.records = [r for r in self.records if not expired(r)]
+        return before - len(self.records)
+
+
+if __name__ == "__main__":
+    records = [
+        Record("run-1", "C-104233", "event",
+               {"tool": "search_documents", "doc_ref": "DMS-88121/v3", "at": "2026-03-02T10:14"},
+               {"result": "passport NB-000123, address Storgatan 5"}),
+        Record("run-1", "C-104233", "event",
+               {"tool": "set_risk_rating", "decision": "high", "approved_by": "officer-12"},
+               {"reason_text": "PEP list match: a relative"}),
+        Record("run-1", "C-104233", "checkpoint", {"next_step": "5"},
+               {"state": "the customer reported a move to Oslo"}, run_ended_at=2 * DAY),
+        Record("run-2", "C-200871", "event", {"tool": "screen_sanctions"},
+               {"result": "possible match"}),
+    ]
+    enforcer = RetentionEnforcer(records, legal_hold={"C-200871"})
+    assert enforcer.erase("C-104233", "ER-311", now=3 * DAY) == "erased"
+    erased = [r for r in enforcer.records if r.subject == "C-104233"]
+    assert all(v == REDACTED for r in erased for v in r.content.values())
+    assert erased[1].skeleton["approved_by"] == "officer-12"         # the audit skeleton is intact
+    assert enforcer.erase("C-200871", "ER-312", now=3 * DAY) == "deferred"
+    assert enforcer.records[3].content["result"] == "possible match"
+    assert enforcer.purge_operational(now=40 * DAY) == 1              # only the checkpoint expired
+    assert [r.kind for r in enforcer.records] == ["event", "event", "event"]
+    assert [a["outcome"] for a in enforcer.audit] == ["erased", "deferred"]
+    print("personal data erased, the audit skeleton kept, the hold respected")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="skeleton: dict[str, str]">line 14</span><p>The skeleton holds only what the proof needs: the tool, references to records with versions, the decision, the approver, the time. The customer identifier stays, otherwise the record cannot be found on the supervisor's request.</p></div>
+  <div><span class="at" data-anchor="if subject in self.legal_hold:">line 27</span><p>A hold for the duration of an investigation defers erasure: the request is written to the audit and executed once the hold is lifted.</p></div>
+  <div><span class="at" data-anchor="erased_by">line 34</span><p>Erasure leaves the request number in the skeleton, and an auditor a year later sees the grounds on which the content was deleted.</p></div>
+  <div><span class="at" data-anchor="def purge_operational(self">line 40</span><p>The term of operational records is counted from the end of the run. With a count from the checkpoint write, a run that waits long for an officer or the customer would lose its state when the term expired.</p></div>
+</div>
+</figure>
+
+<div class="note" data-level="2">After the content is redacted, replaying such a run is impossible. The skeleton is sufficient for the audit: it proves that the decision was made, by whom and on which records of the systems of record. If the regulator requires every decision to be reproducible, the content is assigned to the audit class, and a lawyer records that choice when the schema is designed.</div>
+
+<h3 id="s-9-9" data-level="2"><span class="num">9.9</span>On Google Cloud: Agent Platform Sessions and Memory Bank</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Agent Platform Sessions</span>
+  <span class="tag">Agent Platform Memory Bank</span>
+  <span class="tag">ADK</span>
+  <span class="tag">Firestore</span>
+  <span class="tag">Workflows</span>
+</div>
+
+<p data-level="2">In Gemini Enterprise Agent Platform (formerly Vertex AI), two services match rows of the state model; before the renaming they were part of Vertex AI Agent Engine.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes" target="_blank" rel="noreferrer">cloud.google.com, Agent Platform name changes</a> Agent Platform Sessions stores a session as the chronological sequence of events of an interaction between a user and an agent, including function calls, together with the state of the current conversation.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/sessions" target="_blank" rel="noreferrer">cloud.google.com, Agent Platform Sessions</a> Agent Platform Memory Bank uses a language model to extract information from conversations, consolidates it with existing memories, keeps memories across sessions separately for each scope, for example a user identifier, and deletes them when a configured time to live expires.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank" target="_blank" rel="noreferrer">cloud.google.com, Agent Platform Memory Bank</a> In ADK the session service has implementations in process memory, in a relational database and in Agent Platform Sessions, and the memory service has implementations that include process memory and Memory Bank.<a class="src" href="https://adk.dev/sessions/session/" target="_blank" rel="noreferrer">adk.dev, Session</a><a class="src" href="https://adk.dev/sessions/memory/" target="_blank" rel="noreferrer">adk.dev, Memory</a> The service is passed to the <code>Runner</code> object, so moving from prototype to managed storage changes the runner code and leaves the agent definition untouched.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/sessions/manage-with-adk" target="_blank" rel="noreferrer">cloud.google.com, Manage sessions with ADK</a></p>
+
+<p data-level="2">Agent Platform Sessions stores the thread and the events; a side-effect ledger and a checkpoint written conditionally on its version are not among the service's functions. Those tables are placed in Firestore, which writes the outcome and the checkpoint advance in one transaction,<a class="src" href="https://docs.cloud.google.com/firestore/native/docs/manage-data/transactions" target="_blank" rel="noreferrer">cloud.google.com, Firestore transactions</a> or in Cloud SQL for PostgreSQL with a conditional update on the row version. The audit skeleton is kept apart, for example in a Cloud Storage bucket with a retention policy under which an object can be deleted or replaced only after its retention period has passed.<a class="src" href="https://docs.cloud.google.com/storage/docs/bucket-lock" target="_blank" rel="noreferrer">cloud.google.com, Bucket Lock</a> Memory Bank lets metadata such as the source be attached to memories; provenance, the record kind derived from the source and forbidden memory topics are checked by application code.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank/generate-memories" target="_blank" rel="noreferrer">cloud.google.com, Generate memories</a></p>
+
+<p data-level="2">The officer's wait is moved to the Workflows service. The workflow calls the agent service on Cloud Run, creates a callback endpoint and waits for a request to it with a seven-day timeout; the timeout is set explicitly, because it defaults to 12 hours, and a workflow execution is limited to one year.<a class="src" href="https://docs.cloud.google.com/workflows/docs/creating-callback-endpoints" target="_blank" rel="noreferrer">cloud.google.com, Workflows callbacks</a><a class="src" href="https://docs.cloud.google.com/workflows/quotas" target="_blank" rel="noreferrer">cloud.google.com, Workflows quotas</a> On timeout the run ends as expired, and on a callback the token is handed to the agent for re-validation of preconditions. Files are fed through a Cloud Tasks queue whose maximum dispatch rate is set from the core banking limit.<a class="src" href="https://docs.cloud.google.com/tasks/docs/configuring-queues" target="_blank" rel="noreferrer">cloud.google.com, Cloud Tasks queues</a> Service names and capabilities follow the Google Cloud documentation as of September 2026.</p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>The decision differs from LangGraph and Temporal in where the wait is implemented. In LangGraph it is an interrupt inside the graph with a PostgreSQL checkpointer, in Temporal a signal with a timer in workflow code,<a class="src" href="https://docs.temporal.io/workflow-execution/timers-delays" target="_blank" rel="noreferrer">docs.temporal.io, Timers</a><a class="src" href="https://docs.temporal.io/sending-messages" target="_blank" rel="noreferrer">docs.temporal.io, Signals</a> and in Nordbank's variant an orchestrator outside the agent, which runs short stretches between waits. In the first two variants the wait and the agent logic are in the same code and are maintained by one team. In the third variant the approval process is separate from the agent and is kept when the agent is replaced, so it is chosen when the bank manages the approval process.</div>
+
+<h3 id="s-9-10" data-level="3"><span class="num">9.10</span>In depth: the double-execution window, model change, PII in checkpoints</h3>
+
+<h4 data-level="3">The double-execution window</h4>
+
+<p data-level="3">The window opens when the tool performs the action and closes when the worker records the outcome; no transaction closes it, because the CRM takes no part in the store's transactions. A retry in this window is safe under three conditions. First, the recipient keeps the key longer than the longest pause of a run, so a one-day key as in <a href="#s-6-8" data-secref="6.8">Section 6.8</a> does not protect a run that waited five days for an officer and crashed right after resuming. Second, the recipient stores the key atomically with the action, or the same window opens at the recipient itself. Third, if the tool accepts no key, the resumed run first reads the recipient's state and, failing that, hands the file to a human, as with the double side effect of <a href="#s-7-10" data-secref="7.10">Section 7.10</a>.</p>
+
+<h4 data-level="3">A model version change mid-run</h4>
+
+<p data-level="3">A run started on one model version and continued on another after a deploy decides with a combination of versions that no evaluation set has checked: the new model continues from summaries written by its predecessor. The run therefore pins the model, prompt and tool versions at start, and the worker reads the versions from the run record; the current deployment configuration does not affect runs already started. Pinning is limited by the support period of a version: the provider publishes a retirement date for the version,<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions" target="_blank" rel="noreferrer">cloud.google.com, Model versions</a> and a run that waits past that date cannot finish on its pinned version. Nordbank's rule is that runs which have not reached a side effect restart on the new version while the rest finish on the old one or go to a human, and a version change passes the gate of <a href="#ch-12" data-secref="12">Chapter 12</a> on a set that includes resumed runs.</p>
+
+<h4 data-level="3">Checkpoints as stores of personal data</h4>
+
+<p data-level="3">A checkpoint copies the whole state, so fifty thousand files at twenty steps each yield a million snapshots, any of which may hold a passport's text. Three measures protect them: references to documents instead of content, only the latest checkpoint of a run kept in the operational class, and encryption of content that cannot be replaced by a reference under a per-subject key; once the key is destroyed that content cannot be read, backups included. The conflict with erasure is settled by classification. The right to erasure does not apply to the extent that processing is necessary for compliance with a legal obligation,<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679" target="_blank" rel="noreferrer">eur-lex.europa.eu, GDPR, Art. 17(3)(b)</a> so the duty to keep due-diligence data justifies refusing erasure only within that duty and only in the system of record where the duty is fulfilled; copies in checkpoints, threads and memory fall outside it.</p>
+
+<h4 data-level="3">Stale preconditions after a five-day wait</h4>
+
+<p data-level="3">In Nordbank's pilot about three per cent of approved risk increases had changed preconditions by the time of resume. Re-validation detects them only if the data read is newer than the approval: a rating written to core banking reaches other systems after the nightly batch, as <a href="#s-6-10" data-secref="6.10">Section 6.10</a> describes, so preconditions are read with a freshness stamp. The set of preconditions follows from the action. When the customer's whole state is compared, a new phone number requires the officer to approve the same decision again, and frequent re-approvals teach confirming without checking; when the set is too narrow, re-validation misses changes the decision depends on. For the risk rating the set contains the current rating, the account status, the document version and the screening date.</p>
+
+<h4 data-level="3">Replay determinism</h4>
+
+<p data-level="3">Replay is deterministic only if everything non-deterministic is recorded: tool results, model answers, the time, random numbers, generated identifiers. Code that reads the clock directly sees a different time on replay and may conclude that the approval has expired, so the clock goes through the same interface as the tools. A recorded model answer keeps replay exact as long as the code after it is unchanged. Changed code diverges from the log, and <code>replay.py</code> raises an exception; in Temporal the commands of a workflow must not be reordered, added or removed without code versioning techniques.<a class="src" href="https://docs.temporal.io/workflow-definition" target="_blank" rel="noreferrer">docs.temporal.io, Workflow Definition</a></p>
+
+<div class="warn" data-level="3"><b>Replay with a read "for freshness"</b>Calling read tools during replay on the grounds that a read does not change data in external systems. A replay with today's sanctions list explains a March decision with data that did not exist in March, so replay reaches no tools at all, read tools included.</div>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why does a step of durable execution execute at least once, and what makes a side effect effectively once?</summary>
+<div class="ans"><p>A crash between executing the step and writing the checkpoint makes the resumed run repeat the step, and no transaction closes the window because the action happens in an external system. The effect happens once because of an intent with a key written to the ledger before the call and an idempotency key at the recipient: the recipient answers the retry with the stored result.</p></div>
+</details>
+<details>
+<summary>The officer approved a risk increase and the token is valid, but within five days the customer uploaded a new document. What does the run do?</summary>
+<div class="ans"><p>It re-reads the preconditions recorded in the interrupt, sees a new document version and returns to review without executing the action. A new proposal goes through a new interrupt, because the approval refers to the grounds the officer saw.</p></div>
+</details>
+<details>
+<summary>Why does replay not call even read tools?</summary>
+<div class="ans"><p>A repeated read returns current data, and the replay would explain a past decision with facts that did not exist at the time. The log keeps call results and model answers, and the replay takes them from there, checking the order of requests against the record.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>A run lasts longer than the worker process, so the run's state is kept in an external store, and the process is a replaceable worker.</li>
+<li>Session, thread, run, checkpoint and event are stored separately and in different classes: the checkpoint is computed from events, the event skeleton is kept for years, and the content is erased at the data subject's request.</li>
+<li>The checkpoint is written before the side effect and the outcome after it; a ledger of intents and outcomes together with an idempotency key at the recipient makes the effect effectively once.</li>
+<li>An approval is expressed as a token bound to the arguments and an expiry and is executed after re-validating preconditions; replay reads the log and calls neither the model nor the tools.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-6" data-secref="6">Chapter 6: tools and idempotency keys</a>
+<a href="#ch-7" data-secref="7">Chapter 7: the loop, budgets and the write flag</a>
+<a href="#ch-12" data-secref="12">Chapter 12: the release gate for version changes</a>
+</p>
+</div>
+</section>

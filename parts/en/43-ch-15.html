@@ -1,0 +1,1068 @@
+<!-- ────────────────────────── CHAPTER 15 ────────────────────────── -->
+<section class="chapter" id="ch-15">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter fifteen</p>
+    <span class="strata" role="img" aria-label="Layers D and F: evaluation and observability, people and process">
+      <i></i><i></i><i></i><i data-s="D"></i><i></i><i data-s="F"></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-15"><span class="num">15</span>Reliability, Incidents and Debugging in Production</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>assign a failure to a symptom class and find the changed artefact before the defect;</li>
+<li>design a degradation ladder with kill switches, entry and exit criteria;</li>
+<li>ship and roll back the model, prompt, index snapshot, tool schemas and configuration as one release bundle;</li>
+<li>reproduce a bad answer from its trace and bisect to the culprit component;</li>
+<li>communicate with the customer during an incident and turn a postmortem into regression cases and detectors.</li>
+</ul>
+</div>
+
+<h3 id="s-15-1"><span class="num">15.1</span>The task: 09:10 at Meridian</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-2" data-secref="G.2">Case file CF2 · Meridian Health Network</a></span>
+  <span class="tag">guideline editions</span>
+  <span class="tag">ward round at 09:50</span>
+  <span class="tag">clinical safety</span>
+  <span>a hospital network</span>
+</div>
+
+<p>On Monday at 09:10 the head of internal medicine at a Meridian hospital reports that the guideline assistant of <a href="#ch-5" data-secref="5">Chapter 5</a> cites edition 7 in dosing answers, although edition 8 is in force. Within five minutes two other hospitals report the same. At 09:50 the ward round begins, where doctors check orders against the assistant.</p>
+
+<p>The dashboards of <a href="#ch-13" data-secref="13">Chapter 13</a> show no deviations: no errors, normal latency. At 22:00 last night a version that passed the release gate of <a href="#ch-12" data-secref="12">Chapter 12</a> went live. The incident was detected by a clinician.</p>
+
+<p>Within forty minutes the team must remove citations of the superseded edition from the answers, find the change and tell the customer what is known. Then it must restore full service with evidence of the fix. After the review, a recurrence must be detectable without a clinician.</p>
+
+<h3 id="s-15-2"><span class="num">15.2</span>Why AI systems fail in new ways</h3>
+
+<p>The methods of classical reliability were developed for visible failures: a crashed process, a timeout. A failure of an AI system can look like this: the service is up, the status is 200, and the content of the answer is wrong. The thresholds of <a href="#s-13-7" data-secref="13.7">Section 13.7</a> do not detect such a failure, because they measure whether the system answered and do not check the content of the answer.</p>
+
+<p>The sources are new too: new weights behind a stable alias (<a href="#s-3-8" data-secref="3.8">Section 3.8</a>), a prompt edit, the nightly re-indexing of <a href="#s-5-8" data-secref="5.8">Section 5.8</a>, a new tool schema. The service code stays the same. What changes is an artefact the answer depends on.</p>
+
+<dl class="def">
+<dt>Silent quality regression</dt>
+<dd>A deterioration of answer content while availability, latency and error rate stay within targets. Only content checks detect it: probes with known answers, evaluation of sampled traces, user reports.</dd>
+<dt>Golden probe</dt>
+<dd>A request with a known correct answer, run on a schedule along the same path as user requests. It compares the answer's essential properties, such as the cited document and edition, because the wording of an answer changes from run to run.</dd>
+</dl>
+
+<p>In this chapter the reliability of an AI system means four properties: detecting failures by answer content, degrading safely, rolling back every artefact in one action and communicating with the customer at a regular cadence through one responsible person.</p>
+
+<h3 id="s-15-3"><span class="num">15.3</span>A failure taxonomy</h3>
+
+<p>Failures fall into five classes by symptom, that is, by what was harmed, because at complaint time the cause is still unknown. Each class has artefacts whose change typically causes it.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Class</th><th>Symptom</th><th>What usually changed</th><th>Detected by</th></tr></thead>
+<tbody>
+<tr><td>Quality</td><td>wrong answer with status 200</td><td>prompt, model, index snapshot, upstream data</td><td>golden probes, trace evaluation</td></tr>
+<tr><td>Latency</td><td>slow first token, extra steps</td><td>model, configuration, tool schema</td><td>histograms of <a href="#s-13-4" data-secref="13.4">Section 13.4</a></td></tr>
+<tr><td>Availability</td><td>errors and timeouts</td><td>provider quota, configuration</td><td>error-budget alerts</td></tr>
+<tr><td>Cost</td><td>higher cost per successful task</td><td>prompt, model, cache</td><td>cost ledger of <a href="#s-13-5" data-secref="13.5">Section 13.5</a></td></tr>
+<tr><td>Safety</td><td>answer outside policy</td><td>prompt, tool schema, index permissions</td><td>policy filters, audit</td></tr>
+</tbody></table></div>
+
+<p>Triage therefore starts with the question "what changed" and only then turns to "what broke", because a change is found faster than a defect. The change is sought in the diff between the active and previous release manifests and in the trace attributes of the bad answer. An empty manifest diff means the change came from outside.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="A triage tree: five symptom classes converge on the question whether the bundle changed; if it did, the trace and bisection point to a manifest component, and any such component is remedied by rolling the whole bundle back to the evaluated one; if it did not, the change came from outside, so a model behind an alias is pinned and the index is frozen when upstream data changed; while triage runs, the capability degrades at once" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar15a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">SYMPTOM</text>
+  <text x="220" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">WHAT CHANGED</text>
+  <text x="450" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">BUNDLE COMPONENT</text>
+  <text x="690" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">MITIGATION</text>
+
+  <rect x="20" y="40" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="58" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">quality</text>
+  <text x="32" y="74" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">200 OK, wrong answer</text>
+  <rect x="20" y="92" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="110" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">latency</text>
+  <text x="32" y="126" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">first token, p95</text>
+  <rect x="20" y="144" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="162" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">availability</text>
+  <text x="32" y="178" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">errors, timeouts</text>
+  <rect x="20" y="196" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="214" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">cost</text>
+  <text x="32" y="230" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tokens per task</text>
+  <rect x="20" y="248" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="266" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">safety</text>
+  <text x="32" y="282" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">policy, data</text>
+
+  <path d="M176,61 H192 M176,113 H192 M176,165 H192 M176,217 H192 M176,269 H192 M192,61 V269" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="192" y1="165" x2="212" y2="165" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+
+  <rect x="220" y="40" width="164" height="56" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="302" y="63" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">which component?</text>
+  <text x="302" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">trace, bisection</text>
+  <rect x="220" y="137" width="164" height="56" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="302" y="160" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">did the bundle change?</text>
+  <text x="302" y="179" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">manifest diff</text>
+  <rect x="220" y="234" width="164" height="56" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="302" y="257" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">a change from outside</text>
+  <text x="302" y="276" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">provider, source</text>
+
+  <line x1="302" y1="137" x2="302" y2="102" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <text x="312" y="124" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+  <line x1="302" y1="193" x2="302" y2="228" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <text x="312" y="216" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+
+  <rect x="450" y="36" width="180" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="462" y="52" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">model</text>
+  <text x="462" y="67" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">model_version</text>
+  <rect x="450" y="82" width="180" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="462" y="98" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">prompt</text>
+  <text x="462" y="113" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">prompt_sha</text>
+  <rect x="450" y="128" width="180" height="38" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="462" y="144" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">index snapshot</text>
+  <text x="462" y="159" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">index_snapshot</text>
+  <rect x="450" y="174" width="180" height="38" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="462" y="190" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">tool schemas</text>
+  <text x="462" y="205" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tool_schemas</text>
+  <rect x="450" y="220" width="180" height="38" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="462" y="236" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">configuration</text>
+  <text x="462" y="251" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">config_sha</text>
+
+  <text x="450" y="284" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">OUTSIDE THE BUNDLE</text>
+  <rect x="450" y="296" width="180" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <text x="462" y="312" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">model behind an alias</text>
+  <text x="462" y="327" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">provider changed weights</text>
+  <rect x="450" y="342" width="180" height="38" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.5"/>
+  <text x="462" y="358" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">upstream data</text>
+  <text x="462" y="373" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">documents, permissions</text>
+
+  <path d="M384,68 H412 M412,55 V239" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <path d="M412,55 H442 M412,101 H442 M412,147 H442 M412,193 H442 M412,239 H442" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <path d="M384,262 H412 V361" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="412" y1="315" x2="442" y2="315" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <line x1="412" y1="361" x2="442" y2="361" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+
+  <path d="M630,55 H656 M630,101 H656 M630,147 H656 M630,193 H656 M630,239 H656 M656,55 V239" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="656" y1="147" x2="682" y2="147" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <rect x="690" y="117" width="174" height="60" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="777" y="142" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">roll back the bundle</text>
+  <text x="777" y="162" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">to the evaluated one</text>
+  <text x="777" y="198" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">no partial rollback</text>
+
+  <line x1="630" y1="315" x2="682" y2="315" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <rect x="690" y="296" width="174" height="38" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="702" y="312" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">pin the version</text>
+  <text x="702" y="327" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Section 3.8</text>
+  <line x1="630" y1="361" x2="682" y2="361" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <rect x="690" y="342" width="174" height="38" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="702" y="358" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">freeze the index</text>
+  <text x="702" y="373" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Section 5.8</text>
+
+  <path d="M192,269 V350 H184" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar15a)"/>
+  <text x="204" y="354" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">while triage runs</text>
+  <rect x="20" y="326" width="156" height="48" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="32" y="346" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">degrade at once</text>
+  <text x="32" y="363" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Section 15.4</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Triage establishes what changed before it establishes what broke. The manifest diff splits the possible causes into bundle components, remedied by rolling back the whole bundle, and outside changes, remedied by pinning the version and freezing the index; degradation is switched on at once, before either branch yields a result.</figcaption>
+</figure>
+
+<p>A manifest diff exists only if every release has a manifest and is activated whole.</p>
+
+<dl class="def">
+<dt>Release bundle</dt>
+<dd>An immutable release unit holding everything an answer depends on: the pinned model version, prompt hash, index snapshot with its parser version, tool schema versions and configuration hash. It is described by a manifest, passes the release gate as a whole and is activated or rolled back in one switch.</dd>
+</dl>
+
+<p>The registry below answers the question "what was active at 09:10" from its activation log; without a bundle the question cannot be answered.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to ship changes">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="16">
+      <figcaption><span class="file">naive_deploy.py</span></figcaption>
+      <pre><code>import hashlib
+
+CONFIG: dict[str, object] = {
+    "model": "model-pro",                          # an alias: the provider changes the weights behind it
+    "prompt": "Answer from the guidelines and name the edition of the source.",
+    "index": "guidelines-live",                    # the name of a live index, not a snapshot
+    "temperature": 0.2,
+}
+CHANGES: list[str] = []
+
+
+def edit(key: str, value: object) -&gt; None:
+    CONFIG[key] = value                            # the previous value is gone
+    CHANGES.append(key)                            # no time, no author, no value
+
+
+def fingerprint() -&gt; str:
+    raw = "|".join(f"{key}={CONFIG[key]}" for key in sorted(CONFIG))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+
+
+if __name__ == "__main__":
+    friday = fingerprint()
+    edit("prompt", "Briefly: dose, frequency, source. Example: 'G-12, edition 7, section 4.2'.")
+    edit("temperature", 0.0)
+    edit("temperature", 0.2)                       # "put it back as it was"
+    # overnight re-indexing replaced the contents of guidelines-live; the dictionary cannot see it
+    monday = fingerprint()
+    assert monday != friday                        # the behaviour is different
+    assert CONFIG["index"] == "guidelines-live"    # the corpus change left no trace
+    assert CHANGES == ["prompt", "temperature", "temperature"]      # when and what exactly: unknown
+    assert "Answer from the guidelines" not in str(CONFIG["prompt"])  # Friday's prompt is lost
+    print("Friday's state is lost; the 09:10 complaint has nothing to be matched against")</code></pre>
+    </figure>
+    <p>Editing in place erases the previous value. The log keeps keys without times, so the 09:10 complaint matches nothing. The index name stayed the same after its contents changed.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">release_bundle.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import hashlib
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from pydantic import BaseModel, ConfigDict
+
+
+def sha(text: str) -&gt; str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+class Manifest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    model_version: str                              # a pinned version, not an alias
+    prompt_sha: str                                 # a hash of the prompt content
+    index_snapshot: str                             # an immutable snapshot, not an index name
+    parser_version: str                             # the PDF parser that built the snapshot
+    tool_schemas: tuple[tuple[str, str], ...]       # (tool, schema hash)
+    config_sha: str
+
+    def bundle_id(self) -&gt; str:
+        return "b-" + sha(self.model_dump_json())
+
+    def diff(self, other: Manifest) -&gt; list[str]:
+        mine, theirs = self.model_dump(), other.model_dump()
+        return sorted(key for key in mine if mine[key] != theirs[key])
+
+
+@dataclass
+class Registry:
+    now: Callable[[], str]
+    bundles: dict[str, Manifest] = field(default_factory=dict)
+    gate: dict[str, bool] = field(default_factory=dict)             # the evaluation gate verdict
+    active: str = ""
+    history: list[tuple[str, str, str]] = field(default_factory=list)   # (when, from, to)
+
+    def register(self, manifest: Manifest) -&gt; str:
+        self.bundles[manifest.bundle_id()] = manifest
+        return manifest.bundle_id()
+
+    def record_gate(self, bundle_id: str, passed: bool) -&gt; None:
+        self.gate[bundle_id] = passed
+
+    def activate(self, bundle_id: str) -&gt; None:
+        if self.gate.get(bundle_id) is not True:
+            raise PermissionError(f"{bundle_id}: this combination never passed the evaluation gate")
+        self.history.append((self.now(), self.active, bundle_id))
+        self.active = bundle_id                     # one assignment: every component at once
+
+    def rollback(self) -&gt; str:
+        previous = self.history[-1][1]
+        self.activate(previous)
+        return previous
+
+    def active_at(self, moment: str) -&gt; str:
+        switched = [to for when, _, to in self.history if when &lt;= moment]
+        return switched[-1] if switched else ""
+
+
+if __name__ == "__main__":
+    clock = {"t": "2026-09-12T22:00"}
+    reg = Registry(now=lambda: clock["t"])
+    old_prompt = "Answer from the guidelines and name the edition of the source."
+    new_prompt = "Briefly: dose, frequency, source. Example: 'G-12, edition 7, section 4.2'."
+    r118 = Manifest(model_version="model-pro-2026-06-01", prompt_sha=sha(old_prompt),
+                    index_snapshot="snap-2026-09-12", parser_version="pdfparse-2.8",
+                    tool_schemas=(("search_guidelines", sha("q: str, dept: str")),),
+                    config_sha=sha("temperature=0.2"))
+    good = reg.register(r118)
+    reg.record_gate(good, passed=True)
+    reg.activate(good)
+
+    clock["t"] = "2026-09-13T22:00"
+    r119 = r118.model_copy(update={"prompt_sha": sha(new_prompt), "index_snapshot": "snap-2026-09-13"})
+    bad = reg.register(r119)
+    reg.record_gate(bad, passed=True)               # the eval set has no questions on edition 8
+    reg.activate(bad)
+
+    assert reg.active_at("2026-09-14T09:10") == bad
+    assert reg.bundles[bad].diff(reg.bundles[good]) == ["index_snapshot", "prompt_sha"]
+
+    mixed = reg.register(r119.model_copy(update={"prompt_sha": sha(old_prompt)}))
+    try:
+        reg.activate(mixed)                         # a partial rollback: the prompt only
+        raise AssertionError("an unevaluated combination was activated")
+    except PermissionError:
+        pass
+
+    clock["t"] = "2026-09-14T10:05"
+    assert reg.rollback() == good and reg.active == good
+    assert reg.bundles[reg.active].diff(r118) == []         # every component came back together
+    assert reg.active_at("2026-09-14T09:10") == bad         # history is not rewritten
+    print("the bundle switches and rolls back as a whole; the unevaluated mix is refused")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="index_snapshot: str">line 18</span><p>The snapshot is named by an immutable copy's identifier. The name of the index that nightly re-indexing writes to is unsuitable for this: a day later that name means another corpus.</p></div>
+        <div><span class="at" data-anchor="self.active = bundle_id">line 50</span><p>Switching is one assignment, so no request sees a new prompt with an old index. The handler reads the active bundle once and writes its identifier into the trace.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns addressability: the considered state has an identifier and an activation log.</p>
+    <p>The second concerns the unit of rollback: naive restores a key if someone remembers the value, considered restores every component at once.</p>
+    <p>The third concerns what gets evaluated: the gate evaluates combinations, and the registry refuses a combination the gate has not evaluated.</p>
+  </div>
+</div>
+
+<p>At Meridian triage took eight minutes. Bundle R-119, active at 09:10, differed from R-118 in prompt hash and index snapshot. Traces showed edition 8 passages in the search results, so the prompt became the suspect: its new example answer came from edition 7, and the model copied the edition number.</p>
+
+<h3 id="s-15-4"><span class="num">15.4</span>The degradation ladder</h3>
+
+<p>Until the cause is found, every answer carries the same risk. Stopping the service also removes its sound part: Meridian's search was right, generation was wrong. Safe degradation switches off the unreliable part and keeps the reliable one.</p>
+
+<dl class="def">
+<dt>Degradation ladder</dt>
+<dd>An ordered set of modes of one capability, each lower rung depending on fewer components. The system steps down on an entry criterion written in advance and up only on the evidence an exit criterion demands.</dd>
+<dt>Kill switch</dt>
+<dd>A run-time flag, changed without a deployment, that moves one capability to a given rung. Every flip is audited with time, author and reason.<a class="src" href="https://martinfowler.com/articles/feature-toggles.html" target="_blank" rel="noreferrer">Hodgson, Feature Toggles, 2017</a></dd>
+</dl>
+
+<p>Meridian's ladder for dosing answers has four rungs. Rung 0 is the full agent, rung 1 is a retrieval-only answer, that is, verbatim passages with citations and no generation. Rung 2 shows a list of documents, rung 3 a notice and a route to the on-call specialist.</p>
+
+<p>The criteria predate the incident: rung 1 is entered on probes or by the kill switch, rung 2 on retrieval recall, rung 3 on search errors. The climb is one rung at a time, after three green runs in a row. The full agent also needs a clean replay of the incident's traces. Exit runs are started one after another without waiting for the probe schedule.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="A state machine of the four-rung degradation ladder from top to bottom: full agent, retrieval-only answer, search results, notice with a route to a human; on the right, downward arrows carry entry criteria on probes, recall and search errors; on the left, dashed upward arrows climb one rung after three green runs in a row; the kill switch leads from the full agent past every rung to the bottom one" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar15b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="270" y="52" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">EXIT ON EVIDENCE</text>
+  <text x="602" y="52" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ENTRY ON A CRITERION</text>
+
+  <rect x="330" y="60" width="220" height="52" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="440" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">0 · full agent</text>
+  <text x="440" y="101" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">generation and tools</text>
+  <rect x="330" y="150" width="220" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="440" y="172" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">1 · retrieval-only answer</text>
+  <text x="440" y="191" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">verbatim passages, citations</text>
+  <rect x="330" y="240" width="220" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="440" y="262" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">2 · search results</text>
+  <text x="440" y="281" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">a list of documents</text>
+  <rect x="330" y="330" width="220" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="440" y="352" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">3 · notice and a human</text>
+  <text x="440" y="371" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">route to the on-call</text>
+
+  <g data-step="1" data-caption="Down on an entry criterion: every rung relies on fewer components, and a signal that a component is faulty moves the capability to a rung that does not depend on it.">
+    <path d="M550,98 H590 V164 H558" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <path d="M550,188 H590 V254 H558" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <path d="M550,278 H590 V344 H558" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <text x="602" y="127" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">generation in doubt</text>
+    <text x="602" y="143" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">probes &lt; 0.95</text>
+    <text x="602" y="217" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">retrieval in doubt</text>
+    <text x="602" y="233" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">recall &lt; 0.85</text>
+    <text x="602" y="307" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">search unavailable</text>
+    <text x="602" y="323" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">errors &gt; 0.05</text>
+  </g>
+
+  <g data-step="2" data-caption="The kill switch moves the capability across several rungs without a deployment and sets the highest rung the signals may return it to.">
+    <path d="M500,60 V30 H840 V370 H558" fill="none" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <text x="670" y="22" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">kill switch: across rungs, no deployment</text>
+  </g>
+
+  <g data-step="3" data-caption="Up only on evidence and only one rung at a time: three green runs in a row, and for the full agent also the incident's traces without the error.">
+    <path d="M330,164 H280 V98 H322" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar15b)"/>
+    <path d="M330,254 H280 V188 H322" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar15b)"/>
+    <path d="M330,344 H280 V278 H322" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar15b)"/>
+    <text x="268" y="127" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">probes and incident traces</text>
+    <text x="268" y="143" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3 green runs in a row</text>
+    <text x="268" y="217" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">recall restored</text>
+    <text x="268" y="233" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3 runs in a row</text>
+    <text x="268" y="307" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">search responds</text>
+    <text x="268" y="323" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3 runs in a row</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The ladder is asymmetric: down at once and across rungs, on a written criterion or a kill switch; up one rung at a time and only with evidence, because a mistaken climb hands unverified answers back to clinicians.</figcaption>
+</figure>
+
+<p>At Meridian the kill switch moved dosing answers to rung 1 at 09:22. Protocol summaries stayed on rung 0: the switches exist per capability.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">kill_switch.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import IntEnum
+
+PROBES_MIN = 0.95           # share of golden probes with the expected fingerprint
+RECALL_MIN = 0.85           # retrieval recall on the control questions
+SEARCH_ERRORS_MAX = 0.05    # error rate of the search service
+
+
+class Rung(IntEnum):
+    FULL_AGENT = 0
+    RETRIEVAL_ONLY = 1
+    SEARCH_RESULTS = 2
+    STATIC_NOTICE = 3
+
+
+@dataclass(frozen=True)
+class Signals:
+    probe_pass_rate: float
+    retrieval_recall: float
+    search_error_rate: float
+    replay_clean: bool          # the incident's traces no longer produce the error
+
+
+@dataclass(frozen=True)
+class AuditEvent:
+    at: float
+    capability: str
+    before: Rung
+    after: Rung
+    actor: str
+    reason: str
+
+
+def entry_rung(s: Signals) -&gt; Rung:
+    """Entry criteria: the highest rung the signals allow."""
+    if s.search_error_rate &gt; SEARCH_ERRORS_MAX:
+        return Rung.STATIC_NOTICE
+    if s.retrieval_recall &lt; RECALL_MIN:
+        return Rung.SEARCH_RESULTS
+    if s.probe_pass_rate &lt; PROBES_MIN:
+        return Rung.RETRIEVAL_ONLY
+    return Rung.FULL_AGENT
+
+
+@dataclass
+class CapabilitySwitch:
+    capability: str
+    now: Callable[[], float]
+    exit_runs: int = 3                              # consecutive green runs to climb a rung
+    rung: Rung = Rung.FULL_AGENT
+    forced: Rung = Rung.FULL_AGENT                  # the highest rung a human allows
+    green: int = 0
+    audit: list[AuditEvent] = field(default_factory=list)
+
+    def _move(self, to: Rung, actor: str, reason: str) -&gt; None:
+        self.audit.append(AuditEvent(self.now(), self.capability, self.rung, to, actor, reason))
+        self.rung, self.green = to, 0
+
+    def kill(self, to: Rung, actor: str, reason: str) -&gt; None:
+        self.forced = to
+        if to &gt; self.rung:
+            self._move(to, actor, reason)
+
+    def release(self, actor: str) -&gt; None:
+        self.audit.append(AuditEvent(self.now(), self.capability, self.rung, self.rung,
+                                     actor, "switch released; climbing only on signals"))
+        self.forced = Rung.FULL_AGENT
+
+    def evidence(self, s: Signals) -&gt; bool:
+        """Exit evidence: the climb to the full agent also needs clean incident traces."""
+        return s.replay_clean or self.rung &gt; Rung.RETRIEVAL_ONLY
+
+    def observe(self, s: Signals) -&gt; Rung:
+        floor = max(entry_rung(s), self.forced)
+        if floor &gt; self.rung:
+            self._move(floor, "auto", f"entry: the signals require rung {floor.value}")
+        elif floor &lt; self.rung and self.evidence(s):
+            self.green += 1
+            if self.green &gt;= self.exit_runs:        # exit: one rung at a time
+                self._move(Rung(self.rung - 1), "auto", f"exit: {self.exit_runs} green runs")
+        else:
+            self.green = 0
+        return self.rung
+
+
+if __name__ == "__main__":
+    clock = {"t": 9 * 3600 + 22 * 60}               # 09:22 in seconds since midnight
+    dosing = CapabilitySwitch("dosing_answers", now=lambda: clock["t"])
+    summaries = CapabilitySwitch("protocol_summaries", now=lambda: clock["t"])
+    dosing.kill(Rung.RETRIEVAL_ONLY, "on-call engineer", "edition 7 cited instead of 8")
+    assert dosing.rung is Rung.RETRIEVAL_ONLY and summaries.rung is Rung.FULL_AGENT
+
+    healthy = Signals(probe_pass_rate=1.0, retrieval_recall=0.93, search_error_rate=0.0,
+                      replay_clean=True)
+    for _ in range(5):
+        dosing.observe(healthy)
+    assert dosing.rung is Rung.RETRIEVAL_ONLY       # the switch holds until it is released
+
+    clock["t"] += 60 * 60
+    dosing.release("on-call engineer")
+    dosing.observe(healthy)
+    dosing.observe(Signals(1.0, 0.93, 0.0, replay_clean=False))     # no evidence: the count resets
+    dosing.observe(healthy)
+    dosing.observe(healthy)
+    assert dosing.rung is Rung.RETRIEVAL_ONLY
+    assert dosing.observe(healthy) is Rung.FULL_AGENT
+
+    assert dosing.observe(Signals(1.0, 0.93, 0.2, replay_clean=True)) is Rung.STATIC_NOTICE
+    assert [e.after for e in dosing.audit] == [Rung.RETRIEVAL_ONLY, Rung.RETRIEVAL_ONLY,
+                                               Rung.FULL_AGENT, Rung.STATIC_NOTICE]
+    assert dosing.audit[0].at == 9 * 3600 + 22 * 60 and dosing.audit[0].actor == "on-call engineer"
+    print("down at once on a criterion, up one rung at a time and only on evidence")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="floor = max(entry_rung(s), self.forced)">line 77</span><p>The switch caps the climb: the capability does not rise above the rung a human set, and the signals can still move it lower. So a human can forbid climbing but cannot hold a capability on a rung the signals call unsafe.</p></div>
+  <div><span class="at" data-anchor="elif floor &lt; self.rung and self.evidence(s):">line 80</span><p>Climbing to the full agent needs two proofs: the signals allow a higher rung, and the incident's traces no longer fail. A run lacking the second resets the count; the lower rungs need the signals only.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Designing degradation during the incident. A rung that was never switched on fails the first time: the notice links to a deleted page, passage mode fails the permission check. Every rung is switched on in drills before going to production.</div>
+
+<div class="note" data-level="2">A kill switch flip is audited but skips the release gate: every rung was evaluated in advance as a bundle mode, so moving between rungs creates no new combination.</div>
+
+<h3 id="s-15-5"><span class="num">15.5</span>The release bundle</h3>
+
+<p>Answer artefacts change at different speeds: the model quarterly, the prompt weekly, the index snapshot nightly. Shipped separately, they form an unevaluated combination. A change to any of them therefore produces a new bundle.</p>
+
+<p>At Meridian each nightly snapshot automatically produces a bundle that passes a short gate: the regression slice and golden probes, about twenty minutes. The PDF parser version goes into the manifest, because the same corpus parsed by another parser is another index.</p>
+
+<p>A partial rollback restores only the component found to be the cause, for example the prompt. The resulting pair "R-118 prompt, R-119 snapshot" never passed the gate, and its behaviour on the other questions is unknown. The registry of <code>release_bundle.py</code> refuses it.</p>
+
+<p>At 10:05 Meridian rolled the whole bundle back to R-118, accepting a day-older index that already held edition 8. Withdrawn documents stayed out: the tombstone log of <a href="#s-5-8" data-secref="5.8">Section 5.8</a> is read at query time. The fixed prompt shipped that afternoon as R-120.</p>
+
+<div class="warn"><b>Common mistake</b>Putting mutable names in the manifest: a model alias, a live index name, a prompt branch. A week later they point to other artefacts, and a rollback restores a system that differs from yesterday's. Every field is a content hash or an immutable snapshot identifier.</div>
+
+<h3 id="s-15-6"><span class="num">15.6</span>Debugging with traces</h3>
+
+<p>Mitigation stopped the harm. Explaining its cause requires reproducing the bad answer outside production. The trace of <a href="#s-13-3" data-secref="13.3">Section 13.3</a> allows it if it records everything the answer depended on.</p>
+
+<p>Reproduction needs five elements: the question and the clinician's role; the versions of returned passages, because a repeated query to an index that has since changed returns other passages; the bundle identifier; temperature and seed; cache hits and tool results, stored as in the log of <a href="#s-9-8" data-secref="9.8">Section 9.8</a>.</p>
+
+<p>A reproduced answer enables bisection: the bad bundle's components are swapped into the good one one at a time, and each combination is replayed in a debugging harness on the incident's traces. At Meridian the full R-119 gave the wrong citation on 21 of 23 traces, "R-118 with the R-119 prompt" also on 21, "R-118 with the R-119 snapshot" on none. An answer is a random sample from the model, so reproduction is measured as the share of replays that show the error.</p>
+
+<p>The fix is verified by the mechanism that will catch the next incident. Scheduled golden probes reduce each answer to a fingerprint of document, cited edition and facts and compare the distribution with the gate run. At 10:20 R-118 passed all 23 traces and twenty probes, now with an edition check.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">drift_detector.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import re
+from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Probe:
+    id: str
+    question: str
+    expected_citation: str              # document@edition#section
+    facts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Answer:
+    text: str
+    citations: tuple[str, ...]
+
+
+def normalize(text: str) -&gt; str:
+    return " ".join(re.sub(r"[^\w]+", " ", text.lower()).split())
+
+
+def parse(citation: str) -&gt; tuple[str, str, str]:
+    doc, rest = citation.split("@", 1)
+    edition, section = rest.split("#", 1)
+    return doc, edition, section
+
+
+def fingerprint(probe: Probe, answer: Answer) -&gt; str:
+    """The class of an answer: not its whole text, but what must match."""
+    doc, edition, _ = parse(probe.expected_citation)
+    cited = [parse(c) for c in answer.citations]
+    if not cited:
+        return "no_citation"
+    if any(d == doc and e != edition for d, e, _ in cited):
+        return "wrong_edition"
+    if probe.expected_citation not in answer.citations:
+        return "wrong_source"
+    text = normalize(answer.text)
+    return "ok" if all(normalize(f) in text for f in probe.facts) else "facts_missing"
+
+
+def shift(baseline: Counter[str], current: Counter[str]) -&gt; float:
+    """Total variation distance between two distributions of fingerprints."""
+    nb, nc = sum(baseline.values()), sum(current.values())
+    keys = baseline.keys() | current.keys()
+    return sum(abs(baseline[k] / nb - current[k] / nc) for k in keys) / 2
+
+
+@dataclass
+class Canary:
+    probes: Sequence[Probe]
+    ask: Callable[[str], Answer]                    # the same path as a clinician's question
+    now: Callable[[], float]
+    baseline: Counter[str]                          # fingerprints from this bundle's gate run
+    every_s: float = 900.0
+    threshold: float = 0.10
+    last_run: float = float("-inf")
+    alerts: list[str] = field(default_factory=list)
+
+    def tick(self, bundle_id: str) -&gt; float | None:
+        if self.now() - self.last_run &lt; self.every_s:
+            return None
+        self.last_run = self.now()
+        prints = {p.id: fingerprint(p, self.ask(p.question)) for p in self.probes}
+        current = Counter(prints.values())
+        distance = shift(self.baseline, current)
+        if distance &gt; self.threshold:
+            classes = ", ".join(f"{k}={v}" for k, v in sorted(current.items()))
+            broken = ", ".join(sorted(pid for pid, fp in prints.items() if fp != "ok"))
+            self.alerts.append(f"{bundle_id}: shift {distance:.2f}; {classes}; probes {broken}")
+        return distance
+
+
+if __name__ == "__main__":
+    probes = [Probe(f"p{i:02d}", f"question {i} on dosing under G-{10 + i % 4}",
+                    f"G-{10 + i % 4}@8#4.{i % 3}", (f"fact {i}",)) for i in range(20)]
+    by_question = {p.question: p for p in probes}
+    live = {"prompt": "p-3f2a"}
+
+    def ask(question: str) -&gt; Answer:
+        probe = by_question[question]
+        citation = probe.expected_citation
+        if live["prompt"] == "p-9c41" and citation.startswith("G-12@"):
+            citation = citation.replace("@8#", "@7#")      # the prompt's example came from edition 7
+        return Answer(f"According to the source: {probe.facts[0]}.", (citation,))
+
+    clock = {"t": 0.0}
+    canary = Canary(probes, ask, now=lambda: clock["t"], baseline=Counter({"ok": 20}))
+    assert canary.tick("R-118") == 0.0 and not canary.alerts
+    live["prompt"] = "p-9c41"
+    clock["t"] = 300.0
+    assert canary.tick("R-119") is None                    # too early by the schedule
+    clock["t"] = 900.0
+    assert canary.tick("R-119") == 0.25
+    assert canary.alerts == ["R-119: shift 0.25; ok=15, wrong_edition=5; probes p02, p06, p10, p14, p18"]
+    print("scheduled probes noticed the fingerprint shift and named the probes")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def fingerprint(probe: Probe, answer: Answer)">line 33</span><p>The fingerprint compares invariants of the answer, because the wording changes from run to run even on an unchanged bundle.</p></div>
+  <div><span class="at" data-anchor="threshold: float = 0.10">line 61</span><p>The threshold is a distribution shift. One stray probe out of twenty gives 0.05 and does not page the on-call engineer; five probes on one guideline give 0.25.</p></div>
+</div>
+</figure>
+
+<h3 id="s-15-7"><span class="num">15.7</span>Communicating with the customer</h3>
+
+<p>When no messages arrive in the first minutes, the customer assumes the worst. So the first message goes out within minutes with four parts: what is known, what is being done, what the user should do now, when the next update comes. An unconfirmed cause stays unnamed: a hypothesis refuted an hour later hurts trust more than the message "the cause is being established".</p>
+
+<p>Meridian's first message went out at 09:14 to the heads of department and the chief medical information officer: some dosing answers cite edition 7, answers are moving to passage mode, check doses against the document, next update at 09:30. After that, updates arrive at the promised time even without news.</p>
+
+<p>One communications lead writes to the customer, the role Google's SRE practice calls the public face of the incident response task force.<a class="src" href="https://sre.google/sre-book/managing-incidents/" target="_blank" rel="noreferrer">Google SRE Book, Managing Incidents</a> Nobody promises a fix date before the cause is confirmed or that the failure will not recur, and nobody is named as at fault. The team promises only what it controls: the next update time, the service mode and the criterion for return.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 372" role="img" aria-label="An incident timeline from 09:10 to 10:30 in three lanes: engineering marks the report at 09:10, the manifest diff at 09:18, confirmation by bisection at 09:55, the rollback to R-118 at 10:05 and verification at 10:20; dosing answers move to rung 1 at 09:22 and return to full mode at 10:25, so the 09:50 ward round runs on passages with citations; messages to heads of department and the chief medical information officer go out at 09:14, 09:30 and 10:00, with the all-clear at 10:30" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar15c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="40" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ENGINEERING</text>
+  <line x1="440" y1="30" x2="440" y2="226" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="446" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ward round, 09:50</text>
+
+  <rect x="35" y="40" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="52" y="49" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">clinician report</text>
+  <text x="52" y="64" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:10</text>
+  <rect x="115" y="74" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="132" y="83" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">manifest diff, traces</text>
+  <text x="132" y="98" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:18 · prompt changed</text>
+  <rect x="485" y="108" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="502" y="117" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">bisection confirms the prompt</text>
+  <text x="502" y="132" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:55 · 21 of 23 traces</text>
+  <rect x="585" y="40" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="602" y="49" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">bundle rolled back to R-118</text>
+  <text x="602" y="64" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:05</text>
+  <rect x="735" y="74" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="728" y="83" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">probes and traces</text>
+  <text x="728" y="98" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:20 · 20/20, 23/23</text>
+
+  <text x="40" y="162" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">DOSING ANSWERS</text>
+  <rect x="40" y="172" width="120" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="100" y="193" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">0 · faulty</text>
+  <rect x="160" y="172" width="630" height="34" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="176" y="193" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">1 · passages with citations</text>
+  <rect x="790" y="172" width="50" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="815" y="193" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">0</text>
+  <text x="164" y="224" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:22 · kill switch, rung 1</text>
+  <text x="790" y="224" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:25 · exit on evidence</text>
+
+  <text x="40" y="254" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">COMMUNICATION: HEADS OF DEPARTMENT, CHIEF MEDICAL INFORMATION OFFICER</text>
+  <rect x="75" y="264" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="92" y="273" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">first message</text>
+  <text x="92" y="288" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:14 · next 09:30</text>
+  <rect x="235" y="298" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="252" y="307" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">update: rung 1</text>
+  <text x="252" y="322" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:30 · next 10:00</text>
+  <rect x="535" y="264" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="552" y="273" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">update: cause, rollback</text>
+  <text x="552" y="288" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:00 · next 10:30</text>
+  <rect x="835" y="298" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="828" y="307" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">all-clear with evidence</text>
+  <text x="828" y="322" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:30</text>
+
+  <line x1="40" y1="346" x2="856" y2="346" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15c)"/>
+  <path d="M40,342 V350 M240,342 V350 M440,342 V350 M640,342 V350 M840,342 V350" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="40" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:10</text>
+  <text x="240" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:30</text>
+  <text x="440" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:50</text>
+  <text x="640" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:10</text>
+  <text x="840" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:30</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Degradation precedes diagnosis, and the customer receives messages about both: dosing answers were moved to a safe rung before the ward round and half an hour before the cause was confirmed, and each message to the customer named the time of the next.</figcaption>
+</figure>
+
+<p>The incident log is a typed timeline. Messages come from a template that refuses an update lacking the next time or sent by a second voice.</p>
+
+<figure class="code" data-fold="26">
+<figcaption><span class="file">incident_log.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from datetime import datetime, timedelta
+from enum import StrEnum
+from itertools import pairwise
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+PROMISES = ("will never happen again", "fixed for good", "fault of")
+
+
+class Kind(StrEnum):
+    DETECTED = "detected"
+    MITIGATED = "mitigated"
+    UPDATE_SENT = "update_sent"
+    ROLLED_BACK = "rolled_back"
+    VERIFIED = "verified"
+    RESOLVED = "resolved"
+
+
+class Event(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    at: datetime
+    kind: Kind
+    summary: str
+    bundle_id: str = ""
+
+
+class Update(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    at: datetime
+    sender: str
+    audience: tuple[str, ...]
+    known: str = Field(min_length=10)               # what is known
+    doing: str = Field(min_length=10)               # what is being done
+    advice: str = Field(min_length=10)              # what a clinician should do now
+    next_update_at: datetime | None = None
+    final: bool = False
+
+    @model_validator(mode="after")
+    def cadence(self) -&gt; Update:
+        if not self.final and self.next_update_at is None:
+            raise ValueError("an update without the time of the next update")
+        if self.next_update_at is not None and self.next_update_at &lt;= self.at:
+            raise ValueError("the next update is scheduled in the past")
+        return self
+
+
+def render(u: Update) -&gt; str:
+    body = f"{u.known} {u.doing} {u.advice}".lower()
+    if promised := [p for p in PROMISES if p in body]:
+        raise ValueError(f"a promise or a blame in the text: {promised}")
+    status = "restored" if u.final else "work in progress"
+    tail = "Incident closed." if u.final else f"Next update at {u.next_update_at:%H:%M}."
+    return (f"[{u.at:%H:%M}] Guideline assistant: {status}\nWhat we know: {u.known}\n"
+            f"What we are doing: {u.doing}\nWhat to do now: {u.advice}\n{tail}")
+
+
+class Incident(BaseModel):
+    id: str
+    comms_lead: str                                 # the single voice towards the customer
+    events: list[Event] = Field(default_factory=list)
+    sent: list[Update] = Field(default_factory=list)
+
+    def log(self, at: datetime, kind: Kind, summary: str, bundle_id: str = "") -&gt; None:
+        if self.events and at &lt; self.events[-1].at:
+            raise ValueError("events are recorded in time order")
+        self.events.append(Event(at=at, kind=kind, summary=summary, bundle_id=bundle_id))
+
+    def send(self, u: Update) -&gt; str:
+        if u.sender != self.comms_lead:
+            raise PermissionError("only the communications lead writes to the customer")
+        text = render(u)
+        self.sent.append(u)
+        self.log(u.at, Kind.UPDATE_SENT, ", ".join(u.audience))
+        return text
+
+    def since_detection(self, kind: Kind) -&gt; timedelta:
+        return next(e.at for e in self.events if e.kind is kind) - self.events[0].at
+
+
+if __name__ == "__main__":
+    lead = "engagement lead"
+    leads = ("heads of department", "chief medical information officer")
+
+    def at(hhmm: str) -&gt; datetime:
+        hour, minute = map(int, hhmm.split(":"))
+        return datetime(2026, 9, 14, hour, minute)
+
+    def update(hhmm: str, known: str, doing: str, advice: str, nxt: str = "",
+               sender: str = lead) -&gt; Update:
+        return Update(at=at(hhmm), sender=sender, audience=leads, known=known, doing=doing,
+                      advice=advice, next_update_at=at(nxt) if nxt else None, final=not nxt)
+
+    inc = Incident(id="INC-0914", comms_lead=lead)
+    inc.log(at("09:10"), Kind.DETECTED, "edition 7 cited instead of 8", "R-119")
+    first = inc.send(update("09:14", "some dosing answers cite edition 7 instead of edition 8",
+                            "we are switching dosing answers to passages with citations",
+                            "check the dose against the open guideline document", nxt="09:30"))
+    assert first.endswith("Next update at 09:30.")
+    try:
+        Update(at=at("09:20"), sender=lead, audience=leads, known="the cause is being established",
+               doing="comparing the releases", advice="check against the document")
+        raise AssertionError("an update without the next time passed validation")
+    except ValidationError:
+        pass
+    try:
+        inc.send(update("09:21", "the cause is in the prompt", "fixing the prompt right now",
+                        "wait for the fix", nxt="09:30", sender="on-call engineer"))
+        raise AssertionError("a second voice got through")
+    except PermissionError:
+        pass
+
+    inc.log(at("09:22"), Kind.MITIGATED, "kill switch: rung 1", "R-119")
+    inc.send(update("09:30", "dosing answers now show passages of the current edition",
+                    "comparing release R-119 with the previous one", "passage mode is safe for the ward round",
+                    nxt="10:00"))
+    inc.send(update("10:00", "the cause is a prompt change in release R-119",
+                    "rolling the whole release back to R-118", "passage mode stays on for now", nxt="10:30"))
+    inc.log(at("10:05"), Kind.ROLLED_BACK, "R-119 -&gt; R-118", "R-118")
+    inc.log(at("10:20"), Kind.VERIFIED, "probes 20 of 20, incident traces 23 of 23", "R-118")
+    last = inc.send(update("10:30", "dosing answers cite edition 8 again",
+                           "full mode restored at 10:25 after verification",
+                           "the incident review will follow by Friday"))
+    inc.log(at("10:30"), Kind.RESOLVED, "all-clear", "R-118")
+
+    assert last.endswith("Incident closed.")
+    assert inc.since_detection(Kind.UPDATE_SENT) == timedelta(minutes=4)
+    assert inc.since_detection(Kind.MITIGATED) == timedelta(minutes=12)
+    assert all(a.next_update_at is not None and b.at &lt;= a.next_update_at for a, b in pairwise(inc.sent))
+    print("the timeline is recorded; every update sets the next one and arrives on time")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if not self.final and self.next_update_at is None:">line 42</span><p>Validation rejects an update without the next time, so the check does not depend on the sender's attention. The time of the next update is a promise the team can keep whatever course the incident takes.</p></div>
+  <div><span class="at" data-anchor="if u.sender != self.comms_lead:">line 71</span><p>The single sender is enforced in code: engineers pass hypotheses to the communications lead, so a refuted hypothesis is not passed outside the team.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Sending the all-clear right after the rollback. The rollback restored an evaluated bundle, but a response cache or lagging replica may still return old answers. The all-clear follows verification on probes and incident traces and names the evidence.</div>
+
+<h3 id="s-15-8"><span class="num">15.8</span>From postmortem to evals</h3>
+
+<p>An incident is over when its recurrence is detected automatically. A postmortem must therefore leave regression cases and a detector in the system. Without them the postmortem remains a document that does not change the system's checks.</p>
+
+<dl class="def">
+<dt>Blameless postmortem</dt>
+<dd>A written review of an incident that establishes contributing causes in system and process without blaming people and ends with actions that have owners and due dates. It assumes participants acted reasonably on the information they had.<a class="src" href="https://sre.google/sre-book/postmortem-culture/" target="_blank" rel="noreferrer">Google SRE Book, Postmortem Culture</a></dd>
+</dl>
+
+<p>Meridian's causes are stated as causes in the system. The prompt example came from a superseded edition, and nothing checked it. The eval set lacked questions on recently changed editions, so the gate passed R-119. Probes checked the presence of a citation but not its edition.</p>
+
+<p>The incident's traces become cases with provenance and with expected and forbidden citations; several traces with the same question give one case. The regression slice is checked with zero tolerance. The interval of <a href="#s-12-8" data-secref="12.8">Section 12.8</a> does not apply to it, because each case of the slice corresponds to an error that has already happened. The detector is an edition probe for recently updated guidelines.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">postmortem_to_eval.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+from collections.abc import Callable, Sequence
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+
+class Finding(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    incident_id: str
+    trace_id: str
+    question: str
+    bad_citation: str
+    expected_citation: str
+    facts: tuple[str, ...]
+
+
+class EvalCase(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    id: str
+    question: str
+    expected_citation: str
+    forbidden_citations: tuple[str, ...]
+    facts: tuple[str, ...]
+    slice: str
+    provenance: str                                 # the incident and trace the case came from
+
+
+class ActionItem(BaseModel):
+    title: str = Field(min_length=10)
+    owner: str = Field(min_length=3)                # the role or name of the action's owner
+    due: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class Postmortem(BaseModel):
+    incident_id: str
+    causes: tuple[str, ...]                         # contributing causes in the system and process
+    findings: tuple[Finding, ...]
+    actions: tuple[ActionItem, ...] = Field(min_length=1)
+
+    def blameless(self, staff: Sequence[str]) -&gt; bool:
+        return not any(name.lower() in cause.lower() for name in staff for cause in self.causes)
+
+
+def to_cases(pm: Postmortem) -&gt; list[EvalCase]:
+    first: dict[str, Finding] = {}
+    for f in pm.findings:                           # one question from many traces: one case
+        first.setdefault(f"{f.question}|{f.expected_citation}", f)
+    return [EvalCase(id="reg-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:8],
+                     question=f.question, expected_citation=f.expected_citation,
+                     forbidden_citations=(f.bad_citation,), facts=f.facts,
+                     slice=f"regression/{f.incident_id}", provenance=f"{f.incident_id}/{f.trace_id}")
+            for key, f in first.items()]
+
+
+Ask = Callable[[str], tuple[str, tuple[str, ...]]]
+
+
+def passes(case: EvalCase, ask: Ask) -&gt; bool:
+    text, citations = ask(case.question)
+    return (case.expected_citation in citations
+            and not set(case.forbidden_citations) &amp; set(citations)
+            and all(fact.lower() in text.lower() for fact in case.facts))
+
+
+def regression_gate(cases: Sequence[EvalCase], ask: Ask) -&gt; list[str]:
+    """Zero tolerance: any failed case from an incident blocks the release."""
+    return [case.id for case in cases if not passes(case, ask)]
+
+
+if __name__ == "__main__":
+    questions = ["dosing under G-12, group A", "dosing under G-12, group B", "frequency under G-12"]
+    traces = [(f"tr-{n:03d}", questions[n % 3]) for n in range(7)]
+    pm = Postmortem(
+        incident_id="INC-0914",
+        causes=("the example answer in the prompt was written from a superseded edition",
+                "the eval set has no questions on editions younger than 30 days",
+                "the golden probes did not check the edition number in citations"),
+        findings=tuple(Finding(incident_id="INC-0914", trace_id=t, question=q,
+                               bad_citation="G-12@7#4.2", expected_citation="G-12@8#4.2",
+                               facts=("group",)) for t, q in traces),
+        actions=(ActionItem(title="check the editions in prompt examples when building a bundle",
+                            owner="platform lead", due="2026-09-21"),))
+    assert pm.blameless(staff=["Petrov", "Sidorova"])
+    assert not pm.model_copy(update={"causes": ("Petrov's mistake while editing the prompt",)}).blameless(["Petrov"])
+    try:
+        ActionItem(title="sort out the prompts", owner="", due="soon")
+        raise AssertionError("an action without an owner and a date was accepted")
+    except ValidationError:
+        pass
+
+    cases = to_cases(pm)
+    assert len(cases) == 3 and cases[0].provenance == "INC-0914/tr-000"
+
+    def r119(question: str) -&gt; tuple[str, tuple[str, ...]]:
+        return f"{question}: group A, see the source", ("G-12@7#4.2",)
+
+    def r120(question: str) -&gt; tuple[str, tuple[str, ...]]:
+        return f"{question}: group A, see the source", ("G-12@8#4.2",)
+
+    assert regression_gate(cases, r119) == [case.id for case in cases]     # the R-119 prompt fails
+    assert regression_gate(cases, r120) == []
+    print("findings became cases with provenance; the regression slice holds zero tolerance")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="provenance: str">line 27</span><p>Provenance links a case to its incident and trace: a failed case leads to its postmortem, and deleting a trace at a patient's request finds the case.</p></div>
+  <div><span class="at" data-anchor="forbidden_citations=(f.bad_citation,)">line 52</span><p>The case stores the actual error as a forbidden citation: an answer citing edition 7 beside edition 8 fails like one without edition 8.</p></div>
+</div>
+</figure>
+
+<h3 id="s-15-9" data-level="3"><span class="num">15.9</span>In depth: the silent model update, the new parser, the partial rollback</h3>
+
+<h4 data-level="3">The silent model update behind a stable alias</h4>
+
+<p data-level="3">GPT-4's accuracy at identifying primes fell from 84% in March 2023 to 51% in June, and the authors concluded that the "same" service can change substantially within a short time.<a class="src" href="https://arxiv.org/abs/2307.09009" target="_blank" rel="noreferrer">Chen, Zaharia, Zou, 2023</a> A bundle pins the generative model, but neighbouring dependencies such as the embedding model or a reranker stay behind aliases. A fingerprint shift under an unchanged manifest assigns the incident to the lower branch of triage.</p>
+
+<h4 data-level="3">An index rebuilt by a new parser</h4>
+
+<p data-level="3">A new PDF parser version dropped the rows of tables that break across pages. Recall on the general set barely moved, while dosing answers lost the rows they needed. So the parser version is part of the manifest, and the gate compares table row counts between snapshots; row serialisation is described in <a href="#s-5-11" data-secref="5.11">Section 5.11</a>.</p>
+
+<h4 data-level="3">The partial rollback</h4>
+
+<p data-level="3">In a system without a registry, the on-call engineer restored only the prompt, but the search schema of the new bundle had renamed the department argument. The old prompt's example used the old name, calls failed schema validation, and the agent answered without search. If such a combination is needed, it is built as a new bundle and passes the gate.</p>
+
+<h4 data-level="3">Reproducing a bad answer</h4>
+
+<p data-level="3">Zero temperature does not guarantee repeatability: one study names the dependence of computation on batch size, which varies with server load, as the main cause.<a class="src" href="https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/" target="_blank" rel="noreferrer">He, Thinking Machines Lab, 2025</a> A response cache keyed without the bundle identifier keeps serving the bad bundle's answers after a rollback. Prompt cache hits are traced too, since they explain latency gaps between original and replay. Passages and tool results come from the trace.</p>
+
+<h4 data-level="3">A postmortem when the customer demands a name</h4>
+
+<p data-level="3">The chief medical information officer asks who changed the prompt. A name does not explain why the process let the change through, and it prompts the team to hide changes. The customer gets causes, owned actions and the detector, and the engagement lead answers for the postmortem. If clinical safety rules require a named safety officer, that person appears as an action owner, and the list of causes names no people.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why is rolling back only the prompt riskier than rolling back the bundle, though it changes less?</summary>
+<div class="ans"><p>The gate evaluates combinations. The old prompt was evaluated with the old snapshot and schemas; its pairing with the new components never was, so its behaviour is unknown.</p></div>
+</details>
+<details>
+<summary>Why was degrading to retrieval-only answers safe at Meridian, and when would it have been useless?</summary>
+<div class="ans"><p>Search returned correct passages, and generation, on which rung 1 does not depend, was wrong. With a broken index snapshot, rung 2 or 3 would have been needed.</p></div>
+</details>
+<details>
+<summary>What does the first message to the customer contain, and what must it not contain?</summary>
+<div class="ans"><p>What is known, what is being done, what users should do now and the next update time; no unconfirmed cause, fix date, promises or names.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>AI systems fail silently while the service is up; detection needs content checks, and triage starts with what changed in the manifest and trace.</li>
+<li>A degradation ladder with kill switches switches off the unreliable part and keeps the reliable one: down on a criterion, up on evidence.</li>
+<li>Every artefact of an answer ships and rolls back as one bundle; a partial rollback creates a combination nobody evaluated.</li>
+<li>The first message goes out within minutes and names the next update; a postmortem ends in regression cases, a detector and owned actions.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-12" data-secref="12">Chapter 12: the gate every bundle passes</a>
+<a href="#ch-13" data-secref="13">Chapter 13: traces and alerts for triage</a>
+<a href="#ch-16" data-secref="16">Chapter 16: from field patterns to modules</a>
+</p>
+</div>
+</section>

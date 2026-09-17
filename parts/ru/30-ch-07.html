@@ -1,0 +1,1054 @@
+<!-- ────────────────────────── ГЛАВА 7 ────────────────────────── -->
+<section class="chapter" id="ch-7">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава седьмая</p>
+    <span class="strata" role="img" aria-label="Слои B и C: модель и агент, инструменты">
+      <i></i><i data-s="B"></i><i data-s="C"></i><i></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-7"><span class="num">7</span>Одиночный агент: ReAct, инструменты, отказы</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>отличить задачу, которой нужен цикл, от задачи, которой достаточно конвейера;</li>
+<li>выразить цикл ReAct автоматом, у которого каждый переход проходит проверку бюджета;</li>
+<li>описать инструменты типами так, чтобы схема, признак записи и таймаут выводились из кода;</li>
+<li>выбрать между ошибкой как наблюдением, запасным путём и остановкой по классу ошибки;</li>
+<li>сравнивать ADK, LangGraph и CrewAI по тому, где объявляется и хранится схема состояния.</li>
+</ul>
+</div>
+
+<h3 id="s-7-1"><span class="num">7.1</span>Задача: агент исключений по отправлениям</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-3" data-secref="G.3">Досье CF3 · Transkontinent Logistics</a></span>
+  <span class="tag">телематика</span>
+  <span class="tag">API перевозчиков</span>
+  <span class="tag">таможня</span>
+  <span>логистика, 18 стран</span>
+</div>
+
+<p>Часть из сорока тысяч отправлений в сутки порождает исключения: груз стоит дольше расчётного времени, и причина остановки неизвестна. В часы пиковой нагрузки диспетчерская TKL получает около пятисот таких исключений в час, и на каждое уходит от четырёх до десяти минут работы человека. Разбор выполняется каждый раз в одном и том же порядке, а данные в каждом случае свои: диспетчер смотрит телематику тягача, спрашивает перевозчика о рейсе, проверяет таможенный статус партии, после чего решает, что сообщить клиенту.</p>
+
+<p>Агенту поручается та же последовательность с теми же источниками. Телематика отдаёт положение, температуру и время последнего события. API перевозчика отвечает статусом рейса, причём у каждого из семнадцати перевозчиков свой лимит обращений. Таможенная система возвращает статус партии и перечень недостающих документов. Единственное действие записи называется <code>notify_customer</code> и отправляет клиенту сообщение о новом сроке.</p>
+
+<p>Объём потока и ожидание диспетчера задают три ограничения. Пятьсот исключений в час при потолке стоимости на исключение означают, что число вызовов модели на одно исключение ограничено. Ожидание диспетчера означает потолок задержки в двадцать пять секунд. Сообщение клиенту означает, что побочный эффект допускается не более одного раза на исключение, и повтор вызова инструмента после таймаута не должен отправлять второе сообщение. Инструменты для этого агента описываются так, как разобрано в <a href="#s-6-5" data-secref="6.5">разделе 6.5</a>, а их защита от повторов устроена так, как показано в <a href="#s-6-8" data-secref="6.8">разделе 6.8</a>.</p>
+
+<h3 id="s-7-2"><span class="num">7.2</span>Почему агент представляет собой цикл с бюджетом</h3>
+
+<dl class="def">
+<dt>Агент <span class="en">(agent)</span></dt>
+<dd>Программа, в которой языковая модель выбирает следующее действие из объявленного набора инструментов, наблюдает результат этого действия и повторяет выбор, пока не сочтёт задачу решённой либо пока внешнее ограничение не прекратит повторение. Агент отличается от конвейера тем, кто определяет порядок шагов: в конвейере порядок задан кодом, в агенте модель вычисляет его на каждом шаге.</dd>
+</dl>
+
+<p>Перенос порядка шагов из кода в модель увеличивает стоимость и задержку и уменьшает предсказуемость, поэтому он требует обоснования. В TKL обоснованием служит распределение исключений. Примерно шесть исключений из десяти разбираются одной и той же последовательностью из трёх чтений, и для них конвейер быстрее, дешевле и полнее покрыт тестами. Оставшиеся четыре требуют, чтобы следующий вопрос зависел от предыдущего ответа: пустой статус у перевозчика означает, что следует проверить таможню, а расхождение телематики с накладной означает, что следует проверить склад отправления.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Свойство</th><th>Фиксированный конвейер</th><th>Цикл агента</th></tr></thead>
+<tbody>
+<tr><td>Порядок шагов</td><td>задан кодом, виден при чтении</td><td>вычисляется моделью на каждом шаге</td></tr>
+<tr><td>Вызовов модели на исключение</td><td>один</td><td>от трёх до восьми</td></tr>
+<tr><td>Задержка p95</td><td>около трёх секунд</td><td>от восьми до двадцати пяти секунд</td></tr>
+<tr><td>Покрытие исключений</td><td>шесть из десяти</td><td>около девяти из десяти</td></tr>
+<tr><td>Воспроизводимость отказа</td><td>полная: тот же вход даёт тот же путь</td><td>частичная: путь восстанавливается по трассе</td></tr>
+</tbody></table></div>
+
+<p>В TKL до написания кода принято решение: конвейер обрабатывает распознанные шаблоны исключений, а цикл получает остальные исключения. Такое разделение сохраняет низкие стоимость и задержку для большей части потока, а расходы на цикл возникают только там, где следующий шаг зависит от предыдущего ответа. Цикл получает исключения, не распознанные шаблонами, и часть из них он не разберёт; поэтому условие остановки без найденной причины, то есть бюджет цикла, проектируется вместе с самим циклом.</p>
+
+<p>Цикл без бюджета недопустим в проекте по трём причинам. Он не имеет верхней оценки стоимости, поэтому его нельзя сравнить с трудом человека. Он не имеет верхней оценки задержки, поэтому диспетчер не знает, ждать ли ответа. Он не имеет предела по числу побочных эффектов, поэтому один сбой сети может привести к двум сообщениям клиенту. Каждое проектное решение этой главы ограничивает цикл по одной из трёх осей и оставляет выбор следующего шага модели.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Строить агента там, где достаточно конвейера. Признак: если в трассах девяноста процентов запусков встречается одна и та же последовательность инструментов, модель воспроизводит фиксированный порядок, и каждый шаг этого порядка оплачивается отдельным вызовом модели. Такую последовательность переносят в код конвейера, а цикл применяют к остальным запускам.</div>
+
+<h3 id="s-7-3"><span class="num">7.3</span>Цикл ReAct как автомат</h3>
+
+<dl class="def">
+<dt>ReAct <span class="en">(reasoning and acting)</span></dt>
+<dd>Схема работы агента, в которой модель чередует рассуждение о следующем шаге и действие инструментом, а результат действия возвращается в контекст как наблюдение и участвует в следующем рассуждении. В исходной работе модель завершает задачу специальным действием <code>finish[answer]</code>, а предел числа шагов (семь для HotpotQA, пять для FEVER) задан условиями эксперимента; в системе этой главы предел шагов и остальные условия остановки задаёт код цикла.<a class="src" href="https://arxiv.org/abs/2210.03629" target="_blank" rel="noreferrer">Yao и др., ReAct, ICLR 2023</a></dd>
+<dt>Наблюдение <span class="en">(observation)</span></dt>
+<dd>Запись исхода одного вызова инструмента в состоянии агента: имя инструмента, содержимое ответа, признак ошибки и машинно-читаемый код. Наблюдение хранится отдельно от рассуждения модели, потому что свидетельства итогового ответа вычисляются по наблюдениям.</dd>
+</dl>
+
+<p>В этой главе цикл ReAct описывается как конечный автомат с четырьмя рабочими состояниями и двумя конечными. В состоянии «План» модель получает задачу и все накопленные наблюдения и возвращает либо вызовы инструментов, либо готовый вывод. В состоянии «Действие» цикл исполняет вызовы, соблюдая таймаут каждого инструмента. В состоянии «Наблюдение» исходы вызовов, включая отказы, записываются в состояние. Необязательное состояние «Рефлексия» добавляет шаг, на котором модель оценивает достаточность собранного, не вызывая инструментов.</p>
+
+<p>Конечных состояний два, и вызывающий код обязан их различать. «Ответ» означает, что модель сочла задачу решённой и вернула структурированный итог. «Остановка» означает, что итога нет, потому что исчерпан бюджет, и работа передаётся человеку. Тип итога содержит поля, по которым вызывающий код отличает ответ от остановки.</p>
+
+<p>Каждый переход автомата проходит проверку бюджета, потому что разные переходы расходуют разные ресурсы. Переход из «Плана» в «Действие» тратит шаг и, для инструментов записи, единицу побочных эффектов. Переход из «Действия» в «Наблюдение» тратит время. Возврат из «Наблюдения» в «План» тратит токены, потому что весь накопленный контекст отправляется модели заново. Проверка, выполненная только на входе в цикл, не учитывает ни одного из этих расходов.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 372" role="img" aria-label="Цикл ReAct как конечный автомат: исключение попадает в состояние планирования, оттуда в действие и наблюдение, после чего проверка бюджета либо возвращает управление в план, либо через необязательную рефлексию, либо останавливает работу; отдельный переход из плана ведёт к структурированному ответу" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar7a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="147" width="130" height="44" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="85" y="174" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">исключение</text>
+
+  <rect x="186" y="136" width="150" height="66" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="261" y="163" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">План</text>
+  <text x="261" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">что узнать дальше</text>
+
+  <rect x="376" y="136" width="150" height="66" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="451" y="163" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Действие</text>
+  <text x="451" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">вызовы с таймаутом</text>
+
+  <rect x="566" y="136" width="150" height="66" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="641" y="163" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Наблюдение</text>
+  <text x="641" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">итог или ошибка</text>
+
+  <rect x="746" y="52" width="118" height="42" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="805" y="79" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Ответ</text>
+  <rect x="746" y="254" width="118" height="42" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="805" y="281" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Остановка</text>
+
+  <rect x="536" y="244" width="150" height="62" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="611" y="270" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Бюджет</text>
+  <text x="611" y="290" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">шаги · токены · время</text>
+
+  <rect x="286" y="244" width="150" height="62" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="361" y="270" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Рефлексия</text>
+  <text x="361" y="290" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">необязательный шаг</text>
+
+  <line x1="150" y1="169" x2="178" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <line x1="336" y1="169" x2="368" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <line x1="526" y1="169" x2="558" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <rect x="159" y="164" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+  <rect x="347" y="164" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+  <rect x="537" y="164" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+
+  <path d="M261,136 V73 H738" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <path d="M641,202 V236" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <line x1="686" y1="275" x2="738" y2="275" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <text x="716" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">исчерпан</text>
+  <path d="M566,306 V332 H210 V208" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <path d="M536,275 H444" fill="none" stroke="var(--sB)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar7a)"/>
+  <path d="M286,275 H261 V208" fill="none" stroke="var(--sB)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar7a)"/>
+
+  <rect x="20" y="348" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+  <text x="40" y="357" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">проверка бюджета перед переходом: шаги, токены, время, побочные эффекты</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Каждому переходу автомата нужна проверка бюджета, потому что расходы разнесены по разным переходам: шаг и побочный эффект тратятся при действии, время при ожидании инструмента, токены при возврате в планирование. Единственная проверка на входе в цикл не ограничивает ни один из трёх расходов.</figcaption>
+</figure>
+
+<p>Цикл приведён ниже в двух версиях: продуманная видна на всех уровнях, наивная начиная с уровня «стандарт». Наивная версия выражает ту же схему ReAct и работает на подготовленном сценарии, потому что заглушка модели на четвёртом обращении перестаёт просить инструменты. Продуманная версия использует тот же алгоритм и явно задаёт каждое свойство цикла: число шагов, число побочных эффектов, форму отказа инструмента и форму итога.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Два способа написать цикл агента">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_agent.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import json
+
+TELEMATICS = {"SHP-8842": {"delay_h": 9, "last_scan": "Wrocław", "temp_c": 4}}
+
+
+def call_tool(name: str, args: dict[str, str]) -> str:
+    if name == "get_telematics":
+        return json.dumps(TELEMATICS[args["shipment_id"]])
+    return "{}"
+
+
+class ScriptedModel:
+    """Заглушка модели: сначала вызовы инструментов, затем текст ответа."""
+
+    def __init__(self) -> None:
+        self.turn = 0
+
+    def next(self, history: list[str]) -> tuple[str, dict[str, str]] | str:
+        self.turn += 1
+        if self.turn &lt;= 3:
+            return "get_telematics", {"shipment_id": "SHP-8842"}
+        return "задержка 9 часов, груз в Вроцлаве"
+
+
+def run(question: str) -> tuple[str, list[str]]:
+    model = ScriptedModel()
+    history = [question]
+    while True:                                  # ни шагов, ни времени, ни денег
+        step = model.next(history)
+        if isinstance(step, str):
+            return step, history
+        name, args = step
+        history.append(call_tool(name, args))
+
+
+if __name__ == "__main__":
+    answer, history = run("что с отправлением SHP-8842?")
+    assert answer.startswith("задержка")
+    assert len(history) == 4                     # вопрос и три одинаковых вызова
+    print("ответ получен за 3 вызова; цикл остановил сценарий, а не бюджет")</code></pre>
+    </figure>
+    <p>Цикл завершается только потому, что заглушка модели перестаёт просить инструменты на четвёртом обращении. Реальная модель, получившая пустой ответ таможни, может повторять тот же вызов, и <code>while True</code> будет исполнять его, пока не кончится квота поставщика. Отказ инструмента здесь выбрасывает исключение из цикла, и диспетчер получает трассу стека Python вместо объяснения. Итог возвращается строкой без отдельных полей для причины, действия и перечня прочитанных источников, поэтому полноту итога проверить нельзя.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">agent_loop.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from pydantic import BaseModel, Field
+
+
+class BudgetExceeded(Exception):
+    """Цикл обязан остановиться: исчерпан один из бюджетов."""
+
+
+@dataclass
+class Budget:
+    max_steps: int = 8
+    max_side_effects: int = 1
+    steps: int = 0
+    side_effects: int = 0
+
+    def charge_step(self) -> None:
+        self.steps += 1
+        if self.steps &gt; self.max_steps:
+            raise BudgetExceeded("шаги")
+
+    def charge_side_effect(self) -> None:
+        self.side_effects += 1
+        if self.side_effects &gt; self.max_side_effects:
+            raise BudgetExceeded("побочные эффекты")
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    arguments: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class Observation:
+    tool: str
+    content: str
+    is_error: bool = False
+    code: str = ""
+
+
+class Finding(BaseModel):
+    """Структурированный итог расследования: причина, действие, свидетельства."""
+
+    cause: str
+    action: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+@dataclass
+class AgentState:
+    task: str
+    budget: Budget = field(default_factory=Budget)
+    observations: list[Observation] = field(default_factory=list)
+
+    def evidence(self) -> list[str]:
+        return [o.tool for o in self.observations if not o.is_error]
+
+
+class Model(Protocol):
+    def decide(self, state: AgentState) -> ToolCall | Finding: ...
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    handler: Callable[[Mapping[str, Any]], str]
+    side_effect: bool = False
+
+
+class Registry:
+    def __init__(self, tools: Sequence[Tool]) -> None:
+        self.tools = {t.name: t for t in tools}
+
+    def invoke(self, call: ToolCall, budget: Budget) -> Observation:
+        tool = self.tools.get(call.name)
+        if tool is None:
+            return Observation(call.name, f"инструмента {call.name} нет", True, "unknown_tool")
+        if tool.side_effect:
+            budget.charge_side_effect()
+        try:
+            return Observation(call.name, tool.handler(call.arguments))
+        except TimeoutError:
+            return Observation(call.name, "система не ответила вовремя", True, "upstream_timeout")
+
+
+def run(model: Model, registry: Registry, state: AgentState) -> Finding:
+    while True:
+        try:
+            state.budget.charge_step()
+            decision = model.decide(state)
+            if isinstance(decision, Finding):
+                return decision
+            state.observations.append(registry.invoke(decision, state.budget))
+        except BudgetExceeded as stop:
+            return Finding(cause=f"бюджет исчерпан: {stop}", action="escalate_to_human",
+                           evidence=state.evidence())
+
+
+class ScriptedModel:
+    """Заглушка модели: читает наблюдения и выдаёт следующий шаг по сценарию."""
+
+    def decide(self, state: AgentState) -> ToolCall | Finding:
+        seen = state.evidence()
+        for name in ("get_telematics", "get_carrier_status", "get_customs_status"):
+            if name not in seen:
+                return ToolCall(name, {"shipment_id": "SHP-8842"})
+        if "notify_customer" not in seen:
+            return ToolCall("notify_customer", {"shipment_id": "SHP-8842", "eta": "2026-03-04"})
+        return Finding(cause="груз задержан таможней: не хватает документа M-4",
+                       action="notify_customer", evidence=seen)
+
+
+if __name__ == "__main__":
+    flaky = {"n": 0}
+
+    def customs(args: Mapping[str, Any]) -> str:
+        flaky["n"] += 1
+        if flaky["n"] == 1:
+            raise TimeoutError
+        return "hold: требуется документ M-4"
+
+    registry = Registry([
+        Tool("get_telematics", lambda a: "задержка 9 ч, Вроцлав"),
+        Tool("get_carrier_status", lambda a: "рейс переставлен на 04.03"),
+        Tool("get_customs_status", customs),
+        Tool("notify_customer", lambda a: "сообщение отправлено", side_effect=True),
+    ])
+    state = AgentState(task="исключение по SHP-8842")
+    found = run(ScriptedModel(), registry, state)
+    assert found.action == "notify_customer"
+    assert found.evidence == ["get_telematics", "get_carrier_status",
+                              "get_customs_status", "notify_customer"]
+    assert state.budget.steps == 6          # пять вызовов, включая повтор, и вывод
+    assert state.budget.side_effects == 1
+
+    tight = AgentState(task="то же исключение", budget=Budget(max_steps=2))
+    stopped = run(ScriptedModel(), Registry(list(registry.tools.values())), tight)
+    assert stopped.action == "escalate_to_human" and tight.budget.steps == 3
+    print("цикл завершился структурированным ответом и остановился по бюджету")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="class Finding(BaseModel):">строка 46</span><p>Итог цикла объявлен типом с тремя полями. Причина, предлагаемое действие и перечень свидетельств проверяются кодом до того, как попадут диспетчеру, и по ним же строится оценочный набор <a href="#ch-12" data-secref="12">главы 12</a>.</p></div>
+        <div><span class="at" data-anchor="def evidence(self)">строка 60</span><p>Свидетельствами считаются только наблюдения без ошибки. Инструмент, ответивший таймаутом, не подтверждает ничего, и его имя в списке свидетельств сделало бы неудачный вызов основанием для вывода.</p></div>
+        <div><span class="at" data-anchor="state.budget.charge_step()">строка 94</span><p>Шаг списывается до обращения к модели. При списании после успешного обращения вызов, завершившийся таймаутом поставщика и, возможно, уже оплаченный, не попал бы в счётчик, и бюджет не ограничивал бы стоимость.</p></div>
+        <div><span class="at" data-anchor="if tool.side_effect:">строка 83</span><p>Признак записи берётся из описания инструмента, объявленного в <a href="#s-6-5" data-secref="6.5">разделе 6.5</a>, и вызов такого инструмента расходует отдельный бюджет. Ограничение числа шагов не ограничивает числа сообщений клиенту: восемь шагов допускают восемь записей.</p></div>
+        <div><span class="at" data-anchor="except TimeoutError:">строка 87</span><p>Отказ инструмента записывается как наблюдение с кодом и возвращается модели, и цикл продолжает работу. Получив <code>upstream_timeout</code>, модель может повторить вызов или продолжить без него; исключение, выброшенное из цикла, прекратило бы работу до этого выбора.</p></div>
+        <div><span class="at" data-anchor="except BudgetExceeded as stop:">строка 99</span><p>Исчерпание бюджета возвращает такой же структурированный итог, как успех, но с действием <code>escalate_to_human</code> и с собранными до остановки свидетельствами. Диспетчер продолжает разбор с тех источников, которые агент прочитать не успел.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие в условии выхода. Наивный цикл завершается только тогда, когда модель возвращает текст вместо вызова инструмента, то есть условие выхода определяет модель. Продуманный цикл завершается также при исчерпании бюджета, и это условие проверяет код цикла, который отвечает за стоимость и задержку.</p>
+    <p>Второе различие в обработке отказа. В наивном цикле отказ инструмента является исключением и прекращает работу. В продуманном он записывается как наблюдение и учитывается моделью при следующем решении, а работу прекращает только исчерпание бюджета.</p>
+    <p>Третье различие в форме итога. Строка не позволяет ни проверить полноту разбора, ни отличить вывод от отказа. Типизированный итог с причиной, действием и свидетельствами позволяет и то и другое, и те же поля использует оценка из <a href="#ch-12" data-secref="12">главы 12</a>.</p>
+  </div>
+</div>
+
+<h3 id="s-7-4"><span class="num">7.4</span>Схемы инструментов и параллельные вызовы</h3>
+
+<p>Все сведения об инструменте модель получает из его дескриптора: имя, описание и схему аргументов. Если эти три поля пишутся вручную, они расходятся с кодом обработчика при его изменении, и расхождение обнаруживается только по неверному вызову в поле. Поэтому аргументы объявляются типом, схема порождается из типа, а назначение инструмента записывается в документирующей строке этого же типа.</p>
+
+<p>Кроме имени, описания и схемы, тип <code>Tool</code> содержит ещё два поля, которые использует цикл. Признак записи <code>side_effect</code>, введённый в <a href="#s-6-5" data-secref="6.5">разделе 6.5</a>, сообщает, тратит ли вызов бюджет побочных эффектов и допустим ли повтор после неопределённого исхода; в листинге он также передаётся модели в дескрипторе. Таймаут задаётся для каждого инструмента отдельно. Таможенная система TKL отвечает за секунды, а API перевозчика за десятки секунд, и общий для цикла таймаут пришлось бы назначать по самому медленному из них.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">tool_registry.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic import BaseModel, Field, ValidationError
+
+
+class GetCarrierStatus(BaseModel):
+    """Статус рейса у перевозчика. Вызывать, когда телематика показывает задержку,
+    а причина не видна. Не для таможенных задержек."""
+
+    shipment_id: str = Field(pattern=r"^SHP-\d{4}$", description="Идентификатор отправления")
+    carrier: str = Field(description="Код перевозчика из телематики")
+
+
+class NotifyCustomer(BaseModel):
+    """Сообщить клиенту о задержке и новом сроке. На одно отправление приходится одно сообщение."""
+
+    shipment_id: str = Field(pattern=r"^SHP-\d{4}$")
+    eta_iso: str = Field(description="Новый срок в формате ISO-8601")
+    idempotency_key: str = Field(min_length=8, description="Сессия, шаг и аргументы")
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    args: type[BaseModel]
+    handler: Callable[[BaseModel], str]
+    side_effect: bool = False
+    timeout_s: float = 3.0
+
+    def descriptor(self) -> dict[str, Any]:
+        """То, что увидит модель: имя, назначение, схема аргументов, признак записи."""
+        doc = " ".join((self.args.__doc__ or "").split())
+        return {"name": self.name, "description": doc,
+                "input_schema": self.args.model_json_schema(),
+                "side_effect": self.side_effect}
+
+
+class ToolError(Exception):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+class Registry:
+    def __init__(self) -> None:
+        self.tools: dict[str, Tool] = {}
+
+    def register(self, tool: Tool) -> None:
+        self.tools[tool.name] = tool
+
+    def descriptors(self, *, allow_side_effects: bool = True) -> list[dict[str, Any]]:
+        return [t.descriptor() for t in self.tools.values()
+                if allow_side_effects or not t.side_effect]
+
+    def call(self, name: str, arguments: Mapping[str, Any]) -> str:
+        tool = self.tools.get(name)
+        if tool is None:
+            raise ToolError("unknown_tool", name)
+        try:
+            args = tool.args.model_validate(dict(arguments))
+        except ValidationError as err:
+            raise ToolError("invalid_arguments", err.json()) from err
+        return tool.handler(args)
+
+
+if __name__ == "__main__":
+    registry = Registry()
+    registry.register(Tool("get_carrier_status", GetCarrierStatus,
+                           lambda a: "рейс переставлен на 04.03"))
+    registry.register(Tool("notify_customer", NotifyCustomer,
+                           lambda a: "сообщение отправлено", side_effect=True, timeout_s=10.0))
+
+    schema = registry.descriptors()[0]["input_schema"]
+    assert schema["properties"]["shipment_id"]["pattern"] == r"^SHP-\d{4}$"
+    assert schema["required"] == ["shipment_id", "carrier"]
+    assert "Не для таможенных задержек" in registry.descriptors()[0]["description"]
+    assert [d["name"] for d in registry.descriptors(allow_side_effects=False)] == \
+           ["get_carrier_status"]
+
+    ok = registry.call("get_carrier_status", {"shipment_id": "SHP-8842", "carrier": "PL-TRUCK"})
+    assert ok.startswith("рейс")
+    try:
+        registry.call("get_carrier_status", {"shipment_id": "8842", "carrier": "PL-TRUCK"})
+        raise AssertionError("схема обязана отвергнуть идентификатор без префикса")
+    except ToolError as err:
+        assert err.code == "invalid_arguments"
+    print("схема порождена из типов, запись помечена, аргументы проверены до вызова")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="self.args.__doc__">строка 36</span><p>Назначение инструмента берётся из документирующей строки типа аргументов, то есть хранится там же, где ограничения полей. Описание и схема при этом не могут разойтись: они порождаются из одного объявления.</p></div>
+  <div><span class="at" data-anchor="self.args.model_json_schema()">строка 38</span><p>Схема порождается из типа, поэтому модель видит шаблон идентификатора до вызова. Ограничение из схемы проверяется кодом при каждом вызове, а просьба в системном промпте не проверяется ничем.</p></div>
+  <div><span class="at" data-anchor="timeout_s: float = 3.0">строка 32</span><p>Таймаут задаётся в описании инструмента. Таможенная система отвечает за секунды, перевозчик за десятки, и единый таймаут цикла пришлось бы задавать по самому медленному участнику, а отказ быстрой системы обнаруживался бы так же поздно, как отказ медленной.</p></div>
+  <div><span class="at" data-anchor="allow_side_effects: bool = True">строка 55</span><p>Набор дескрипторов сужается по признаку записи. Тот же параметр использует теневой прогон, которому инструменты записи не передаются, и режим наблюдения, в котором агент только собирает объяснение.</p></div>
+  <div><span class="at" data-anchor="except ValidationError as err:">строка 65</span><p>Аргументы проверяются до обработчика, а нарушение возвращается кодом <code>invalid_arguments</code>. По этому коду модель может исправить вызов, и исправление расходует один шаг бюджета.</p></div>
+</div>
+</figure>
+
+<p>Модель может вернуть несколько вызовов за один шаг, и в TKL это основной способ уложиться в потолок задержки. Телематика, перевозчик и таможня не зависят друг от друга, поэтому три вызова выполняются одновременно, и длительность шага равна времени ответа самого медленного из трёх, тогда как при последовательных вызовах она равнялась бы сумме трёх времён. Цикл при этом обязан соблюсти два правила: каждый вызов ограничивается своим таймаутом, а отказ одного вызова не отменяет результатов остальных. Устройство такого веера разбирается вместе с политикой ошибок в <a href="#s-7-6" data-secref="7.6">разделе 7.6</a>.</p>
+
+<div class="note" data-level="2">Дескрипторы инструментов входят в контекст каждого вызова модели и потому оплачиваются на каждом шаге цикла. Восемь инструментов с подробными описаниями занимают около полутора тысяч токенов, и при восьми шагах это двенадцать тысяч токенов на одно исключение. Порядок, при котором дескрипторы попадают в неизменный префикс, разобран в <a href="#s-4-5" data-secref="4.5">разделе 4.5</a>.</div>
+
+<h3 id="s-7-5"><span class="num">7.5</span>Бюджеты</h3>
+
+<dl class="def">
+<dt>Бюджет цикла <span class="en">(loop budget)</span></dt>
+<dd>Набор верхних границ на ресурсы одного запуска агента: число шагов, число токенов, время работы и число побочных эффектов. Бюджет проверяется перед каждым переходом автомата и при исчерпании прекращает цикл типизированным исключением, по классу которого вызывающий код отличает исчерпание времени от исчерпания шагов.</dd>
+</dl>
+
+<p>Ограничиваются все четыре ресурса, потому что они исчерпываются независимо. Восемь шагов не ограничивают токены, если каждый шаг несёт растущий контекст. Потолок токенов не ограничивает время, если инструменты отвечают медленно. Потолок времени не ограничивает число сообщений клиенту, потому что запись занимает доли секунды. Один счётчик из четырёх защищает только от одного сценария выхода за границы.</p>
+
+<p>Исключения бюджета различаются по ресурсу: у каждого ресурса свой класс исключения с общим предком. Диспетчер должен различать «агент не успел за двадцать пять секунд» и «агент сделал восемь шагов и не нашёл причину»: первое означает, что таможенная система отвечает медленно, второе означает, что исключение нетипично и требует человека. Оба сообщения строятся по классу исключения.</p>
+
+<p>Часы передаются бюджету явно, как и размыкателю цепи в <a href="#s-6-6" data-secref="6.6">разделе 6.6</a>. Кроме проверяемости в тесте, это позволяет вычислять давление бюджета: долю самого исчерпанного из ресурсов. При давлении выше некоторого порога цикл добавляет в контекст указание завершать разбор тем, что уже собрано. Такое указание позволяет модели вернуть структурированный ответ до того, как следующий шаг остановит цикл по бюджету.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">budget.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+
+class BudgetExceeded(Exception):
+    """Общий предок: цикл обязан прекратить работу и объяснить причину."""
+
+    resource = "бюджет"
+
+
+class StepsExceeded(BudgetExceeded):
+    resource = "шаги"
+
+
+class TokensExceeded(BudgetExceeded):
+    resource = "токены"
+
+
+class TimeExceeded(BudgetExceeded):
+    resource = "время"
+
+
+class SideEffectsExceeded(BudgetExceeded):
+    resource = "побочные эффекты"
+
+
+@dataclass
+class Budget:
+    """Четыре бюджета одного расследования, проверяемые перед каждым переходом."""
+
+    now: Callable[[], float]
+    max_steps: int = 8
+    max_tokens: int = 60_000
+    max_seconds: float = 25.0
+    max_side_effects: int = 1
+    steps: int = 0
+    tokens: int = 0
+    side_effects: int = 0
+    started_at: float = field(default=0.0)
+
+    def __post_init__(self) -> None:
+        self.started_at = self.now()
+
+    def charge_step(self, tokens: int = 0) -> None:
+        self.steps += 1
+        self.tokens += tokens
+        if self.steps &gt; self.max_steps:
+            raise StepsExceeded(f"{self.steps} шагов при потолке {self.max_steps}")
+        if self.tokens &gt; self.max_tokens:
+            raise TokensExceeded(f"{self.tokens} токенов при потолке {self.max_tokens}")
+        self.check_time()
+
+    def charge_side_effect(self) -> None:
+        self.side_effects += 1
+        if self.side_effects &gt; self.max_side_effects:
+            raise SideEffectsExceeded(f"{self.side_effects} действий записи")
+
+    def check_time(self) -> None:
+        if self.now() - self.started_at &gt; self.max_seconds:
+            raise TimeExceeded(f"{self.now() - self.started_at:.1f} с при потолке {self.max_seconds}")
+
+    def pressure(self) -> float:
+        """Доля самого исчерпанного из бюджетов: 0.0 в начале, 1.0 на пределе."""
+        return max(self.steps / self.max_steps, self.tokens / self.max_tokens,
+                   (self.now() - self.started_at) / self.max_seconds,
+                   self.side_effects / self.max_side_effects)
+
+
+if __name__ == "__main__":
+    clock = {"t": 100.0}
+    budget = Budget(now=lambda: clock["t"], max_steps=4, max_tokens=10_000, max_seconds=20.0)
+
+    budget.charge_step(tokens=3_000)
+    clock["t"] += 6.0
+    budget.charge_step(tokens=3_000)
+    assert round(budget.pressure(), 2) == 0.6          # токены израсходованы быстрее шагов
+
+    budget.charge_side_effect()
+    try:
+        budget.charge_side_effect()
+        raise AssertionError("второе действие записи обязано быть отвергнуто")
+    except SideEffectsExceeded as err:
+        assert err.resource == "побочные эффекты"
+
+    clock["t"] += 15.0
+    try:
+        budget.charge_step(tokens=10)
+        raise AssertionError("исчерпанное время обязано остановить шаг")
+    except TimeExceeded:
+        pass
+
+    strict = Budget(now=lambda: clock["t"], max_steps=1)
+    strict.charge_step()
+    try:
+        strict.charge_step()
+        raise AssertionError("второй шаг за потолком в один шаг")
+    except StepsExceeded as err:
+        assert isinstance(err, BudgetExceeded)
+    print("четыре бюджета, типизированные исключения и давление как сигнал завершать разбор")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="class StepsExceeded(BudgetExceeded):">строка 13</span><p>Каждый ресурс получает свой класс исключения с общим предком. Вызывающий код ловит предка, чтобы остановиться, и читает поле ресурса, чтобы объяснить диспетчеру, что именно кончилось.</p></div>
+  <div><span class="at" data-anchor="now: Callable[[], float]">строка 33</span><p>Часы передаются извне, поэтому проверка бюджета времени выполняется в тесте мгновенно и одинаково. Обращение к системным часам внутри бюджета сделало бы листинг непроверяемым без ожидания.</p></div>
+  <div><span class="at" data-anchor="self.check_time()">строка 53</span><p>Время проверяется при списании шага. Превышение времени, вызванное ожиданием медленного инструмента, обнаруживается при следующем списании, и цикл останавливается между шагами. Отдельный таймер мог бы прервать цикл посреди обращения к системе заказчика.</p></div>
+  <div><span class="at" data-anchor="def pressure(self)">строка 64</span><p>Давление возвращает долю самого исчерпанного ресурса. При значении выше 0.8 цикл добавляет в контекст модели указание завершать разбор: мягкое завершение даёт структурированный ответ, жёсткая остановка даёт только эскалацию.</p></div>
+</div>
+</figure>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 390" role="img" aria-label="Последовательность одного расследования из четырёх шагов: цикл получает от модели три вызова и выполняет их одновременно, один инструмент отвечает таймаутом и его отказ становится наблюдением, повтор только отказавшего вызова приносит недостающие данные, а последний шаг выполняет уведомление клиента и возвращает структурированный итог" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar7b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="30" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="95" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">цикл</text>
+  <rect x="235" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="300" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">модель</text>
+  <rect x="465" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="530" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">инструменты</text>
+  <rect x="695" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="760" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">бюджет</text>
+  <line x1="95" y1="54" x2="95" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="300" y1="54" x2="300" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="530" y1="54" x2="530" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="760" y1="54" x2="760" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="Первый шаг бюджета: модель получает задачу без наблюдений и возвращает три независимых вызова, которые цикл выполняет одновременно.">
+    <line x1="103" y1="86" x2="292" y2="86" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="78" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">план, 0 наблюдений</text>
+    <line x1="292" y1="108" x2="103" y2="108" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">три вызова сразу</text>
+    <line x1="103" y1="130" x2="522" y2="130" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="122" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">telematics · carrier · customs</text>
+    <rect x="745" y="118" width="30" height="16" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="782" y="131" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">шаг 1 из 8</text>
+  </g>
+
+  <g data-step="2" data-caption="Телематика и перевозчик отвечают, таможня не отвечает за отведённое время: таймаут записывается в состояние как наблюдение с кодом.">
+    <line x1="522" y1="160" x2="103" y2="160" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="152" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">telematics, carrier: готово</text>
+    <line x1="522" y1="188" x2="103" y2="188" stroke="var(--sE)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar7b)"/>
+    <text x="415" y="180" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sE)">customs: upstream_timeout</text>
+    <rect x="80" y="198" width="30" height="16" rx="3" fill="var(--sC)" opacity="0.85"/>
+    <text x="117" y="211" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ошибка записана как наблюдение</text>
+  </g>
+
+  <g data-step="3" data-caption="Второй шаг бюджета: модель получает два результата и одну ошибку и повторяет только отказавший вызов.">
+    <line x1="103" y1="238" x2="292" y2="238" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="230" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">план, 3 наблюдения</text>
+    <line x1="292" y1="260" x2="103" y2="260" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="252" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">повтор только customs</text>
+    <line x1="103" y1="282" x2="522" y2="282" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <line x1="522" y1="304" x2="103" y2="304" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="296" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">hold: нет документа M-4</text>
+    <rect x="745" y="270" width="30" height="16" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="782" y="283" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">шаг 2 из 8</text>
+  </g>
+
+  <g data-step="4" data-caption="Третий и четвёртый шаги бюджета тратят единственный разрешённый побочный эффект и возвращают итог с четырьмя свидетельствами.">
+    <line x1="103" y1="332" x2="522" y2="332" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="324" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sE)">notify_customer с ключом</text>
+    <rect x="745" y="320" width="30" height="16" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="782" y="333" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">эффект 1 из 1</text>
+    <rect x="80" y="348" width="30" height="16" rx="3" fill="var(--sB)" opacity="0.85"/>
+    <text x="117" y="361" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">итог: причина, действие, 4 свидетельства</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Расследование укладывается в четыре шага при двух условиях: независимые чтения выполняются одновременно, и отказ одного чтения не отменяет результатов двух других, поэтому повторяется только отказавший вызов. Кнопки под диаграммой раскрывают её по шагам.</figcaption>
+</figure>
+
+<h3 id="s-7-6"><span class="num">7.6</span>Ошибки инструментов</h3>
+
+<p>Отказ инструмента в агенте имеет три возможных исхода. Ошибка может вернуться модели как наблюдение, и тогда следующий шаг выбирает модель. Цикл может выбрать запасной путь сам, например повторить вызов или обратиться к другому источнику, и тогда модель увидит уже итог этой попытки. Наконец, цикл может остановиться и передать работу человеку. Решение принимается по двум признакам: классу ошибки и признаку записи у инструмента.</p>
+
+<p>Класс ошибки берётся из кода, который возвращает инструмент, по правилам <a href="#s-6-5" data-secref="6.5">раздела 6.5</a>. Неверные аргументы означают, что модель ошиблась и может исправить вызов, поэтому ошибка возвращается ей наблюдением. Временный отказ означает, что состояние вызова неизвестно, и решение определяется признаком записи: чтение можно повторить, запись повторять нельзя, пока не доказано, что она идемпотентна. Отказ в доступе означает, что повтор бесполезен, и наблюдение должно прямо запрещать повторную попытку. Исчерпание бюджета останавливает цикл независимо от класса ошибки и признака записи.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 344" role="img" aria-label="Дерево решений по отказу инструмента: класс ошибки разделяет неверные аргументы, временный отказ, отказ в доступе и исчерпание бюджета, а для временного отказа дополнительный вопрос о признаке записи отделяет безопасный повтор от обязательной передачи работы человеку" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar7c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="16" y="142" width="170" height="56" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="101" y="168" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">отказ инструмента</text>
+  <text x="101" y="187" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">код · side_effect</text>
+
+  <rect x="238" y="16" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="38" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">неверные аргументы</text>
+  <text x="252" y="56" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">invalid_arguments</text>
+  <rect x="238" y="112" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="134" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">временный отказ</text>
+  <text x="252" y="152" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">upstream_timeout</text>
+  <rect x="238" y="208" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="230" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">отказ в доступе</text>
+  <text x="252" y="248" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">forbidden</text>
+  <rect x="238" y="272" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="294" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">исчерпан бюджет</text>
+  <text x="252" y="312" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">budget_exceeded</text>
+
+  <rect x="506" y="112" width="130" height="52" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="571" y="134" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">запись?</text>
+  <text x="571" y="152" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">side_effect</text>
+
+  <rect x="676" y="18" width="188" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="690" y="47" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">наблюдение для модели</text>
+  <rect x="676" y="82" width="188" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="690" y="105" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">повтор, затем наблюдение</text>
+  <text x="690" y="121" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">не более двух попыток</text>
+  <rect x="676" y="146" width="188" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="690" y="169" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">остановка, человек</text>
+  <text x="690" y="185" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">исход записи неизвестен</text>
+  <rect x="676" y="210" width="188" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="690" y="233" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">наблюдение без повтора</text>
+  <text x="690" y="249" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">инструмент исключается</text>
+  <rect x="676" y="274" width="188" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="690" y="303" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">остановка цикла</text>
+
+  <path d="M186,170 H216 V42 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M186,170 H216 V138 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M186,170 H216 V234 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M186,170 H216 V298 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,42 H668" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,138 H498" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M636,128 H650 V106 H668" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M636,148 H650 V170 H668" fill="none" stroke="var(--sE)" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,234 H668" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,298 H668" fill="none" stroke="var(--sE)" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <text x="644" y="100" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">нет</text>
+  <text x="644" y="184" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">да</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Решение по таймауту зависит от признака записи: таймаут чтения допускает повтор, а после таймаута записи исход неизвестен, поэтому работа передаётся человеку, если инструмент не защищён ключом идемпотентности.</figcaption>
+</figure>
+
+<p>Политика ошибок применяется к каждому вызову параллельного веера. Три вызова выполняются одновременно, каждый со своим таймаутом, и часть из них может отказать. По правилам этого раздела цикл получает полный набор наблюдений: на каждый вызов либо результат, либо отказ с кодом; в листинге ниже телематика отвечает, перевозчик отвергает запрос по лимиту обращений, а таможня не укладывается в таймаут. Если же первое исключение отменяет весь шаг, успешные чтения теряются вместе с неудачными.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">parallel_tools.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Observation:
+    tool: str
+    content: str
+    is_error: bool = False
+    code: str = ""
+
+
+@dataclass(frozen=True)
+class Request:
+    tool: str
+    timeout_s: float
+    latency_s: float          # сколько отвечает система: только для заглушки
+
+
+Handler = Callable[[Request], Awaitable[str]]
+
+
+async def call_one(request: Request, handler: Handler) -> Observation:
+    """Один вызов со своим таймаутом: отказ возвращается как наблюдение."""
+    try:
+        async with asyncio.timeout(request.timeout_s):
+            return Observation(request.tool, await handler(request))
+    except TimeoutError:
+        return Observation(request.tool, f"не ответил за {request.timeout_s} с",
+                           True, "upstream_timeout")
+    except ConnectionError as err:
+        return Observation(request.tool, str(err), True, "upstream_error")
+
+
+async def fan_out(requests: Sequence[Request], handler: Handler) -> list[Observation]:
+    """Все вызовы идут одновременно; возвращается полный набор наблюдений."""
+    return list(await asyncio.gather(*(call_one(r, handler) for r in requests)))
+
+
+async def demo() -> tuple[list[Observation], float]:
+    async def upstream(request: Request) -> str:
+        await asyncio.sleep(request.latency_s)
+        if request.tool == "get_carrier_status":
+            raise ConnectionError("перевозчик отверг запрос: лимит 5 в секунду")
+        return f"{request.tool}: готово"
+
+    requests = [
+        Request("get_telematics", timeout_s=1.0, latency_s=0.05),
+        Request("get_carrier_status", timeout_s=1.0, latency_s=0.05),
+        Request("get_customs_status", timeout_s=0.02, latency_s=0.06),
+    ]
+    started = time.perf_counter()
+    observations = await fan_out(requests, upstream)
+    return observations, time.perf_counter() - started
+
+
+if __name__ == "__main__":
+    results, elapsed = asyncio.run(demo())
+    by_tool = {o.tool: o for o in results}
+    assert len(results) == 3                                   # наблюдение на каждый вызов
+    assert not by_tool["get_telematics"].is_error
+    assert by_tool["get_carrier_status"].code == "upstream_error"
+    assert by_tool["get_customs_status"].code == "upstream_timeout"
+    assert elapsed &lt; 0.12                                      # 0.12 с последовательно
+    ok = [o.tool for o in results if not o.is_error]
+    assert ok == ["get_telematics"]
+    print("три вызова одновременно, два отказа как наблюдения, один полезный результат")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="async with asyncio.timeout">строка 30</span><p>Таймаут ставится вокруг каждого вызова отдельно. Общий таймаут на весь веер отменил бы и те вызовы, которые уже ответили, и шаг завершился бы отказом без результатов.</p></div>
+  <div><span class="at" data-anchor="except ConnectionError as err:">строка 35</span><p>Отказ перевозчика по лимиту обращений означает, что система ответила и отвергла запрос; в листинге он моделируется исключением <code>ConnectionError</code> и получает собственный код <code>upstream_error</code>. Модель различает «система не ответила» и «система отвергла запрос», и немедленный повтор имеет смысл только в первом случае.</p></div>
+  <div><span class="at" data-anchor="await asyncio.gather">строка 41</span><p>Сбор результатов возвращает наблюдение на каждый вызов, потому что исключения перехвачены внутри <code>call_one</code>. Если исключение доходит до сбора, веер теряет успешные ответы вместе с неудачным.</p></div>
+  <div><span class="at" data-anchor="timeout_s=0.02">строка 54</span><p>Таможенному вызову отведено меньше времени, чем занимает его ответ: так в листинге воспроизводится таймаут одного участника веера. В поле эта величина берётся из дескриптора инструмента.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Повторять вызов инструмента записи после таймаута на том основании, что ответ не получен. Действие при этом могло выполниться: по отсутствию ответа нельзя отличить потерянный ответ от невыполненного действия, как показано в <a href="#s-6-8" data-secref="6.8">разделе 6.8</a>. Повтор допустим только тогда, когда инструмент принимает ключ идемпотентности и по известному ключу возвращает сохранённый результат.</div>
+
+<h3 id="s-7-7"><span class="num">7.7</span>Структурированный ответ и уверенность</h3>
+
+<dl class="def">
+<dt>Свидетельство <span class="en">(evidence)</span></dt>
+<dd>Наблюдение без ошибки, на которое опирается вывод агента, названное в итоговом ответе вместе с инструментом и идентификатором записи. Перечень свидетельств позволяет проверить вывод, не повторяя расследования: диспетчер видит, какие источники подтвердили причину, а какие не были прочитаны.</dd>
+</dl>
+
+<p>Итог цикла возвращается типизированным объектом с тремя обязательными полями. Причина называет, что произошло с отправлением. Действие называет, что агент предлагает или уже выполнил, включая значение <code>escalate_to_human</code> для случая, когда разбор не завершён. Свидетельства перечисляют инструменты и идентификаторы записей, подтверждающих причину. Свободный текст допускается как дополнительное поле для диспетчера, но решения принимаются по первым трём.</p>
+
+<p>Уверенность агента вычисляется из свидетельств. Модель, которую просят назвать собственную уверенность числом, как правило, завышает её.<a class="src" href="https://arxiv.org/abs/2306.13063" target="_blank" rel="noreferrer">Xiong и др., ICLR 2024</a> В TKL правило формулируется через покрытие: вывод о таможенной задержке считается подтверждённым, если в свидетельствах есть и статус таможни, и статус перевозчика, потому что первое без второго не отличает задержку на границе от задержки в пути.</p>
+
+<p>Из этого правила следуют ворота перед побочным эффектом. Инструмент <code>notify_customer</code> вызывается только тогда, когда набор свидетельств удовлетворяет требованию покрытия для предложенной причины. Проверку выполняет код цикла до вызова инструмента, поскольку указание в системном промпте модель может не выполнить. Требования покрытия по каждому классу причин задаются вместе с оценочным набором <a href="#ch-12" data-secref="12">главы 12</a>, поэтому их изменение проходит через те же ворота релиза, что и смена промпта.</p>
+
+<h3 id="s-7-8"><span class="num">7.8</span>Фреймворки: ADK, LangGraph, CrewAI</h3>
+
+<p>ADK, LangGraph и CrewAI исполняют цикл агента и различаются тем, как в них объявляются состояние, инструменты и бюджет. От этих различий зависит, сколько кода придётся переписать при смене платформы. Таблица сравнивает фреймворки по трём вопросам: где объявляется схема состояния, как к агенту подключаются инструменты и чем выражается бюджет; сведения приведены по документации фреймворков на сентябрь 2026 года.<a class="src" href="https://adk.dev/sessions/state/" target="_blank" rel="noreferrer">adk.dev, состояние сессии</a><a class="src" href="https://docs.langchain.com/oss/python/langgraph/graph-api" target="_blank" rel="noreferrer">docs.langchain.com, Graph API</a><a class="src" href="https://docs.crewai.com/en/concepts/agents" target="_blank" rel="noreferrer">docs.crewai.com, агенты</a></p>
+
+<div class="tw"><table>
+<thead><tr><th>Вопрос</th><th>ADK</th><th>LangGraph</th><th>CrewAI</th></tr></thead>
+<tbody>
+<tr><td>Схема состояния</td><td>сессия фреймворка, словарь без схемы</td><td>схема приложения: TypedDict, dataclass или Pydantic</td><td>в crew неявная (результаты задач), во Flows словарь или модель Pydantic</td></tr>
+<tr><td>Подключение инструментов</td><td>функции и <code>McpToolset</code></td><td>узлы графа, в том числе <code>ToolNode</code></td><td>инструменты агента и задачи</td></tr>
+<tr><td>Бюджет</td><td><code>max_llm_calls</code> в <code>RunConfig</code>, обратные вызовы до и после инструмента</td><td><code>recursion_limit</code>, <code>interrupt</code> для передачи человеку</td><td><code>max_iter</code>, <code>max_rpm</code> и <code>max_execution_time</code> агента</td></tr>
+<tr><td>Что переносится без изменений</td><td>логика выбора шага</td><td>логика выбора шага и схема состояния</td><td>описания ролей</td></tr>
+</tbody></table></div>
+
+<p>Логика выбора следующего шага переносится между фреймворками почти без изменений, потому что её входом служат только наблюдения. Схема состояния переносится тем труднее, чем меньшая её часть объявлена в коде приложения. Следующий листинг выражает одно и то же расследование через заглушки двух интерфейсов, похожих на фреймворки: в первом состояние хранит runner, во втором схему состояния объявляет приложение.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">two_frameworks.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, TypedDict
+
+TOOLS = ("get_telematics", "get_carrier_status", "get_customs_status")
+
+
+@dataclass(frozen=True)
+class Step:
+    tool: str | None                       # None означает «расследование закончено»
+    answer: str = ""
+
+
+def policy(evidence: Sequence[str]) -> Step:
+    """Логика агента, общая для обоих фреймворков и не зависящая ни от одного из них."""
+    for tool in TOOLS:
+        if tool not in evidence:
+            return Step(tool)
+    return Step(None, answer="задержка на таможне, уведомить клиента")
+
+
+# ── Фреймворк 1: состояние хранит runner ───────────────────────────────────
+
+
+class Session:
+    """Каркас в духе ADK: сессия фреймворка хранит состояние нетипизированным."""
+
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {}
+
+
+class Runner:
+    def __init__(self, tools: Mapping[str, Callable[[], str]], max_steps: int = 6) -> None:
+        self.tools = tools
+        self.max_steps = max_steps
+
+    def run(self, session: Session) -> str:
+        session.state.setdefault("evidence", [])
+        for _ in range(self.max_steps):
+            step = policy(session.state["evidence"])
+            if step.tool is None:
+                return step.answer
+            self.tools[step.tool]()
+            session.state["evidence"].append(step.tool)
+        return "бюджет шагов исчерпан"
+
+
+# ── Фреймворк 2: схему состояния объявляет приложение ──────────────────────
+
+
+class GraphState(TypedDict):
+    """Схема состояния объявлена приложением и проверяется его типами."""
+
+    evidence: list[str]
+    answer: str
+    steps: int
+
+
+class Graph:
+    """Каркас в духе LangGraph: узлы чистые, маршрут выбирает следующий узел."""
+
+    def __init__(self, nodes: Mapping[str, Callable[[GraphState], GraphState]],
+                 route: Callable[[GraphState], str], max_steps: int = 6) -> None:
+        self.nodes = nodes
+        self.route = route
+        self.max_steps = max_steps
+
+    def invoke(self, state: GraphState) -> GraphState:
+        for _ in range(self.max_steps):
+            name = self.route(state)
+            if name == "END":
+                return state
+            state = self.nodes[name](state)
+        state["answer"] = "бюджет шагов исчерпан"
+        return state
+
+
+if __name__ == "__main__":
+    calls: list[str] = []
+
+    def make_tool(name: str) -> Callable[[], str]:
+        def tool() -> str:
+            calls.append(name)
+            return f"{name}: готово"
+        return tool
+
+    runner = Runner({name: make_tool(name) for name in TOOLS})
+    session = Session()
+    assert runner.run(session) == "задержка на таможне, уведомить клиента"
+    assert session.state["evidence"] == list(TOOLS)
+    assert calls == list(TOOLS)
+
+    def make_node(name: str) -> Callable[[GraphState], GraphState]:
+        def node(state: GraphState) -> GraphState:
+            calls.append(name)
+            return {"evidence": [*state["evidence"], name],
+                    "answer": state["answer"], "steps": state["steps"] + 1}
+        return node
+
+    def route(state: GraphState) -> str:
+        step = policy(state["evidence"])
+        if step.tool is None:
+            state["answer"] = step.answer
+            return "END"
+        return step.tool
+
+    graph = Graph({name: make_node(name) for name in TOOLS}, route)
+    final = graph.invoke({"evidence": [], "answer": "", "steps": 0})
+    assert final["answer"] == "задержка на таможне, уведомить клиента"
+    assert final["evidence"] == list(TOOLS) and final["steps"] == 3
+    assert calls == list(TOOLS) * 2                      # одно и то же расследование
+
+    assert set(GraphState.__annotations__) == {"evidence", "answer", "steps"}
+    assert "evidence" not in Session().state             # схемы состояния у runner нет
+    print("одна логика, два фреймворка; различие в том, кто объявляет схему состояния")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def policy(evidence:">строка 16</span><p>Правило выбора шага не использует ни сессию, ни граф и принимает только перечень свидетельств. Поэтому функция переносится при смене фреймворка без изменений и пишется отдельно от любого из них.</p></div>
+  <div><span class="at" data-anchor="self.state: dict[str, Any] = {}">строка 31</span><p>Состояние сессии является словарём без схемы. Опечатку в имени ключа не обнаруживают ни типы, ни фреймворк; в поле она проявляется пустым списком свидетельств.</p></div>
+  <div><span class="at" data-anchor="class GraphState(TypedDict):">строка 53</span><p>Схема состояния объявлена приложением, поэтому набор полей проверяется статическим анализатором типов и виден в диффе. При этом любое поле, которое использует фреймворк, приходится объявлять в схеме явно.</p></div>
+  <div><span class="at" data-anchor="GraphState.__annotations__">строка 115</span><p>Проверка сравнивает объявленную схему с ожидаемой, и состояние агента проходит ревью так же, как схема базы данных. У сессии первого фреймворка объявленной схемы нет, поэтому при переносе кода на другую платформу состав её ключей приходится восстанавливать по коду, который их читает.</p></div>
+</div>
+</figure>
+
+<h3 id="s-7-9" data-level="2"><span class="num">7.9</span>На Google Cloud: ADK и Agent Runtime</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">ADK</span>
+  <span class="tag">Agent Runtime</span>
+  <span class="tag">наборы MCP</span>
+</div>
+
+<p data-level="2">По документации на сентябрь 2026 года Agent Development Kit (ADK) строит одиночного агента из четырёх понятий: агент <code>LlmAgent</code> с именем, моделью и инструкцией; инструменты-функции, схема которых порождается из сигнатуры с аннотациями типов и из документирующей строки; сессия с историей событий и состоянием в виде словаря ключ-значение; runner, который исполняет цикл событий и сохраняет изменения состояния.<a class="src" href="https://adk.dev/" target="_blank" rel="noreferrer">adk.dev, документация ADK</a> Автомат из <a href="#s-7-3" data-secref="7.3">раздела 7.3</a> отображается на них так: план и вывод выполняет агент, действие и наблюдение проходят через инструменты, а бюджет выражается параметром <code>max_llm_calls</code> конфигурации запуска <code>RunConfig</code> и обратными вызовами <code>before_tool_callback</code> и <code>after_tool_callback</code>, которые исполняются до и после каждого вызова инструмента.<a class="src" href="https://adk.dev/runtime/runconfig/" target="_blank" rel="noreferrer">adk.dev, RunConfig</a><a class="src" href="https://adk.dev/callbacks/types-of-callbacks/" target="_blank" rel="noreferrer">adk.dev, обратные вызовы</a> Класс <code>McpToolset</code> подключается к серверу MCP, получает список его инструментов и передаёт их агенту как инструменты ADK, поэтому сервер из <a href="#ch-6" data-secref="6">главы 6</a> становится доступен агенту так же, как локальные функции.<a class="src" href="https://adk.dev/tools-custom/mcp-tools/" target="_blank" rel="noreferrer">adk.dev, инструменты MCP</a></p>
+
+<p data-level="2">Agent Runtime (ранее Vertex AI Agent Engine) в Gemini Enterprise Agent Platform (ранее Vertex AI) является полностью управляемой средой для развёртывания, эксплуатации и масштабирования агентов.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/runtime" target="_blank" rel="noreferrer">docs.cloud.google.com, Agent Runtime</a><a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes" target="_blank" rel="noreferrer">docs.cloud.google.com, переименования</a> Платформа также хранит сессии в Agent Platform Sessions и формирует долговременную память из разговоров в Agent Platform Memory Bank, а трассы агентов записываются в Cloud Trace.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/sessions" target="_blank" rel="noreferrer">docs.cloud.google.com, Sessions</a><a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank" target="_blank" rel="noreferrer">docs.cloud.google.com, Memory Bank</a> Названия сервисов приведены по документации Google Cloud на сентябрь 2026 года, а проектное решение сформулировано в понятиях главы, которые от этих названий не зависят.</p>
+
+<p data-level="2">Для одиночного агента TKL используются две из этих возможностей. Agent Platform Sessions хранит события и состояние сессии, поэтому приложению не нужно собственное хранилище состояния между обращениями к агенту; подробно это разбирается в <a href="#ch-9" data-secref="9">главе 9</a>. Трасса в Cloud Trace состоит из спанов на обращения к модели и вызовы функций, и по этим спанам <a href="#ch-13" data-secref="13">глава 13</a> строит атрибуцию стоимости по бизнес-единицам.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/tracing" target="_blank" rel="noreferrer">docs.cloud.google.com, трассировка</a></p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Предел числа шагов фреймворки задают сами: <code>max_llm_calls</code> в ADK, <code>recursion_limit</code> в LangGraph, <code>max_iter</code> в CrewAI. Бюджет побочных эффектов и политика ошибок по признаку записи, описанные в этой главе, пишутся в коде приложения на любой из платформ. Платформы различаются тем, где объявляется и хранится состояние. В LangGraph построение графа начинается с объявления схемы состояния, поэтому схема хранится в коде приложения и переносится вместе с ним, а управляемые среды с runner, такие как Agent Runtime с сессиями ADK, хранят состояние на своей стороне и предоставляют готовые сессии и трассы.<a class="src" href="https://docs.langchain.com/oss/python/langgraph/graph-api" target="_blank" rel="noreferrer">docs.langchain.com, LangGraph Graph API</a> Выбор зависит от того, кто сопровождает агента после окончания engagement: команде заказчика с собственной платформой явная схема позволяет переносить агента между средами, а команду без платформы управляемая среда освобождает от эксплуатации хранилища сессий и трасс.</div>
+
+<h3 id="s-7-10" data-level="3"><span class="num">7.10</span>Вглубь: двойной побочный эффект, скрытые зависимости, детекция петель</h3>
+
+<h4 data-level="3">Побочный эффект, выполненный дважды</h4>
+
+<p data-level="3">Отказ, из-за которого TKL дважды сообщила клиенту о переносе срока, произошёл в следующей последовательности. Инструмент <code>notify_customer</code> выполнился и отправил сообщение, но ответ не дошёл до цикла за отведённые ему секунды. Цикл записал наблюдение с кодом <code>upstream_timeout</code>, модель увидела, что уведомление не подтверждено, и вызвала инструмент снова. Второе сообщение ушло клиенту через сорок секунд после первого, и диспетчер получил жалобу.</p>
+
+<p data-level="3">Каждый участник цепочки работал по своей спецификации. Инструмент выполнил запрошенное действие. Цикл записал, что исход неизвестен. Модель повторила неподтверждённое действие. Дефект находится в проекте инструмента: он не принимал ключ идемпотентности, описанный в <a href="#s-6-8" data-secref="6.8">разделе 6.8</a>, и потому не мог отличить повтор от нового намерения.</p>
+
+<p data-level="3">Исправление состоит из двух частей. Инструмент записи принимает ключ, выведенный из сессии, номера шага и аргументов, и по известному ключу возвращает сохранённый результат первого выполнения. Цикл, в свою очередь, получает возможность читать собственные записи: после неопределённого исхода он вызывает чтение того же ресурса и узнаёт, выполнилось ли действие. Нужны обе части: чтение может не увидеть свежую запись, а без чтения цикл не может сообщить диспетчеру, выполнилось ли действие.</p>
+
+<h4 data-level="3">Параллельные вызовы со скрытой зависимостью</h4>
+
+<p data-level="3">Веер параллельных вызовов предполагает, что вызовы независимы, и для телематики, таможни и перевозчика это верно по данным: ни один вызов не использует результат другого. По ресурсам вызовы зависимы: у каждого из семнадцати перевозчиков TKL свой лимит обращений, и два исключения по отправлениям одного перевозчика, разбираемые одновременно, конкурируют за общую квоту. Отказ по превышению лимита получает любой из двух агентов, независимо от того, чей вызов исчерпал квоту.</p>
+
+<p data-level="3">Такая зависимость не выражается ни в дескрипторе инструмента, ни в контексте модели, потому что она определяется лимитом обращений перевозчика и не зависит от содержания отдельного исключения. Зависимость учитывает планировщик, установленный между моделью и инструментами. Планировщик принимает вызовы, группирует их по ключу ограниченного ресурса, для TKL по коду перевозчика, и пропускает не более разрешённого числа одновременно, откладывая остальные. Для модели три вызова по-прежнему выполняются за один шаг, а веер исполняется в пределах лимитов перевозчиков.</p>
+
+<p data-level="3">Планировщик учитывает бюджет времени цикла: если ожидание квоты превышает остаток бюджета, планировщик сразу возвращает наблюдение с кодом отказа. Так ограничение внешнего ресурса выражается в той же форме, что и любой другой отказ инструмента, и обрабатывается по дереву решений <a href="#s-7-6" data-secref="7.6">раздела 7.6</a>.</p>
+
+<h4 data-level="3">Уверенность, о которой модель сообщает сама</h4>
+
+<p data-level="3">В оценочных наборах TKL числовая уверенность, названная моделью, почти не различала верные и неверные выводы: доля верных выводов среди помеченных «высокой уверенностью» отличалась от доли среди помеченных «средней» на единицы процентов. Число порождается тем же процессом генерации, что и сам ответ, поэтому оно не служит независимым измерением правильности ответа.</p>
+
+<p data-level="3">Измеримой заменой служит счёт свидетельств. Для каждого класса причин заранее объявляется, какие источники обязаны подтвердить вывод: таможенная задержка требует статуса таможни и статуса перевозчика, поломка требует телематики и журнала обслуживания. Уверенность выражается покрытием этого требования и проверяется кодом. Величина принимает немного значений, но её связь с правильностью проверяется на оценочном наборе <a href="#ch-12" data-secref="12">главы 12</a>, а способ её вычисления не зависит от версии модели.</p>
+
+<h4 data-level="3">Детекция петель хешированием</h4>
+
+<p data-level="3">Бюджет останавливает зациклившегося агента только после исчерпания: агент, восемь шагов подряд вызывающий один и тот же инструмент с одними и теми же аргументами, расходует весь бюджет шагов и завершается эскалацией. Такие петли распознаются без обращений к модели. Цикл считает хеш тройки из имени инструмента, нормализованных аргументов и наблюдения, и хранит хеши шагов.</p>
+
+<p data-level="3">Повторение хеша означает, что шаг не дал новых наблюдений, поэтому правило задаётся строгим: два одинаковых шага подряд прекращают попытки с этим инструментом, а три одинаковых шага за запуск останавливают цикл. Аргументы нормализуются, потому что модель может менять незначащие детали вызова: разный порядок ключей и разный регистр идентификатора дают разные строки для одного и того же вызова. Обнаруженная петля записывается в трассу отдельным событием, и частота петель служит метрикой качества инструментов.</p>
+
+<h4 data-level="3">Где объявляется схема состояния</h4>
+
+<p data-level="3">Привязка к фреймворку измеряется объёмом того, что придётся восстанавливать при переходе на другой фреймворк. Логика выбора шага переносится без изменений, потому что зависит только от наблюдений. Схему состояния, которая не была объявлена, приходится восстанавливать: словарь сессии, выросший за полгода до тридцати ключей, не описан нигде, кроме кода, который его читает, и для переноса состав ключей и их смысл восстанавливаются по этому коду.</p>
+
+<p data-level="3">Для FDE, передающего агента команде заказчика, отсюда следует правило. Схема состояния объявляется приложением, даже если фреймворк этого не требует, и хранится рядом с кодом агента. Фреймворк исполняет цикл и предоставляет готовые сессии, трассы и развёртывание, а предметные понятия (причина, свидетельство, бюджет) объявляются в коде приложения. Тогда смена фреймворка сводится к замене исполнителя цикла, а состояние можно сохранить в checkpoint и прочитать через полгода, как описано в <a href="#ch-9" data-secref="9">главе 9</a>.</p>
+
+<div class="warn" data-level="3"><b>Бюджет как единственная защита</b>Если петли останавливает только бюджет шагов, каждое зациклившееся расследование расходует весь бюджет. Петля из трёх одинаковых шагов распознаётся за доли миллисекунды и экономит пять вызовов модели; в TKL при пятистах исключениях в час эта экономия сравнима со стоимостью всего остального цикла.</div>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему бюджета шагов недостаточно и какие ещё три ресурса ограничиваются?</summary>
+<div class="ans"><p>Потому что шаги, токены, время и побочные эффекты исчерпываются независимо друг от друга. Восемь шагов допускают восемь сообщений клиенту и произвольное время ожидания медленного инструмента, а растущий контекст исчерпывает токены раньше шагов.</p></div>
+</details>
+<details>
+<summary>Инструмент записи ответил таймаутом. Что делает цикл и почему?</summary>
+<div class="ans"><p>Останавливается и передаёт работу человеку, если инструмент не принимает ключ идемпотентности: по отсутствию ответа нельзя отличить потерянный ответ от невыполненного действия, и повтор может создать второй побочный эффект. Если ключ принимается, повтор с тем же ключом безопасен и вернёт сохранённый результат первого выполнения.</p></div>
+</details>
+<details>
+<summary>Чем уверенность, вычисленная по свидетельствам, отличается от уверенности, названной моделью?</summary>
+<div class="ans"><p>Она вычисляется кодом из наблюдений без ошибок и проверяется на оценочном наборе, тогда как названное моделью число порождается тем же процессом генерации, что и ответ, и не служит независимым измерением его правильности. Способ вычисления покрытия не зависит от версии модели, поэтому значения остаются сопоставимыми при её смене.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Цикл применяется к исключениям, в которых следующий шаг зависит от предыдущего ответа; распознанные шаблоны обрабатывает конвейер, который дешевле и быстрее.</li>
+<li>ReAct выражается автоматом, у которого каждый переход проходит проверку четырёх бюджетов: шагов, токенов, времени и побочных эффектов.</li>
+<li>Отказ инструмента становится наблюдением, запасным путём или остановкой по классу ошибки и признаку записи; параллельный веер возвращает наблюдение на каждый вызов, включая отказавшие.</li>
+<li>Итог возвращается типом с причиной, действием и свидетельствами, а уверенность вычисляется как покрытие требований к свидетельствам.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-6" data-secref="6">Глава 6: инструменты, которые вызывает этот цикл</a>
+<a href="#ch-8" data-secref="8">Глава 8: системы из нескольких агентов</a>
+<a href="#ch-9" data-secref="9">Глава 9: состояние, checkpoint и возобновление</a>
+</p>
+</div>
+</section>

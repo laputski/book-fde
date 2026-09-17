@@ -1,0 +1,1029 @@
+<!-- ────────────────────────── CHAPTER 14 ────────────────────────── -->
+<section class="chapter" id="ch-14">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter fourteen</p>
+    <span class="strata" role="img" aria-label="Layers A, B and D: customer systems, the model and agent layer, evaluation and observability">
+      <i data-s="A"></i><i data-s="B"></i><i></i><i data-s="D"></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-14"><span class="num">14</span>Performance, Scale, Cost and Hardware</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>translate a customer's volume from documents per day into peak-minute tokens, units of provisioned capacity and a monthly cost, with the dimensions checked;</li>
+<li>choose between a managed endpoint, provisioned throughput, self-hosting in the cloud and the edge from four answers of the customer;</li>
+<li>calculate how many concurrent sequences of an open-weights model fit into an accelerator's memory;</li>
+<li>place batch work in the dip of the daily curve and protect online load with priority, a reserve and backpressure;</li>
+<li>build a model cascade and measure its escalation rate, blended cost and missed errors.</li>
+</ul>
+</div>
+
+<h3 id="s-14-1"><span class="num">14.1</span>The task: Helix's fourteen plants</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-6" data-secref="G.6">Case file CF6 · Helix Manufacturing</a></span>
+  <span class="tag">14 plants</span>
+  <span class="tag">3 air-gapped</span>
+  <span class="tag">edge GPU</span>
+  <span>manufacturing</span>
+</div>
+
+<p>Helix Manufacturing builds hydraulic assemblies in fourteen plants. Quality engineers and maintenance technicians need an assistant that explains a defect found by a camera on the line, using the machine's maintenance log and the parts catalogue, and answers questions about equipment failures from the history of work orders. In the eleven plants connected to the cloud this amounts to about 48,000 requests a day, and a quarter of them fall into the three hours after the morning shift starts at 06:00.</p>
+
+<p>Three plants are isolated from any network: they build export-controlled products, and the head of OT security allows no external connections at all. There an open-weights model runs on the plant's own GPUs, and model packages and results are carried on physical media; the connected plants are served by a central fleet in the cloud. In addition, the plants export work orders, inspection reports and supplier certificates: two million documents a month that do not need to be processed immediately.</p>
+
+<p>The production director set three requirements: the explanation of a defect starts appearing on the terminal within two seconds in 95% of cases, a day's documents are processed before the next morning shift, and the monthly bill for models is predictable to within ten per cent. In the chapter these requirements are translated into a capacity calculation, a choice of where to run, a batch scheduler, a model cascade and a procedure for updating the air-gapped sites.</p>
+
+<h3 id="s-14-2"><span class="num">14.2</span>Why scale is capacity planning</h3>
+
+<p>A web service scales by adding instances: CPU time is cheap and available within minutes. The scaling of a system built on a language model is limited by other resources: the vendor's quota on tokens per minute, provisioned capacity paid for a term, the memory of accelerators that take weeks to deliver, and people able to operate model serving.</p>
+
+<dl class="def">
+<dt>Quota</dt>
+<dd>The upper limit of consumption a vendor sets per project, region and model: tokens per minute, requests per minute, or both. A quota sets an upper limit and does not guarantee capacity: when the vendor's shared capacity runs short, a request within the quota can still be refused.</dd>
+<dt>Provisioned throughput</dt>
+<dd>Token-processing capacity reserved for a customer for a term at a fixed price. It is paid for regardless of use, requests within it are served ahead of pay-per-token requests, and it is measured in tokens per second after inputs and outputs are converted by the vendor's coefficients.</dd>
+</dl>
+
+<p>Planning therefore starts from three quantities: the number of tokens in the peak minute, the capacity that will serve them, and the cost of that capacity when it idles in the remaining hours. These quantities are computed by arithmetic over the load profile. A load test in the last month of the project does not replace this calculation: a test shows that the quota is too small but not which capacity to buy. The first decision concerns where the model runs, and Helix makes it three times: for the online assistant, for the document batch and for the air-gapped sites.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="A decision tree for placing the model with four questions: a ban on data leaving the site leads to the edge, the absence of an operations team leads to a choice between a managed endpoint and provisioned throughput by the shape of the load and the p95, and a team together with a volume that pays for accelerators leads to self-hosting in the cloud" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar14a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="260" y="20" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">May the data leave the site?</text>
+  <text x="440" y="60" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">residency · connectivity</text>
+
+  <rect x="676" y="20" width="190" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="771" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">edge at the site</text>
+  <text x="771" y="60" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">open weights · 14.6</text>
+  <line x1="620" y1="46" x2="668" y2="46" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="644" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <text x="771" y="92" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Helix: 3 air-gapped plants</text>
+
+  <line x1="440" y1="72" x2="440" y2="106" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="450" y="93" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+
+  <rect x="260" y="114" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="136" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Is there a team to operate serving?</text>
+  <text x="440" y="154" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">on-call · upgrades · drivers</text>
+
+  <path d="M440,166 V190 H210 V206" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <path d="M440,190 H670 V206" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="325" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <text x="555" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+
+  <rect x="30" y="214" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="210" y="236" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">A stable base or a strict p95 at peak?</text>
+  <text x="210" y="254" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">daily curve shape · SLO</text>
+
+  <rect x="490" y="214" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="670" y="236" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Does volume pay for owned accelerators?</text>
+  <text x="670" y="254" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">accelerator utilisation · token price</text>
+
+  <line x1="490" y1="240" x2="398" y2="240" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14a)"/>
+  <text x="444" y="232" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+
+  <path d="M210,266 V290 H110 V310" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <path d="M210,290 H310 V310" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="160" y="284" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <text x="260" y="284" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+  <line x1="670" y1="266" x2="670" y2="310" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="680" y="293" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+
+  <rect x="18" y="318" width="184" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="110" y="341" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">managed endpoint</text>
+  <text x="110" y="359" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">pay per token · 14.3</text>
+  <rect x="218" y="318" width="184" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="310" y="341" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">provisioned throughput</text>
+  <text x="310" y="359" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">subscription · 14.3, 14.9</text>
+  <rect x="578" y="318" width="184" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="670" y="341" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">self-hosted in cloud</text>
+  <text x="670" y="359" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">GKE, GPU, TPU · 14.6</text>
+  <text x="310" y="392" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Helix: online, 11 plants</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The place of execution follows from four answers of the customer: residency rules out the cloud entirely, the absence of an in-house operations team rules out self-hosting, the shape of the daily curve determines the choice between paying per token and subscribing to capacity, and the volume determines whether owned accelerators pay for themselves.</figcaption>
+</figure>
+
+<p>The order of the questions matters. Residency is checked first because a negative answer cancels the rest: for Helix's three plants the cloud is ruled out whatever the cost calculation shows. The operations question comes before the volume question because a cost calculation for self-hosting without an on-call team does not account for the downtime after a driver failure on the night shift, when nobody is available to fix it.</p>
+
+<h3 id="s-14-3"><span class="num">14.3</span>The capacity model</h3>
+
+<p>A capacity model translates volume from the customer's units into the vendor's units. The chain is the same for every placement: documents per day are multiplied by tokens per document, divided by the seconds in a day, multiplied by the ratio of peak to mean, and compared with the capacity of one unit. Tokens were introduced in <a href="#s-3-3" data-secref="3.3">Section 3.3</a>; one circumstance is added here: vendors convert an output token into several input tokens, because output occupies capacity for longer.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Calculation step for Helix's online assistant</th><th>Value</th><th>Dimension</th></tr></thead>
+<tbody>
+<tr><td>Requests per day</td><td>48,000</td><td>doc</td></tr>
+<tr><td>Tokens per request: 3,200 in plus 300 out with a weight of 4</td><td>4,400</td><td>tok/doc</td></tr>
+<tr><td>Mean load: 48,000 × 4,400 / 86,400</td><td>2,444</td><td>tok/s</td></tr>
+<tr><td>Morning-shift hour: mean × 2.4</td><td>5,867</td><td>tok/s</td></tr>
+<tr><td>Peak minute: 5,867 × 60</td><td>352,000</td><td>tok</td></tr>
+<tr><td>Capacity units at 700 tok/s for the peak hour</td><td>9</td><td>gsu</td></tr>
+</tbody></table></div>
+
+<p>A naive implementation does without this calculation, and a 429 answer reports the shortage of quota.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to process the volume">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_scaling.py</span></figcaption>
+      <pre><code>from dataclasses import dataclass, field
+
+TPM_QUOTA = 100_000                   # project quota: tokens per minute per model
+
+
+class QuotaExceeded(Exception):
+    """A 429 answer: the tokens-per-minute quota is exhausted."""
+
+
+@dataclass
+class FakeModel:
+    """A model behind a sliding-minute quota; the clock is in milliseconds."""
+    now_ms: int = 0
+    window: list[tuple[int, int]] = field(default_factory=list)
+
+    def generate(self, prompt_tokens: int, max_output: int) -&gt; str:
+        self.window = [(t, n) for t, n in self.window if self.now_ms - t &lt; 60_000]
+        cost = prompt_tokens + max_output
+        if sum(n for _, n in self.window) + cost &gt; TPM_QUOTA:
+            self.now_ms += 50                  # a refusal comes back fast
+            raise QuotaExceeded("429 RESOURCE_EXHAUSTED")
+        self.window.append((self.now_ms, cost))
+        self.now_ms += 500                     # the model's answer
+        return '{"defect": "scratch", "severity": 2}'
+
+
+def process_backlog(docs: list[int], model: FakeModel) -&gt; tuple[int, int]:
+    done = failed = 0
+    for tokens in docs:                        # one document, one call, no pauses
+        try:
+            model.generate(tokens, max_output=100)
+            done += 1
+        except QuotaExceeded:
+            failed += 1                        # the document is lost, the next goes at once
+    return done, failed
+
+
+if __name__ == "__main__":
+    backlog = [1_100] * 1_000                  # one plant's morning export of work orders
+    done, failed = process_backlog(backlog, FakeModel())
+    assert (done, failed) == (249, 751)         # three quarters of the export are lost
+    print(f"processed {done}, lost to the quota {failed}")</code></pre>
+    </figure>
+    <p>The loop takes into account neither the quota nor its own consumption. One plant's morning export exhausts the quota within forty seconds, and of a thousand documents 249 are processed and 751 are lost: a refusal comes back in 50 ms, so the rest of every minute goes on 370 refusals. The quota is shared with the online assistant, so the engineer at the line receives the same 429s.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">capacity_model.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Q:
+    """A number with dimensions: only quantities of one dimension can be added."""
+    value: float
+    dims: tuple[tuple[str, int], ...] = ()
+
+    def _join(self, other: Q, sign: int) -&gt; tuple[tuple[str, int], ...]:
+        acc = dict(self.dims)
+        for name, power in other.dims:
+            acc[name] = acc.get(name, 0) + sign * power
+        return tuple(sorted((n, p) for n, p in acc.items() if p))
+
+    def __add__(self, other: Q) -&gt; Q:
+        if self.dims != other.dims:
+            raise TypeError(f"cannot add {self.dims} and {other.dims}")
+        return Q(self.value + other.value, self.dims)
+
+    def __mul__(self, other: Q | float) -&gt; Q:
+        if isinstance(other, Q):
+            return Q(self.value * other.value, self._join(other, 1))
+        return Q(self.value * other, self.dims)
+
+    def __truediv__(self, other: Q) -&gt; Q:
+        return Q(self.value / other.value, self._join(other, -1))
+
+
+def q(value: float, **dims: int) -&gt; Q:
+    return Q(value, tuple(sorted(dims.items())))
+
+
+DAY, MONTH = q(86_400, s=1), q(30 * 86_400, s=1)
+# Load by hour of day in tenths of the mean: a night dip and two shift peaks.
+PROFILE = (3, 3, 3, 3, 3, 5, 15, 24, 22, 18, 15, 13, 10, 11, 19, 17, 14, 11, 8, 6, 5, 4, 5, 3)
+
+
+@dataclass(frozen=True)
+class Workload:
+    docs_per_day: Q            # doc
+    input_per_doc: Q           # tok/doc
+    output_per_doc: Q          # tok/doc
+
+
+@dataclass(frozen=True)
+class Tariff:
+    """An illustrative price list and throughput conversion, not a vendor's prices."""
+    input_usd: Q               # usd/tok
+    output_usd: Q              # usd/tok
+    output_weight: float       # how many input tokens one output token costs
+    per_gsu: Q                 # tok/s per unit of provisioned capacity
+    gsu_month_usd: Q           # usd per unit per month
+
+
+def average_rate(w: Workload, t: Tariff) -&gt; Q:
+    per_doc = w.input_per_doc + w.output_per_doc * t.output_weight
+    return per_doc * w.docs_per_day / DAY
+
+
+def units_for(rate: Q, t: Tariff) -&gt; int:
+    need = rate / t.per_gsu
+    assert need.dims == (("gsu", 1),), need.dims
+    return math.ceil(need.value)
+
+
+def monthly_cost(w: Workload, t: Tariff, units: int) -&gt; Q:
+    """A subscription of units plus the spillover above it at the per-token price."""
+    capacity = t.per_gsu * q(units, gsu=1)
+    load = [average_rate(w, t).value * p / 10 for p in PROFILE]
+    spill = sum(max(0.0, x - capacity.value) for x in load) / sum(load)
+    per_doc = w.input_per_doc * t.input_usd + w.output_per_doc * t.output_usd
+    paygo = per_doc * w.docs_per_day / DAY * MONTH
+    return t.gsu_month_usd * q(units, gsu=1) + paygo * spill
+
+
+if __name__ == "__main__":
+    online = Workload(q(48_000, doc=1), q(3_200, tok=1, doc=-1), q(300, tok=1, doc=-1))
+    tariff = Tariff(q(0.30e-6, usd=1, tok=-1), q(2.50e-6, usd=1, tok=-1), 4.0,
+                    q(700, tok=1, s=-1, gsu=-1), q(560, usd=1, gsu=-1))
+    avg = average_rate(online, tariff)
+    peak, floor = avg * (max(PROFILE) / 10), avg * (min(PROFILE) / 10)
+    assert avg.dims == (("s", -1), ("tok", 1)) and round(avg.value) == 2_444
+    assert round((peak * q(60, s=1)).value) == 352_000      # tokens in the peak minute
+    try:
+        mixed = online.docs_per_day + online.input_per_doc
+        raise AssertionError(f"documents were added to tokens: {mixed}")
+    except TypeError:
+        pass
+    plans = {"paygo": 0, "floor": units_for(floor, tariff), "peak": units_for(peak, tariff)}
+    cost = {name: monthly_cost(online, tariff, n) for name, n in plans.items()}
+    assert plans == {"paygo": 0, "floor": 2, "peak": 9}
+    assert all(c.dims == (("usd", 1),) for c in cost.values())
+    assert cost["floor"].value &lt; cost["paygo"].value &lt; cost["peak"].value
+    assert cost["peak"].value &gt; 2 * cost["paygo"].value      # the peak guarantee outprices the tokens
+    print("units:", plans, "dollars a month:", {k: round(c.value) for k, c in cost.items()})</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="dims: tuple[tuple[str, int], ...] = ()">line 11</span><p>A dimension is stored as a set of units with powers: tokens per second are <code>tok</code> to the first power and <code>s</code> to the minus first. Multiplication adds the powers, division subtracts them, addition requires them to match, and a unit error stops the calculation before it reaches a capacity order.</p></div>
+        <div><span class="at" data-anchor="output_weight: float">line 54</span><p>The vendor sets the conversion weight of an output token in a table per model. In the listing an output token is worth four input tokens, and the 300 output tokens of a request occupy more than a third of the capacity that its 3,200 input tokens occupy.</p></div>
+        <div><span class="at" data-anchor="spill = sum(">line 74</span><p>Spillover is computed over the hours of the profile: load above the subscription is served at the per-token price. The hourly profile smooths minute-level bursts; for those the vendor has its own accounting window (<a href="#s-14-9" data-secref="14.9">Section 14.9</a>).</p></div>
+        <div><span class="at" data-anchor="assert cost[&quot;floor&quot;].value">line 97</span><p>A subscription for the peak hour costs twice as much as paying per token, because it idles for most of the day. A subscription for the night floor is slightly cheaper than paying per token but guarantees almost nothing. The chosen plan lies between them; it costs more than paying per token, and the difference pays for guaranteed capacity during the peak hours.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns the moment a capacity shortfall is discovered: in the naive loop refusals in the middle of an export reveal it, in the capacity model arithmetic before the order does.</p>
+    <p>The second difference concerns units: the naive code stores documents and tokens as numbers without dimensions, while the capacity model stores the dimension with the number and does not allow quantities of different dimensions to be added.</p>
+    <p>The third difference concerns the subject of the decision: the naive code decides how to process a document, the capacity model decides which capacity to buy and what its idling will cost.</p>
+  </div>
+</div>
+
+<p>Helix chooses an intermediate plan: five units, 3,500 tokens per second, or 1.43 times the mean load. The subscription serves 88% of online tokens, spillover at the shift peaks is billed per token, and in the listing's illustrative price list the bill comes to 3,105 dollars a month against 2,462 when paying per token throughout. The surcharge pays for a guarantee for the morning shift, and <a href="#s-14-5" data-secref="14.5">Section 14.5</a> shows how the night batch uses the idle capacity and recovers most of the surcharge.</p>
+
+<p>For an accelerator of one's own the chain ends in a different unit: capacity is set by memory, that is, by the number of sequences of a given length the model serves at once.</p>
+
+<dl class="def">
+<dt>KV cache</dt>
+<dd>The stored keys and values of the attention layers for the tokens of a sequence already processed. The cache spares the model from recomputing the whole prefix for every new token and grows linearly with the context length and the number of concurrent sequences, so at long contexts with many concurrent sequences it can occupy more memory than the weights.</dd>
+</dl>
+
+<p>Serving memory consists of weights and cache. The weights take the number of parameters times the bytes per parameter: 2 bytes at 16 bits, 1 at 8, about 0.55 at 4 bits with group scales. The cache of one sequence equals the product of two (key and value), the number of layers, the number of KV heads, the head size, the bytes per element and the context length. The number of concurrent sequences equals the memory left after the weights and the reserve, divided by the cache of one sequence.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">gpu_sizing.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+GIB = 2**30
+
+
+@dataclass(frozen=True)
+class ModelShape:
+    """Illustrative dimensions of a dense transformer, not a specific model."""
+    params_b: float            # billions of parameters
+    layers: int
+    kv_heads: int              # key-value heads; with GQA fewer than the query heads
+    head_dim: int
+
+
+@dataclass(frozen=True)
+class Precision:
+    weight_bytes: float        # bytes per parameter: 2 at 16 bits, 1 at 8, about 0.55 at 4 bits
+    kv_bytes: float            # bytes per KV cache element
+
+
+def weights_gib(m: ModelShape, p: Precision) -&gt; float:
+    return m.params_b * 1e9 * p.weight_bytes / GIB
+
+
+def kv_gib(m: ModelShape, p: Precision, context: int) -&gt; float:
+    """Key and value × layers × KV heads × head size × bytes × tokens."""
+    return 2 * m.layers * m.kv_heads * m.head_dim * p.kv_bytes * context / GIB
+
+
+def max_sequences(m: ModelShape, p: Precision, gpu_gib: float, context: int,
+                  reserve: float = 0.10, runtime_gib: float = 1.5) -&gt; int:
+    """How many full-length sequences fit into memory at once."""
+    free = gpu_gib * (1 - reserve) - runtime_gib - weights_gib(m, p)
+    return max(0, math.floor(free / kv_gib(m, p, context)))
+
+
+if __name__ == "__main__":
+    mid = ModelShape(params_b=30, layers=60, kv_heads=8, head_dim=128)
+    small = ModelShape(params_b=8, layers=32, kv_heads=8, head_dim=128)
+    fp16, int8 = Precision(2.0, 2.0), Precision(1.0, 2.0)
+    int4, int4_kv8 = Precision(0.55, 2.0), Precision(0.55, 1.0)
+
+    assert round(weights_gib(mid, fp16), 1) == 55.9
+    assert round(kv_gib(mid, fp16, 32_000), 2) == 7.32         # one long sequence
+    assert max_sequences(mid, fp16, 80, 32_000) == 1
+    assert max_sequences(mid, int8, 80, 32_000) == 5            # 8 bits: five times as many
+    assert max_sequences(mid, int8, 80, 4_000) == 46            # short context: nine times as many
+    assert max_sequences(mid, int4_kv8, 80, 32_000) == 15
+    # At long context the cache of the fitted sequences outweighs the weights.
+    assert 5 * kv_gib(mid, int8, 32_000) &gt; weights_gib(mid, int8)
+
+    # The plant node: a 24 GiB card, an 8k-token context.
+    assert max_sequences(small, int8, 24, 8_000) == 12
+    assert max_sequences(small, fp16, 24, 8_000) == 5
+    assert max_sequences(mid, int4, 24, 8_000) == 2
+    assert max_sequences(mid, fp16, 24, 8_000) == 0             # the weights do not fit at all
+    fits = {name: max_sequences(mid, p, 80, 32_000)
+            for name, p in (("fp16", fp16), ("int8", int8), ("int4+kv8", int4_kv8))}
+    print("sequences on 80 GiB at 32k tokens:", fits)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="kv_heads: int">line 14</span><p>With grouped-query attention (GQA) several query heads share one pair of keys and values, so the cache formula takes the number of KV heads. A model with 64 query heads and 8 KV heads keeps an eight times smaller cache than the same model without grouping.</p></div>
+  <div><span class="at" data-anchor="reserve: float = 0.10">line 34</span><p>The reserve and the runtime's overhead are subtracted before the cache is sized: memory fragmentation, activations, the driver context. Ten per cent and one and a half gigabytes are illustrative here; the actual values come from measuring the model server under load.</p></div>
+  <div><span class="at" data-anchor="4_000) == 46">line 50</span><p>Context length changes the answer more than quantisation: the same 8 bits at 4,000 tokens fit 46 sequences instead of five. The capacity of a self-hosted model is stated together with the context length, because without it the number of sequences is undefined.</p></div>
+  <div><span class="at" data-anchor="max_sequences(small, int8, 24, 8_000) == 12">line 56</span><p>Helix's plant node: an 8-billion-parameter model at 8 bits on a 24 GiB card serves 12 sequences of 8,000 tokens. A 30-billion model at 4 bits fits on the same card with two sequences, and the choice between them is determined by a quality evaluation, because both fit in memory.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Buying capacity for the mean load or from a test with a uniform stream. Helix's mean load is 2.4 times lower than the morning-shift hour, and capacity sized for the mean fails during the morning-shift hours, when requests peak. For self-hosted accelerators the same mistake takes the form of sizing for a short context: one request carrying a machine's full log displaces a dozen short ones.</div>
+
+<h3 id="s-14-4"><span class="num">14.4</span>Latency engineering</h3>
+
+<p>Helix's requirement is written as a p95 time to first token below two seconds; the metrics of the latency distribution are described in <a href="#s-13-4" data-secref="13.4">Section 13.4</a>. The median is set by the typical request, while the p95 is set by rare events, and each of them has its own technique.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Source of the tail</th><th>Mechanism</th><th>Technique</th></tr></thead>
+<tbody>
+<tr><td>Vendor queue at the peak</td><td>the request waits for free capacity</td><td>provisioned capacity, batch off the peak</td></tr>
+<tr><td>Prefix cache miss</td><td>the whole input is processed</td><td>a stable prefix, <a href="#s-3-8" data-secref="3.8">Section 3.8</a></td></tr>
+<tr><td>Long answer</td><td>output tokens are generated one by one</td><td>streaming, an output limit, a terse schema</td></tr>
+<tr><td>Sequential calls</td><td>latencies add up</td><td>parallel independent calls</td></tr>
+<tr><td>Retry after a 429</td><td>a wait and a second call are added</td><td>a limiter before the call instead of a retry after it</td></tr>
+<tr><td>A large model on a simple case</td><td>slower generation</td><td>a cascade, <a href="#s-14-7" data-secref="14.7">Section 14.7</a></td></tr>
+</tbody></table></div>
+
+<p>Streaming does not shorten the full response time but moves the requirement onto the first token: the technician sees the beginning of the explanation after a second and its end after six. The prefix cache shortens the same quantity.</p>
+
+<p>With parallel calls the latency of the result equals the maximum of the calls' latencies, and this maximum has its own tail. The result of five independent calls completes within time t with probability F(t) to the fifth power, where F(t) is the latency distribution function of one call. For the result to have a p95, each call must complete with probability 0.95 to the power of one fifth, about 0.99: the p95 of a fan-out equals the p99 of a single call.</p>
+
+<p>Duplication also shortens the tail: a second copy of the request is sent if the first has not answered within a set time. The technique reduces latency at the cost of additional tokens and works only when latencies are independent (<a href="#s-14-10" data-secref="14.10">Section 14.10</a>).</p>
+
+<h3 id="s-14-5"><span class="num">14.5</span>Batch versus online</h3>
+
+<p>Work splits into two classes by whether a person is waiting for it: a technician's request loses its value within seconds, a work order from yesterday's shift keeps it until morning. Without priority, capacity goes to the request that arrives first, and the document export arrives first.</p>
+
+<dl class="def">
+<dt>Backpressure</dt>
+<dd>A signal from a consumer to a producer that the queue is full and new work must be held back. A producer refused at submission slows down or waits instead of growing the queue without bound or sending the work around it.</dd>
+</dl>
+
+<p>Batch has three sources of savings: the vendor's asynchronous processing with a discount and a completion time measured in hours, provisioned capacity that idles at night, and owned accelerators that idle along the same curve. The placement rule is the same in all three cases.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 340" role="img" aria-label="The daily online load curve from 12:00 to 12:00 against the project quota and the provisioned capacity line: at the shift peaks the curve rises above the subscription and spills over into per-token billing, and in the night dip from 22:00 to 06:00 the free capacity under the subscription line is filled with batch bars" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar14b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="70" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">LOAD AS MULTIPLES OF THE MEAN ONLINE LOAD</text>
+  <rect x="370" y="40" width="240" height="240" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="490" y="58" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">batch window 22:00–06:00</text>
+
+  <line x1="70" y1="40" x2="70" y2="280" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="70" y1="280" x2="790" y2="280" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="64" y1="70" x2="70" y2="70" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="64" y1="140" x2="70" y2="140" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="64" y1="210" x2="70" y2="210" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="58" y="74" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3×</text>
+  <text x="58" y="144" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2×</text>
+  <text x="58" y="214" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1×</text>
+  <text x="58" y="284" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0</text>
+  <text x="70" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">12:00</text>
+  <text x="160" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">15:00</text>
+  <text x="250" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">18:00</text>
+  <text x="340" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">21:00</text>
+  <text x="430" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">00:00</text>
+  <text x="520" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">03:00</text>
+  <text x="610" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">06:00</text>
+  <text x="700" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:00</text>
+  <text x="790" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">12:00</text>
+
+  <line x1="70" y1="70" x2="790" y2="70" stroke="currentColor" stroke-width="1.4"/>
+  <text x="78" y="62" font-family="Inter,sans-serif" font-size="11" fill="currentColor">project quota: pay per token</text>
+  <line x1="70" y1="180" x2="790" y2="180" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="378" y="173" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--sB)">provisioned capacity: 5 units</text>
+
+  <rect x="133" y="150" width="24" height="27" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="163" y="164" width="24" height="13" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="643" y="115" width="24" height="62" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="673" y="129" width="24" height="48" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="703" y="157" width="24" height="20" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <text x="196" y="160" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">spillover: pay per token</text>
+
+  <rect x="373" y="189" width="24" height="53" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="403" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="433" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="463" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="493" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="523" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="553" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="583" y="189" width="24" height="53" rx="2" fill="var(--sB)" opacity="0.85"/>
+
+  <path d="M70,210 H100 V203 H130 V147 H160 V161 H190 V182 H220 V203 H250 V224 H280 V238 H310 V245 H340 V252 H370 V245 H400 V259 H580 V245 H610 V175 H640 V112 H670 V126 H700 V154 H730 V175 H760 V189 H790" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <text x="676" y="104" font-family="Inter,sans-serif" font-size="11" fill="currentColor">shift peak: 2.4 × the mean</text>
+
+  <path d="M226,268 H362" fill="none" stroke="var(--sB)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14b)"/>
+  <text x="220" y="272" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">documents of the day</text>
+  <text x="490" y="326" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">batch: 67M tokens a night, 88% of the window's free capacity</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Batch is placed in the night dip of the daily curve: a capacity subscription sized for the base is supplemented by per-token billing by day and idles at night, and documents deferred into the 22:00–06:00 window raise its utilisation from 61 to 83% without changing the load at the shift peaks.</figcaption>
+</figure>
+
+<p>Two million documents a month at 800 input and 50 output tokens give 67 million converted tokens a night. The free capacity of five units in the 22:00–06:00 window is 76 million, and the batch takes 88% of it, leaving a reserve for the night shift. Asynchronous processing of the same documents would cost 365 dollars a month, so the subscription with the night batch costs 278 dollars more than paying per token together with asynchronous processing.</p>
+
+<p>Batch in shared capacity needs a scheduler with three rules. An online request goes ahead of any queue of documents. Batch does not spend the reserve of the token bucket. The batch queue is bounded, and when a submission is refused the export pauses while the document stays with the producer.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">batch_queue.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import heapq
+from dataclasses import dataclass, field
+
+ONLINE, BATCH = 0, 1                       # the smaller number is popped first
+
+
+@dataclass
+class TokenBucket:
+    """A token limiter: a refill rate and a capacity for bursts."""
+    rate: float                            # tokens per second: the per-minute quota / 60
+    burst: float                           # how much can be spent at once
+    level: float = 0.0
+    updated: float = 0.0
+
+    def take(self, n: int, now: float, keep: float = 0.0) -&gt; bool:
+        self.level = min(self.burst, self.level + (now - self.updated) * self.rate)
+        self.updated = now
+        if self.level - n &lt; keep:
+            return False
+        self.level -= n
+        return True
+
+
+@dataclass(order=True)
+class Job:
+    priority: int
+    seq: int
+    tokens: int = field(compare=False)
+    name: str = field(compare=False)
+
+
+@dataclass
+class Scheduler:
+    bucket: TokenBucket
+    batch_limit: int                       # batch queue length beyond which submissions are refused
+    online_reserve: float                  # bucket tokens the batch may not take
+    heap: list[Job] = field(default_factory=list)
+    seq: int = 0
+    batch_waiting: int = 0
+
+    def submit(self, name: str, tokens: int, priority: int) -&gt; bool:
+        if tokens &gt; self.bucket.burst:
+            raise ValueError(f"{name}: {tokens} tokens will never pass the limiter")
+        if priority == BATCH and self.batch_waiting &gt;= self.batch_limit:
+            return False                   # backpressure: the producer waits
+        self.seq += 1
+        heapq.heappush(self.heap, Job(priority, self.seq, tokens, name))
+        if priority == BATCH:
+            self.batch_waiting += 1
+        return True
+
+    def dispatch(self, now: float) -&gt; list[str]:
+        sent: list[str] = []
+        while self.heap:
+            job = self.heap[0]
+            keep = 0.0 if job.priority == ONLINE else self.online_reserve
+            if not self.bucket.take(job.tokens, now, keep):
+                break                      # the head of the queue waits for a refill
+            heapq.heappop(self.heap)
+            if job.priority == BATCH:
+                self.batch_waiting -= 1
+            sent.append(job.name)
+        return sent
+
+
+if __name__ == "__main__":
+    bucket = TokenBucket(rate=1_000, burst=12_000, level=12_000)
+    sched = Scheduler(bucket, batch_limit=20, online_reserve=5_000)
+    accepted = [sched.submit(f"b{i}", 1_200, BATCH) for i in range(30)]
+    assert accepted.count(False) == 10                  # ten documents were not accepted
+    assert sched.dispatch(now=0.0) == [f"b{i}" for i in range(5)]
+    assert bucket.level &gt;= 5_000                        # the online reserve is untouched
+
+    sched.submit("inspect-17", 3_500, ONLINE)           # an engineer's request at the line
+    assert sched.dispatch(now=0.5)[0] == "inspect-17"   # ahead of fifteen batch documents
+
+    sent, t = 5, 0.5
+    while sched.heap:
+        t += 1.0
+        sent += len(sched.dispatch(now=t))
+    assert (sent, t) == (20, 20.5)
+    assert sched.submit("b30", 1_200, BATCH)            # the queue has room again
+    print(f"a batch of 20 documents took {t:.1f} s, online did not wait")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if tokens &gt; self.bucket.burst:">line 44</span><p>A job larger than the bucket's capacity will never pass, and the scheduler refuses it at once. Without this check such a document would stay at the head of the queue indefinitely and block every job behind it.</p></div>
+  <div><span class="at" data-anchor="self.batch_waiting &gt;= self.batch_limit">line 46</span><p>A refused submission implements backpressure. The producer receives it before any model call and keeps the document, so the length of the queue is bounded and the document is not lost, as it was in the naive loop.</p></div>
+  <div><span class="at" data-anchor="keep = 0.0 if job.priority == ONLINE">line 58</span><p>The reserve acts only against batch: an online request may take the bucket's last token. Priority in the heap determines the order of jobs, and the reserve determines how many tokens remain for online work when a batch job is first in the queue.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Sending batch through the same client and the same quota as online work and relying on retries on 429. A refused document returns to the vendor before capacity has freed up, and online requests receive refusals on a par with the batch. Batch is separated from online work before the call: by priority, a reserve and a bounded queue.</div>
+
+<h3 id="s-14-6"><span class="num">14.6</span>Hardware and sizing</h3>
+
+<p>The calculation of Section 14.3 determines how many sequences fit into memory. Choosing hardware requires answers to three more questions: which accelerator suits the load, at what loss of quality quantisation saves memory, and what changes when the accelerator is installed in a cabinet on the shop floor.</p>
+
+<p>TPUs execute a graph compiled by XLA and are most efficient on large batches with constant tensor shapes; requests of different lengths are sorted into length buckets, otherwise every new shape means a recompilation. GPUs are supported by most open-weights model servers and come in forms from racks to cards in industrial enclosures. Both suit Helix's central fleet; the air-gapped shop floor can have only GPUs.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Precision of weights and cache</th><th>Weights of a 30-billion model</th><th>Sequences of 32,000 tokens on 80 GiB</th><th>What to check on the customer's set</th></tr></thead>
+<tbody>
+<tr><td>16 bits</td><td>55.9 GiB</td><td>1</td><td>the quality reference</td></tr>
+<tr><td>8 bits</td><td>27.9 GiB</td><td>5</td><td>rare defect classes</td></tr>
+<tr><td>4 bits</td><td>15.4 GiB</td><td>7</td><td>numbers and part codes in the answer</td></tr>
+<tr><td>4 bits, 8-bit cache</td><td>15.4 GiB</td><td>15</td><td>quality at long context</td></tr>
+</tbody></table></div>
+
+<p>Quantisation reduces memory at the cost of quality, and the acceptable loss of quality is determined by the customer's evaluation set. For Helix the main risk concerns rare classes: a crack occurs hundreds of times less often than a scratch, and a loss of accuracy on it is invisible in the mean metric, so every precision passes the gate with a separate threshold for rare classes (<a href="#s-12-8" data-secref="12.8">Section 12.8</a>).</p>
+
+<p>An accelerator on the shop floor is subject to constraints that do not exist in the cloud. The OT cabinet on a Helix line has a power budget of one and a half kilowatts for all its equipment, and a server with a 300-watt card takes a third of it. Dust, oil mist and temperatures up to 35 °C require a closed enclosure and lower the card's allowed power. Without a network there is no image registry, no licence server, no telemetry and no card replacement within hours, so the node is designed with spare capacity and without external dependencies.</p>
+
+<p>The node of a Helix air-gapped plant consists of two 24 GiB cards and an 8-billion-parameter model at 8 bits: by day 12 sequences per card for defect explanations, by night the plant's document batch. The second card also serves as a spare if the first fails. The model and its updates reach the plant like any other consignment, through the security checkpoint.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 384" role="img" aria-label="The data flow between the cloud and an air-gapped plant across the air gap: after evaluation and signing the model package travels on a medium, the plant verifies the signature and the hash, evaluates the package on its own set and activates it, the model on the edge GPU writes de-identified results to the outbox, and the export travels on a medium to the centre, where records are accepted by id without duplicates and errors return to the evaluation sets" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar14c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="14" y="40" width="276" height="310" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="26" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">Cloud: the central fleet</text>
+  <rect x="310" y="40" width="260" height="310" rx="8" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="322" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--muted)">Air gap: the medium</text>
+  <rect x="590" y="40" width="276" height="310" rx="8" fill="none" stroke="var(--sA)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="602" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sA)">Air-gapped plant P12</text>
+
+  <rect x="34" y="60" width="236" height="50" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="152" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">evaluation and registry</text>
+  <text x="152" y="99" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">version · sha256 · signature</text>
+  <rect x="34" y="171" width="236" height="50" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="152" y="193" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">field sets</text>
+  <text x="152" y="210" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">labels and plant errors</text>
+  <rect x="34" y="282" width="236" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="152" y="304" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">results intake</text>
+  <text x="152" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">deduplication by id</text>
+
+  <rect x="330" y="60" width="220" height="50" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="440" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">medium: package v5</text>
+  <text x="440" y="99" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">manifest · weights · signature</text>
+  <rect x="330" y="282" width="220" height="50" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="440" y="304" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">medium: export</text>
+  <text x="440" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">de-identified records only</text>
+
+  <rect x="610" y="60" width="236" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="728" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">signature and hash check</text>
+  <text x="728" y="99" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">mismatch: rejected</text>
+  <rect x="610" y="134" width="236" height="50" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="728" y="156" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">offline gate, activation</text>
+  <text x="728" y="173" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">gate · previous version kept</text>
+  <rect x="610" y="208" width="236" height="50" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="728" y="230" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">inference on the edge GPU</text>
+  <text x="728" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">cameras · MES · logs</text>
+  <rect x="610" y="282" width="236" height="50" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="728" y="304" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">outbox</text>
+  <text x="728" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">field allowlist · id</text>
+
+  <g data-step="1" data-caption="The centre releases a package after evaluation: a manifest with the version and the weights hash is signed with the release key, and the package leaves on a medium.">
+    <line x1="270" y1="85" x2="322" y2="85" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="550" y1="85" x2="602" y2="85" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+  </g>
+  <g data-step="2" data-caption="The plant verifies the signature and the hash, runs the package on its own reference set and activates it, keeping the previous version for rollback.">
+    <line x1="728" y1="110" x2="728" y2="126" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+  </g>
+  <g data-step="3" data-caption="The model processes frames and logs on site, and the results enter the outbox without names and with an id derived from their content.">
+    <line x1="728" y1="184" x2="728" y2="200" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="728" y1="258" x2="728" y2="274" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+  </g>
+  <g data-step="4" data-caption="The export leaves on a medium; the centre accepts records by id, a repeat creates no duplicate, and labelled errors return to the sets for the next evaluation.">
+    <line x1="610" y1="307" x2="558" y2="307" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="330" y1="307" x2="278" y2="307" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="152" y1="282" x2="152" y2="229" stroke="var(--sD)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14c)"/>
+    <line x1="152" y1="171" x2="152" y2="118" stroke="var(--sD)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14c)"/>
+  </g>
+  <text x="440" y="374" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Only two objects cross the gap: a signed package inwards and de-identified records outwards.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> An air-gapped site exchanges two objects with the centre, and the safety of the exchange is ensured by checks at the receiving side: the plant verifies the signature, hash and quality of a package before activation, and the centre accepts a record by an id derived from its content, so a repeated delivery creates no duplicate.</figcaption>
+</figure>
+
+<div class="note" data-level="2">For exporting results a one-way gateway from the shop floor outwards can replace the medium; model packages still come in through the security checkpoint. The order of checks on the receiving side does not depend on how the transfer is made.</div>
+
+<h3 id="s-14-7"><span class="num">14.7</span>Cascades and routing</h3>
+
+<p>The router of <a href="#s-3-6" data-secref="3.6">Section 3.6</a> chooses a model before the call, from the features of the document. A cascade decides after the call, from the answer: first the cheap model, then a gate, and only if the gate fails the expensive one. For Helix's defects, where most frames show typical scratches and dents, a cascade pays for itself at once, provided the gate does not let confident mistakes through.</p>
+
+<dl class="def">
+<dt>Model cascade</dt>
+<dd>A sequence of models of increasing cost in which each next model is called only when the answer of the previous one failed a gate: a confidence threshold, a schema check or a domain rule. The cost of a cascade per case equals the price of the first tier plus the escalation rate times the price of the second.</dd>
+</dl>
+
+<p>Signals for the gate differ in reliability. A label probability from token log-probabilities needs calibration, agreement of two cheap samples doubles the price of the first tier, domain rules detect only rule violations, and a model's verbal self-assessment is not used without calibration on a labelled set.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">cascade_router.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import math
+from collections.abc import Callable
+from dataclasses import dataclass
+
+LABELS = ("scratch", "dent", "crack", "porosity")
+
+
+@dataclass(frozen=True)
+class Case:
+    case_id: str
+    difficulty: float          # known to the fake models, not to the router
+    truth: str
+
+
+@dataclass(frozen=True)
+class Answer:
+    label: str
+    confidence: float
+
+
+@dataclass(frozen=True)
+class Tier:
+    name: str
+    usd_per_call: float
+    answer: Callable[[Case], Answer]
+
+
+def other(label: str) -&gt; str:
+    return LABELS[(LABELS.index(label) + 1) % len(LABELS)]
+
+
+def small(case: Case) -&gt; Answer:
+    if case.difficulty &lt; 0.70:
+        return Answer(case.truth, 0.978 - case.difficulty / 4)
+    if case.difficulty &lt; 0.75:
+        return Answer(other(case.truth), 0.90)       # a confident mistake
+    return Answer(other(case.truth), 0.60)
+
+
+def large(case: Case) -&gt; Answer:
+    return Answer(case.truth if case.difficulty &lt; 0.95 else other(case.truth), 0.90)
+
+
+@dataclass(frozen=True)
+class Report:
+    escalation_rate: float     # share of cases that reached the second tier
+    usd_per_case: float
+    accuracy: float
+    accepted_errors: float     # first-tier mistakes the gate let through
+
+
+def evaluate(first: Tier, second: Tier, threshold: float, cases: list[Case]) -&gt; Report:
+    escalated = correct = missed = 0
+    usd = 0.0
+    for case in cases:
+        answer = first.answer(case)
+        usd += first.usd_per_call
+        if answer.confidence &lt; threshold:
+            escalated += 1
+            usd += second.usd_per_call
+            answer = second.answer(case)
+        elif answer.label != case.truth:
+            missed += 1
+        correct += answer.label == case.truth
+    n = len(cases)
+    return Report(escalated / n, usd / n, correct / n, missed / n)
+
+
+if __name__ == "__main__":
+    cases = [Case(f"c{i}", i / 100, LABELS[i % 4]) for i in range(100)]
+    cheap, strong = Tier("small", 0.0004, small), Tier("large", 0.0040, large)
+
+    only_large = evaluate(strong, strong, 0.0, cases)
+    at_80 = evaluate(cheap, strong, 0.80, cases)
+    at_92 = evaluate(cheap, strong, 0.92, cases)
+
+    assert at_80.escalation_rate == 0.25
+    assert math.isclose(at_80.usd_per_case, 0.0004 + 0.25 * 0.0040)   # the blended price
+    assert at_80.usd_per_case &lt; 0.4 * only_large.usd_per_case
+    assert (at_80.accuracy, at_80.accepted_errors) == (0.90, 0.05)
+    assert (at_92.escalation_rate, at_92.accuracy) == (0.76, only_large.accuracy)
+    assert at_92.usd_per_case &gt; 2 * at_80.usd_per_case
+    print(f"threshold 0.80: escalation {at_80.escalation_rate:.0%}, "
+          f"${at_80.usd_per_case:.4f} per case, accuracy {at_80.accuracy:.0%}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="return Answer(other(case.truth), 0.90)">line 38</span><p>The cheap model gets five cases out of a hundred wrong with a confidence of 0.90. No threshold below 0.90 stops them, and they are visible only on a labelled sample: in production the escalation rate is measured, while the rate of missed errors cannot be measured without labels.</p></div>
+  <div><span class="at" data-anchor="usd += second.usd_per_call">line 62</span><p>An escalated case is paid for twice, because the cheap call has already happened. Hence the blended price c₁ + e·c₂ and its consequence: the cascade is cheaper than the expensive model while the escalation rate e stays below 1 − c₁/c₂, which is 90% for the listing's prices.</p></div>
+  <div><span class="at" data-anchor="elif answer.label != case.truth:">line 64</span><p>A missed error is counted only where the truth is known, that is, on a labelled set. This metric chooses the threshold, while the escalation rate in production serves as a drift signal: its rise means the stream of frames has changed.</p></div>
+  <div><span class="at" data-anchor="at_92 = evaluate(">line 77</span><p>A threshold of 0.92 restores the expensive model's accuracy but escalates 76% of cases and costs 2.5 times as much as the 0.80 threshold. The choice between thresholds is determined by the price of a missed defect, and the customer names that price.</p></div>
+</div>
+</figure>
+
+<p>The escalation rate goes onto the same dashboard as the cost per request. At a threshold of 0.80 it is 25%, a case costs 0.0014 dollars against 0.004 for the expensive model, and accuracy is 90% against 95%. The difference in accuracy consists of confident mistakes, and the customer decides whether they are acceptable for scratches and unacceptable for cracks: the threshold is set per class.</p>
+
+<div class="warn"><b>Common mistake</b>Tuning the threshold by mean accuracy over the whole set. Confident mistakes concentrate in rare and expensive classes, and a threshold that gives 90% on average can let half of the cracks through. The threshold is chosen by the cost of an error in each class, and after release the escalation rate is monitored per class.</div>
+
+<h3 id="s-14-8"><span class="num">14.8</span>Cost levers</h3>
+
+<p>The bill for models consists of the price of a token, the number of tokens and the share of work paid at the most expensive rate. The levers in the table are ordered by typical effect for systems like Helix's, and each has its own metric: without a before-and-after measurement the effect of a lever cannot be told apart from coincidence. Breaking metrics down by function and tenant is described in <a href="#s-13-5" data-secref="13.5">Section 13.5</a>.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Lever</th><th>Mechanism</th><th>Metric before and after</th><th>At Helix</th></tr></thead>
+<tbody>
+<tr><td>1. Caching</td><td>a stable prefix is read at a reduced price</td><td>share of input tokens from the cache</td><td>instructions and defect catalogue in the prefix</td></tr>
+<tr><td>2. Routing and cascades</td><td>a cheap model for typical cases</td><td>escalation rate, cost per case</td><td>25% escalations at a 0.80 threshold</td></tr>
+<tr><td>3. Batching</td><td>an asynchronous discount or idle capacity</td><td>share of tokens outside online work, subscription utilisation</td><td>83% utilisation instead of 61%</td></tr>
+<tr><td>4. Prompt size</td><td>fewer input tokens per request</td><td>input tokens per request by function</td><td>number of log records in the context</td></tr>
+<tr><td>5. Output length</td><td>fewer of the most expensive tokens, lower latency</td><td>output tokens per request</td><td>a terse batch schema: 50 tokens</td></tr>
+<tr><td>6. Model choice</td><td>comparison by the price of a solved task</td><td>cost per correct answer on the evaluation set</td><td>8 billion parameters at the plant</td></tr>
+<tr><td>7. Capacity commitment</td><td>a fixed price for a term</td><td>subscription utilisation, spillover share</td><td>five units instead of nine</td></tr>
+</tbody></table></div>
+
+<p>The order depends on the system: in a system with short prompts and long answers output length comes first. The capacity commitment comes last because it locks in the result of the other levers: a subscription bought before the cascade and the batch is sized for a load that will not exist after them.</p>
+
+<div class="warn"><b>Common mistake</b>Comparing models by the price per million tokens. A cheap model that needs a schema repair in every fifth answer or a prompt twice as long costs more than an expensive one. What is compared is the price of a correct answer on the customer's evaluation set, repairs and escalations included.</div>
+
+<h3 id="s-14-9" data-level="2"><span class="num">14.9</span>On Google Cloud: provisioned throughput, TPU, Google Distributed Cloud</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Provisioned Throughput</span>
+  <span class="tag">batch inference</span>
+  <span class="tag">Cloud TPU</span>
+  <span class="tag">GKE</span>
+  <span class="tag">Google Distributed Cloud</span>
+</div>
+
+<p data-level="2">Google Cloud's model platform is called Gemini Enterprise Agent Platform (formerly Vertex AI) in the 2026 documentation.<a class="src" href="https://cloud.google.com/products/gemini-enterprise-agent-platform" target="_blank" rel="noreferrer">cloud.google.com, Gemini Enterprise Agent Platform</a> Its Provisioned Throughput is described as a fixed-cost, fixed-term subscription that reserves throughput for supported models. The unit is the GSU, and burndown rates convert inputs and outputs into tokens per second along the same chain as in Section 14.3.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput/measure-provisioned-throughput" target="_blank" rel="noreferrer">cloud.google.com, calculating Provisioned Throughput</a> The subscription is bound to a project, region, model and version, unused throughput does not carry over, the term is a week (for Google models only), a month, three months or a year, and an order cannot be cancelled before its term ends.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput/purchase-provisioned-throughput" target="_blank" rel="noreferrer">cloud.google.com, purchasing Provisioned Throughput</a></p>
+
+<p data-level="2">When a request arrives, the platform estimates the size of its output, decides from the estimate whether the request goes into the subscription, and reconciles the estimate with the actual usage after the response. The subscription's quota is enforced over a dynamic window: according to the documentation as of September 2026, from 40 to 120 seconds for orders of up to three GSUs and shorter for larger ones. A request above the subscription is billed per token by default, while the <code>X-Vertex-AI-LLM-Request-Type</code> header set to <code>dedicated</code> forbids spillover and returns a 429.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput/use-provisioned-throughput" target="_blank" rel="noreferrer">cloud.google.com, using Provisioned Throughput</a> Helix's night batch is sent with <code>dedicated</code>: a document that does not fit into the subscription returns to the <code>batch_queue.py</code> queue and is not billed per token.</p>
+
+<p data-level="2">The documentation on consumption options recommends covering the baseline load with the subscription.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/consumption-options" target="_blank" rel="noreferrer">cloud.google.com, consumption options</a> Gemini batch inference costs 50% less than real-time inference, takes jobs from Cloud Storage or BigQuery, waits in a queue for capacity for up to 72 hours and completes most jobs within 24 hours after they start, but it does not support Provisioned Throughput and is not covered by an SLA.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/batch-inference" target="_blank" rel="noreferrer">cloud.google.com, batch inference</a> A completion time without a guarantee is incompatible with a promise for the morning shift, so batch jobs receive only those Helix documents that have no deadline.</p>
+
+<p data-level="2">GKE serves open-weights models with servers such as vLLM on GPUs and TPUs, and GKE Inference Gateway routes requests by server metrics, including KV cache utilisation.<a class="src" href="https://docs.cloud.google.com/kubernetes-engine/docs/concepts/machine-learning/inference" target="_blank" rel="noreferrer">cloud.google.com, inference on GKE</a> Cloud TPUs require XLA compilation and suit models with dynamic tensor shapes poorly.<a class="src" href="https://docs.cloud.google.com/tpu/docs/intro-to-tpu" target="_blank" rel="noreferrer">cloud.google.com, introduction to Cloud TPU</a> The Compute Engine documentation places the G2 series with 24 GB L4 cards and the G4 series among options for single-host inference,<a class="src" href="https://docs.cloud.google.com/compute/docs/gpus" target="_blank" rel="noreferrer">cloud.google.com, GPUs on Compute Engine</a> and on a card of the same memory class Helix runs the offline evaluation of a package before it goes onto the medium.</p>
+
+<p data-level="2">Google Distributed Cloud comes in two variants. The connected one runs GKE clusters on Google-certified hardware at the customer's premises and is managed centrally through Google Cloud: Google maintains the software remotely, and the connection to Google Cloud services runs over Cloud VPN,<a class="src" href="https://docs.cloud.google.com/distributed-cloud/edge/latest/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, GDC connected</a> and for it the Gemini on GDC connected API, in public preview, serves private Gemini models.<a class="src" href="https://docs.cloud.google.com/distributed-cloud/gemini-on-gdcc/latest/docs" target="_blank" rel="noreferrer">cloud.google.com, Gemini on GDC connected</a> The air-gapped variant needs no connection to Google Cloud, is delivered in racks after a site survey of space, power and cooling, and its distribution is carried in on portable storage and verified with a checksum;<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/overview" target="_blank" rel="noreferrer">cloud.google.com, GDC air-gapped</a> its Vertex AI services include generative models.<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/application/ao-user/vertex-ai-overview" target="_blank" rel="noreferrer">cloud.google.com, Vertex AI on GDC air-gapped</a> The OT cabinet on a Helix line cannot hold a rack, so the air-gapped plants receive a two-card node, and the transfer of packages repeats the same verification.</p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>The arithmetic of Section 14.3 carries over to any major cloud; the differences between clouds affect two decisions. The first is binding to a model. On Google Cloud the subscription is bound to a model and version, on Amazon Bedrock a unit is bought for a specific model and billed hourly, with no commitment or for one or six months,<a class="src" href="https://docs.aws.amazon.com/bedrock/latest/userguide/prov-throughput.html" target="_blank" rel="noreferrer">docs.aws.amazon.com, Provisioned Throughput</a> while on Azure the PTU quota is not tied to a model, so a cascade that shifts traffic between models changes the subscription calculation more with the first two. The second is spillover. On Google Cloud it is on by default, on Azure it is configured explicitly,<a class="src" href="https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/provisioned-throughput" target="_blank" rel="noreferrer">learn.microsoft.com, provisioned throughput</a> and a batch scheduler has to take into account whether a call above the subscription returns a 429 refusal or is billed per token.</div>
+
+<h3 id="s-14-10" data-level="3"><span class="num">14.10</span>In depth: quota as a shared resource, the KV cache, speculative calls, air-gapped sites</h3>
+
+<h4 data-level="3">The quota as a resource shared across the customer's projects</h4>
+
+<p data-level="3">A quota is issued to a project, and all applications of the project consume it jointly. At Helix one project initially hosted the online assistant, the night batch and the data team's experiments, and a prompt sweep started at 10:00 took a third of the quota away from the assistant: the noisy-neighbour problem reproduces itself inside one organisation, and its bill is a single one. The problem is resolved in two ways. Workloads with different SLOs are placed in different projects with their own quotas, and provisioned capacity is bought only for the project with online load. A gateway in front of the model keeps token buckets per function, so an experiment exhausts its own bucket, and the attribution of Section 13.5 shows whose bucket is running dry.</p>
+
+<h4 data-level="3">The KV cache displaces the weights</h4>
+
+<p data-level="3">At 32,000 tokens, five sequences of a 30-billion-parameter model at 8 bits occupy 36.6 GiB of cache against 27.9 GiB of weights, so capacity is determined by the distribution of context lengths, and the number of requests without their lengths does not characterise it. A paged cache allocates memory in blocks as a sequence grows and holds more sequences on average, but it does not raise the limit. When memory runs out, the server preempts sequences or queues new ones, and this creates the time-to-first-token tail of self-hosted serving. At Helix requests carrying a machine's full history go to a separate pool, and short defect explanations to the main one.</p>
+
+<h4 data-level="3">Rate-limiter semantics: tokens, requests, bursts</h4>
+
+<p data-level="3">Limits on requests and on tokens per minute refuse in different situations: a thousand short requests exhaust the first, ten long ones the second. Output tokens are unknown at admission, and the limiter reserves either the maximum output, under-using capacity, or an estimate reconciled after the response, as Provisioned Throughput does. A burst is set by the accounting window: a bucket of 12,000 tokens releases them all at once, a sliding one-minute window releases the whole minute's volume within a second. One's own limiter is stricter than the vendor's on both parameters, otherwise the vendor's refusals arrive before its own, and backpressure stops working.</p>
+
+<h4 data-level="3">Speculative parallel calls: the tail in exchange for the median</h4>
+
+<p data-level="3">A speculative, or hedged, call sends a second copy of a request if the first has not answered within time d, and accepts whichever answer arrives first. With independent latencies the probability of exceeding a time t greater than d equals the product of P(X &gt; t) and P(X &gt; t − d). Let the p50 of one call be 1.5 s, its p90 2.5 s and its p95 4 s. A duplicate after d = 2.5 s is sent for 10% of requests, and the probability of exceeding 4 s falls to 0.05 · 0.5 = 0.025: four seconds become the p97.5.</p>
+
+<p data-level="3">Sending two copies at once with d = 0 cuts the tail harder, since the probability of exceeding is squared, but it doubles the spend on every request, that is, the shortening of the tail is paid for on typical requests as well. There are two conditions. Latencies must be independent: if the tail is caused by vendor overload or a long input, the second copy lands in the same queue and only consumes quota. The call must have no side effects, and the losing copy is cancelled at once; tokens generated before cancellation are billed.</p>
+
+<h4 data-level="3">Model updates in air-gapped plants</h4>
+
+<p data-level="3">Updating a model in an air-gapped plant is a release without rollback over the network, and three mechanisms replace the missing connection. Signing: the package is signed at the centre with the release key, and the plant verifies the signature and the weights hash before anything else. Versioning: the version number is monotonic, a rejected number is never reused, and rollback is an explicit command to a previously active version; installing an old package is refused. Offline evaluation: the plant keeps a reference set of labelled frames and activates a package only if its accuracy on that set is not below the threshold and not below the active version minus a tolerance.</p>
+
+<figure class="code" data-fold="26" data-level="3">
+<figcaption><span class="file">edge_sync.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+EXPORT_FIELDS = ("plant", "line", "defect", "severity", "model_version", "ts")
+
+
+@dataclass
+class Outbox:
+    """The plant's results wait for a transfer window; the id is derived from content."""
+    pending: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def put(self, record: dict[str, Any]) -&gt; str:
+        clean = {k: record[k] for k in EXPORT_FIELDS if k in record}
+        raw = json.dumps(clean, sort_keys=True).encode("utf-8")
+        rid = hashlib.sha256(raw).hexdigest()[:32]
+        self.pending[rid] = clean
+        return rid
+
+    def flush(self, upload: Callable[[str, dict[str, Any]], None]) -&gt; int:
+        sent = 0
+        for rid in sorted(self.pending):
+            upload(rid, self.pending[rid])       # may break off at any record
+            del self.pending[rid]                # removed only after acknowledgement
+            sent += 1
+        return sent
+
+
+@dataclass
+class CentralIntake:
+    rows: dict[str, dict[str, Any]] = field(default_factory=dict)
+    lose_ack_at: int = 0                         # number of the call whose acknowledgement is lost
+    calls: int = 0
+
+    def upload(self, rid: str, record: dict[str, Any]) -&gt; None:
+        self.calls += 1
+        self.rows.setdefault(rid, record)        # a repeat with the same id changes nothing
+        if self.calls == self.lose_ack_at:
+            raise ConnectionError("the transfer window closed before the acknowledgement")
+
+
+@dataclass(frozen=True)
+class Package:
+    name: str
+    version: int
+    weights: bytes
+    manifest: bytes                              # JSON: name, version, sha256 of the weights
+    signature: bytes
+
+
+def build(name: str, version: int, weights: bytes, key: bytes) -&gt; Package:
+    manifest = json.dumps({"name": name, "version": version,
+                           "sha256": hashlib.sha256(weights).hexdigest()}).encode("utf-8")
+    return Package(name, version, weights, manifest, hmac.new(key, manifest, "sha256").digest())
+
+
+def verify(pkg: Package, key: bytes) -&gt; str:
+    """An empty string if the package is intact; otherwise the reason for refusal."""
+    if not hmac.compare_digest(hmac.new(key, pkg.manifest, "sha256").digest(), pkg.signature):
+        return "the manifest signature does not match"
+    meta = json.loads(pkg.manifest)
+    if meta["sha256"] != hashlib.sha256(pkg.weights).hexdigest():
+        return "the weights hash does not match the manifest"
+    if (meta["name"], meta["version"]) != (pkg.name, pkg.version):
+        return "the manifest describes another package"
+    return ""
+
+
+@dataclass
+class PlantRegistry:
+    key: bytes
+    evaluate: Callable[[Package], float]         # offline evaluation on the plant's reference set
+    floor: float = 0.90
+    tolerance: float = 0.01                      # allowed drop against the active version
+    active: Package | None = None
+    score: float = 0.0
+    previous: list[Package] = field(default_factory=list)
+    log: list[str] = field(default_factory=list)
+
+    def install(self, pkg: Package, now: float) -&gt; bool:
+        reason = verify(pkg, self.key)
+        if not reason and self.active and pkg.version &lt;= self.active.version:
+            reason = f"version {pkg.version} is not newer than active {self.active.version}"
+        score = self.evaluate(pkg) if not reason else 0.0
+        if not reason and (score &lt; self.floor or score &lt; self.score - self.tolerance):
+            reason = f"offline evaluation {score:.2f} fails the gate"
+        if reason:
+            self.log.append(f"{now:.0f} refused {pkg.name}:{pkg.version}: {reason}")
+            return False
+        if self.active:
+            self.previous.append(self.active)
+        self.active, self.score = pkg, score
+        self.log.append(f"{now:.0f} active {pkg.name}:{pkg.version}")
+        return True
+
+
+if __name__ == "__main__":
+    key = b"helix-release-key"
+    scores = {b"w3": 0.93, b"w4-q4": 0.88, b"w5": 0.94}
+    plant = PlantRegistry(key, evaluate=lambda p: scores[p.weights])
+    assert plant.install(build("inspect-8b", 3, b"w3", key), now=100)
+    v4 = build("inspect-8b", 4, b"w4-q4", key)
+    tampered = Package(v4.name, v4.version, b"w4-patched", v4.manifest, v4.signature)
+    assert not plant.install(tampered, now=200) and "hash" in plant.log[-1]
+    assert not plant.install(v4, now=300) and "evaluation 0.88" in plant.log[-1]
+    assert plant.install(build("inspect-8b", 5, b"w5", key), now=400)
+    assert not plant.install(build("inspect-8b", 3, b"w3", key), now=500)   # rollback is explicit only
+    assert plant.active is not None and plant.active.version == 5
+    assert [p.version for p in plant.previous] == [3]
+
+    outbox, intake = Outbox(), CentralIntake(lose_ack_at=2)
+    for ts in (1, 2, 3, 3):                      # the last record repeats the third
+        outbox.put({"plant": "P12", "line": "L3", "defect": "crack", "severity": 3,
+                    "operator": "Ivanov", "model_version": 5, "ts": ts})
+    assert len(outbox.pending) == 3
+    try:
+        outbox.flush(intake.upload)
+    except ConnectionError:
+        pass
+    assert (len(intake.rows), len(outbox.pending)) == (2, 2)
+    assert outbox.flush(intake.upload) == 2
+    assert len(intake.rows) == 3 and not outbox.pending
+    assert all("operator" not in row for row in intake.rows.values())
+    print("package verified and evaluated offline, results delivered without duplicates or names")</code></pre>
+<div class="gloss" data-level="3">
+  <div><span class="at" data-anchor="manifest, hmac.new(key, manifest">line 59</span><p>HMAC stands in for an asymmetric signature, which the standard library lacks. In production the plant holds only the public verification key: with a symmetric key a compromised plant could sign a package itself.</p></div>
+  <div><span class="at" data-anchor="pkg.version &lt;= self.active.version">line 87</span><p>Installing an old package is refused even with a valid signature, otherwise an attacker with a medium could bring back a vulnerable version that was once legitimately signed. Rollback is a separate command to a version from the <code>previous</code> list, which the listing does not show.</p></div>
+  <div><span class="at" data-anchor="score &lt; self.score - self.tolerance">line 90</span><p>The gate compares the candidate both with an absolute threshold and with the active version. Package v4 at 4 bits scored 0.88 and was refused despite a valid signature and hash: the quantised model passed the integrity check but not the quality check.</p></div>
+  <div><span class="at" data-anchor="clean = {k: record[k] for k in EXPORT_FIELDS">line 19</span><p>De-identification is built on an allowlist: only the listed fields leave the plant. A denylist would let through any new field with an operator's name added to the MES after release.</p></div>
+  <div><span class="at" data-anchor="del self.pending[rid]">line 29</span><p>A record leaves the outbox only after the upload is acknowledged. A lost acknowledgement leaves it in place, the next export sends it again, and the centre creates no duplicate because the id is derived from the content, like the idempotency key of <a href="#s-6-8" data-secref="6.8">Section 6.8</a>.</p></div>
+</div>
+</figure>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why does a capacity subscription sized for the peak hour cost Helix more than paying per token, even though a converted token inside the subscription is cheaper?</summary>
+<div class="ans"><p>The subscription is paid for every hour of the day, while the peak lasts a few hours. Capacity sized for the peak hour is about 40% utilised, whereas in the listing's illustrative price list the subscription breaks even at about 79% utilisation. The subscription is therefore sized for the base, spillover at the peaks is paid per token, and the night dip is filled with batch work.</p></div>
+</details>
+<details>
+<summary>How many sequences of 32,000 tokens fit on an 80 GiB card with a 30-billion-parameter model at 8 bits, and why does compressing the cache give more than moving the weights from 8 to 4 bits?</summary>
+<div class="ans"><p>Five. At this length the cache of one sequence takes 7.3 GiB, and the cache of five sequences outweighs the weights. Moving the weights to 4 bits frees 12.5 GiB, room for one or two sequences, while halving the cache roughly doubles their number at any weight precision.</p></div>
+</details>
+<details>
+<summary>Why does a speculative duplicate call fail to shorten the tail when the latency is caused by an overloaded vendor quota?</summary>
+<div class="ans"><p>The technique relies on the latencies of the two copies being independent. Under overload both wait in the same queue and hit the same quota, so the second copy arrives no sooner than the first, consumes tokens and brings a 429 closer for other requests.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>The scale of a system built on a model is limited by quotas, provisioned capacity, accelerator memory and operations staff; the place of execution is chosen by residency, the presence of a team, the shape of the load and the volume.</li>
+<li>A capacity model converts documents per day into converted tokens per second, subscription units and a monthly cost with the dimensions checked; the subscription covers the base, and peaks spill over into per-token billing.</li>
+<li>The capacity of an owned accelerator is the number of sequences that fit into memory after the weights, and at long context it is set by the KV cache; quantisation reduces memory at the cost of quality, whose loss the evaluation set verifies.</li>
+<li>Batch work goes into the dip of the daily curve behind a scheduler with online priority, a reserve and a bounded queue; a cascade is measured by its escalation rate, blended price and missed errors, and an air-gapped plant activates only signed and evaluated packages.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-3" data-secref="3">Chapter 3: tokens, latency and routing</a>
+<a href="#ch-13" data-secref="13">Chapter 13: metrics and cost attribution</a>
+<a href="#ch-17" data-secref="17">Chapter 17: total cost of ownership</a>
+</p>
+</div>
+</section>

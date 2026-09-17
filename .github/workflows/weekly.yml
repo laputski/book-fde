@@ -1,0 +1,102 @@
+# The weekly sync with the outside world: the sources the book is
+# calibrated against (job posts, protocol specifications, vendor docs) and
+# the external links. The check date updates by auto-commit; the book's
+# prose is never edited by automation — drift opens an issue.
+name: weekly
+
+on:
+  schedule:
+    - cron: "20 6 * * 1"          # Monday, 06:20 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pages: write
+  id-token: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.fetch.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify the sources
+        id: fetch
+        run: |
+          set +e
+          python3 tools/fetch_sources.py
+          code=$?
+          set -e
+          if [ "$code" = "3" ]; then echo "changed=yes" >> "$GITHUB_OUTPUT";
+          elif [ "$code" = "0" ] || [ "$code" = "2" ]; then echo "changed=no" >> "$GITHUB_OUTPUT";
+          else exit "$code"; fi
+
+      - name: Staleness detector
+        id: drift
+        run: |
+          set +e
+          python3 tools/check_drift.py > drift.md
+          code=$?
+          set -e
+          cat drift.md
+          if [ "$code" = "4" ]; then echo "found=yes" >> "$GITHUB_OUTPUT";
+          elif [ "$code" = "0" ]; then echo "found=no" >> "$GITHUB_OUTPUT";
+          else exit "$code"; fi
+
+      - name: Open a drift issue (unless one is open)
+        if: steps.drift.outputs.found == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create drift --color D93F0B \
+            --description "The content diverged from external sources" 2>/dev/null || true
+          existing=$(gh issue list --label drift --state open --json number --jq length)
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "Content staleness detected" \
+              --label drift --body-file drift.md
+          else
+            number=$(gh issue list --label drift --state open --json number --jq '.[0].number')
+            gh issue comment "$number" --body-file drift.md
+          fi
+
+      - name: Commit the refreshed check date
+        if: steps.fetch.outputs.changed == 'yes'
+        run: |
+          ./build.sh
+          git config user.name "book-bot"
+          git config user.email "actions@github.com"
+          git add data/sources_meta.json fde-advanced.html
+          git commit -m "chore(data): sources verified $(python3 -c "import json; print(json.load(open('data/sources_meta.json'))['checked_at'])")"
+          git push
+
+      - name: Guard against the 60-day schedule sleep
+        if: steps.fetch.outputs.changed == 'no'
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          days=$(( (now - last) / 86400 ))
+          echo "days since the last commit: $days"
+          if [ "$days" -gt 45 ]; then
+            git config user.name "book-bot"
+            git config user.email "actions@github.com"
+            date -u +%Y-%m-%dT%H:%M:%SZ > data/.last-checked
+            git add data/.last-checked
+            git commit -m "chore: sync mark (the schedule stays alive)"
+            git push
+          fi
+
+  deploy:
+    needs: refresh
+    if: needs.refresh.outputs.changed == 'yes'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

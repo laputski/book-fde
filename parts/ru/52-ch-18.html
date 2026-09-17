@@ -1,0 +1,1017 @@
+<!-- ────────────────────────── ГЛАВА 18 ────────────────────────── -->
+<section class="chapter" id="ch-18">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава восемнадцатая</p>
+    <span class="strata" role="img" aria-label="Слои F и G: люди и процесс, продукт и обратная связь">
+      <i></i><i></i><i></i><i></i><i></i><i data-s="F"></i><i data-s="G"></i>
+    </span>
+  </div>
+  <h2 id="s-18"><span class="num">18</span>Руководство Forward Deployed Engineering</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>выражать стандарты squad исполнимыми проверками и сравнивать engagement на общем benchmark;</li>
+<li>проектировать процесс найма, в котором каждый этап измеряет один сигнал по якорной рубрике, и калибровать интервьюеров по смещениям;</li>
+<li>планировать staffing с ограничениями по навыкам, утилизации, резерву на паттерны и риску ключевого человека;</li>
+<li>согласовывать с Sales критерии квалификации и отклонять объём работ, характерный для системного интегратора, до подписания договора;</li>
+<li>ранжировать вход в roadmap по явным весам и излагать его руководству на одной странице.</li>
+</ul>
+</div>
+
+<h3 id="s-18-1"><span class="num">18.1</span>Задача: региональный squad</h3>
+
+<div class="rec">
+  <span class="name"><a href="#app-g" data-secref="G">Досье CF1–CF6 · региональный squad</a></span>
+  <span class="tag">6 инженеров</span>
+  <span class="tag">8 заказчиков</span>
+  <span class="tag">2 вакансии</span>
+  <span>квартальный план</span>
+</div>
+
+<p>Региональный squad из шести инженеров обслуживает восемь заказчиков. Шесть из них описаны в досье приложения G: <a href="#s-g-1" data-secref="G.1">Nordbank</a> и <a href="#s-g-4" data-secref="G.4">Orion</a> в эксплуатации, <a href="#s-g-2" data-secref="G.2">Meridian</a> на пилоте, <a href="#s-g-3" data-secref="G.3">Transkontinent</a> и <a href="#s-g-6" data-secref="G.6">Helix</a> в сборке, <a href="#s-g-5" data-secref="G.5">Northgate</a> в передаче. Ещё два находятся в presales и обозначены в плане P1 и P2. Заказчики и все числа главы вымышлены и описывают только эти случаи. Другие главы описывают engagement тех же заказчиков в другие моменты, поэтому фазы в плане squad относятся к началу квартала этой главы и могут отличаться от фаз, описанных в других главах.</p>
+
+<p>Руководителю squad на следующий квартал поставлены четыре задачи. Первая: сделать стандарты кода и benchmarks обязательными для всех репозиториев engagement так, чтобы нарушения обнаруживала автоматическая проверка. Вторая: спроектировать процесс найма на две открытые позиции. Третья: распределить инженеров по заказчикам с учётом фаз и навыков. Четвёртая: передать команде продукта квартальный вход в roadmap, собранный из реестра паттернов <a href="#s-16-3" data-secref="16.3">раздела 16.3</a>.</p>
+
+<h3 id="s-18-2"><span class="num">18.2</span>Почему руководитель squad строит систему процедур</h3>
+
+<p>Если каждый engagement, оказавшийся в кризисе, выводит из него один и тот же самый опытный инженер, squad выполняет обязательства до тех пор, пока два кризиса не совпадут по времени. Такой способ работы не масштабируется: он расходует внимание одного человека, которое нельзя увеличить или передать, и не оставляет процедуры, которую мог бы повторить другой инженер. Эндрю Гроув записал результат менеджера уравнением: он равен результату подразделения менеджера плюс результату соседних подразделений, на которые менеджер влияет.<a class="src" href="https://www.penguinrandomhouse.ca/books/72467/high-output-management-by-andrew-s-grove/excerpt" target="_blank" rel="noreferrer">Grove, High Output Management, 1983</a> Поэтому результат руководителя squad измеряется системами заказчиков, которые squad довёл до production и поддерживает там.</p>
+
+<dl class="def">
+<dt>Squad FDE <span class="en">(FDE squad)</span></dt>
+<dd>Постоянная группа инженеров под одним руководителем, которая одновременно ведёт несколько engagement и отвечает за их результаты в production, а также за паттерны и модули, извлечённые из них. Squad сохраняет состав после завершения отдельного engagement.</dd>
+</dl>
+
+<p>Машиной в этой главе названа совокупность процедур и исполнимых артефактов, через которые squad производит результаты независимо от того, какой инженер занят конкретной задачей. Глава разбирает её части по порядку: стандарты и benchmarks, найм, staffing, партнёрство с Sales, обучение и менторство, путь в roadmap. Части, для которых это возможно, выражены исполнимыми артефактами, то есть листингами, проверяющими правило на данных squad. Правило, записанное только в документе, соблюдается, пока его помнят исполнители; исполнимый артефакт продолжает действовать и после смены руководителя.</p>
+
+<h3 id="s-18-3"><span class="num">18.3</span>Стандарты и benchmarks</h3>
+
+<p>Стандарт squad для AI-системы состоит из четырёх требований. В каждом репозитории engagement есть оценочный набор с воротами релиза из <a href="#s-12-8" data-secref="12.8">раздела 12.8</a>, трассировка вызовов модели по <a href="#ch-13" data-secref="13">главе 13</a>, промпты с версиями по <a href="#s-4-7" data-secref="4.7">разделу 4.7</a> и манифест release bundle из <a href="#s-15-5" data-secref="15.5">раздела 15.5</a>. Каждое требование введено после инцидента в одном из engagement, и каждое команды нарушают первым, когда не успевают к сроку. Поэтому для стандарта задаётся, кто обнаруживает нарушение и в какой момент.</p>
+
+<dl class="def">
+<dt>Исполнимый стандарт <span class="en">(executable standard)</span></dt>
+<dd>Правило инженерной практики, выраженное проверкой, которая получает описание репозитория и возвращает нарушения с именем правила. Проверка запускается в CI каждого репозитория engagement, поэтому нарушение обнаруживается при попытке слить изменение, которое его вносит.</dd>
+</dl>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы задать стандарты squad">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="16">
+      <figcaption><span class="file">naive_standards.py</span></figcaption>
+      <pre><code>STANDARDS = """Стандарты squad, редакция 3 (вики)
+1. В репозитории engagement есть оценочный набор и ворота релиза.
+2. Каждый вызов модели попадает в трассу.
+3. Промпты версионируются в репозитории.
+4. Выпуск описан манифестом release bundle."""
+
+
+def check(repo: dict[str, str], team_confirmed: bool) -&gt; bool:
+    """Проверка по вики: команда подтвердила, что прочитала стандарты."""
+    return team_confirmed and "стандарт" in repo.get("README.md", "").lower()
+
+
+if __name__ == "__main__":
+    repo = {
+        "README.md": "Работаем по стандартам squad, см. вики.",
+        "app.py": 'PROMPT = "Ты ассистент банка. Отвечай кратко."',
+    }
+    assert check(repo, team_confirmed=True)                     # «проверка» пройдена
+    assert not any(path.startswith("evals/") for path in repo)  # 1: оценок нет
+    assert "config/observability.json" not in repo              # 2: трассировки нет
+    assert "PROMPT = " in repo["app.py"]                        # 3: промпт зашит в код
+    assert "release/manifest.json" not in repo                  # 4: манифеста нет
+    print("нарушены все 4 правила из вики, проверка пройдена")</code></pre>
+    </figure>
+    <p>Стандарт записан в вики, и «проверка» подтверждает только то, что команда его прочитала. Репозиторий из листинга нарушает все четыре правила: оценок нет, трассировки нет, промпт зашит в код, манифеста нет. Проверка при этом проходит, и руководитель узнаёт о нарушении из инцидента.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="24">
+      <figcaption><span class="file">standards_check.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import json
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+
+type Repo = dict[str, str]              # путь файла -&gt; содержимое
+type Rule = Callable[[Repo], list[str]]
+
+RULES: dict[str, Rule] = {}
+PINNED_MODEL = re.compile(r"[a-z0-9-]+@\d{8}")          # версия с датой, не alias
+SHA256 = re.compile(r"[0-9a-f]{64}")
+INLINE_PROMPT = re.compile(r"^\s*\w*PROMPT\w*\s*=\s*[rf]?[\"']", re.M)
+
+
+def rule(name: str) -&gt; Callable[[Rule], Rule]:
+    def register(fn: Rule) -&gt; Rule:
+        RULES[name] = fn
+        return fn
+    return register
+
+
+def load(repo: Repo, path: str) -&gt; dict:
+    return json.loads(repo[path]) if path in repo else {}
+
+
+@rule("evals")
+def evals_gate(repo: Repo) -&gt; list[str]:
+    found: list[str] = []
+    if not any(p.startswith("evals/") and p.endswith(".jsonl") for p in repo):
+        found.append("нет оценочного набора evals/*.jsonl")
+    if not load(repo, "evals/gate.json").get("thresholds"):
+        found.append("ворота релиза без порогов в evals/gate.json")
+    return found
+
+
+@rule("tracing")
+def tracing(repo: Repo) -&gt; list[str]:
+    cfg = load(repo, "config/observability.json").get("tracing", {})
+    if not cfg.get("exporter"):
+        return ["трассировка не настроена: нет exporter"]
+    return [] if 0 &lt; cfg.get("sample_rate", 0) &lt;= 1 else ["sample_rate вне (0, 1]"]
+
+
+@rule("prompts")
+def versioned_prompts(repo: Repo) -&gt; list[str]:
+    found = [f"{p}: промпт зашит в код" for p, text in sorted(repo.items())
+             if p.endswith(".py") and INLINE_PROMPT.search(text)]
+    found += [f"{p}: нет строки version:" for p, text in sorted(repo.items())
+              if p.startswith("prompts/") and not text.startswith("version:")]
+    return found
+
+
+@rule("release")
+def release_bundle(repo: Repo) -&gt; list[str]:
+    if "release/manifest.json" not in repo:
+        return ["нет манифеста release/manifest.json"]
+    m = load(repo, "release/manifest.json")
+    found = [] if PINNED_MODEL.fullmatch(m.get("model", "")) else ["модель не закреплена версией"]
+    found += [f"{key} не является хешем содержимого" for key in ("prompt_sha256", "config_sha256")
+              if not SHA256.fullmatch(m.get(key, ""))]
+    return found
+
+
+def check(repo: Repo) -&gt; dict[str, list[str]]:
+    """Отчёт: правило -&gt; нарушения; правило без нарушений в отчёт не попадает."""
+    return {name: found for name, fn in RULES.items() if (found := fn(repo))}
+
+
+if __name__ == "__main__":
+    naive = {"README.md": "Работаем по стандартам squad, см. вики.",
+             "app.py": 'PROMPT = "Ты ассистент банка. Отвечай кратко."'}
+    assert sorted(check(naive)) == ["evals", "prompts", "release", "tracing"]
+
+    good = {
+        "app.py": 'prompt = registry.load("prompts/answer.md")',
+        "prompts/answer.md": "version: 7\nОтвечай только по источникам.",
+        "evals/cases.jsonl": '{"q": "лимит по карте", "expected": "doc-12"}',
+        "evals/gate.json": json.dumps({"thresholds": {"groundedness": 0.9}}),
+        "config/observability.json": json.dumps(
+            {"tracing": {"exporter": "otlp", "sample_rate": 0.2}}),
+        "release/manifest.json": json.dumps({"model": "model-pro@20260301",
+                                             "prompt_sha256": "a" * 64, "config_sha256": "b" * 64}),
+    }
+    assert check(good) == {}
+    drifted = good | {"release/manifest.json": json.dumps(
+        {"model": "model-pro-latest", "prompt_sha256": "a" * 64, "config_sha256": "main"})}
+    assert check(drifted) == {"release": ["модель не закреплена версией",
+                                          "config_sha256 не является хешем содержимого"]}
+    squad = {"CF1": good, "CF4": drifted, "CF6": naive}
+    failing = {cf: sorted(check(repo)) for cf, repo in squad.items() if check(repo)}
+    assert failing == {"CF4": ["release"], "CF6": ["evals", "prompts", "release", "tracing"]}
+    print(f"{len(RULES)} исполнимых правила; нарушения: {failing}")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="PINNED_MODEL = re.compile">строка 12</span><p>Правило release bundle проверяет наличие манифеста и неизменяемость записанных в нём имён: модель закреплена датированной версией, промпт и конфигурация закреплены хешами содержимого. Alias модели и имя ветки со временем указывают на другое содержимое, поэтому откат по такому манифесту восстанавливает другую систему.</p></div>
+        <div><span class="at" data-anchor="def rule(name: str)">строка 17</span><p>Правило регистрируется декоратором, и отчёт называет нарушенное правило по имени. Новое правило squad добавляется одной функцией и действует во всех репозиториях при следующем запуске проверки.</p></div>
+        <div><span class="at" data-anchor="if (found := fn(repo))">строка 68</span><p>В отчёт попадают только нарушенные правила: пустой словарь означает соответствие, а непустой останавливает слияние в CI.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие в том, что проверяется. Наивная проверка опирается на подтверждение команды, исполнимая проверка анализирует файлы репозитория при каждом изменении.</p>
+    <p>Второе различие в форме результата. Наивная проверка отвечает «да» или «нет», продуманная называет правило и нарушение, и инженер исправляет его без переписки с руководителем.</p>
+    <p>Третье различие в масштабе. Одна функция одинаково проверяет восемь репозиториев, и отчёт по squad собирается из отчётов по репозиториям.</p>
+  </div>
+</div>
+
+<p>Стандарт проверяет наличие механизмов. Качество систем разных engagement сравнивает benchmark, общий набор задач, который прогоняется на конфигурации каждого заказчика при каждом выпуске общего модуля из <a href="#s-16-4" data-secref="16.4">раздела 16.4</a>. Оценочные наборы заказчиков остаются воротами их собственных релизов. Benchmark, разобранный в <a href="#s-18-8" data-secref="18.8">разделе 18.8</a>, определяет, ухудшил ли выпуск модуля качество, задержку или стоимость у кого-либо из заказчиков.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Включать новый стандарт сразу с блокировкой слияния во всех репозиториях. Старые engagement получают десятки нарушений в день выкладки, команда отключает проверку, и её больше не включают. Проверка вводится в режиме отчёта, нарушения закрываются по плану с датами, и только затем она начинает блокировать слияние.</div>
+
+<h3 id="s-18-4"><span class="num">18.4</span>Процесс найма</h3>
+
+<p>Hiring loop, последовательность этапов от первичного отбора до решения комитета, проектируется от сигналов: сначала определяется, что кандидат должен показать, затем каждому сигналу назначается этап, который его измеряет. FDE должен показать четыре сигнала, то есть наблюдаемые способности, по которым принимается решение: умение строить работающие системы, эксплуатировать их после выпуска, принимать обоснованные решения об объёме и приоритетах в работе с заказчиком и объяснять эти решения разным адресатам. Каждому сигналу отводится ровно один этап. Первичный отбор проверяет только минимальные требования роли и баллов по рубрике не ставит.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 360" role="img" aria-label="Конвейер найма из пяти этапов слева направо: первичный отбор, практика с кодом, сценарий заказчика, разбор проекта и совместная работа; под каждым оцениваемым этапом один сигнал, четыре сигнала сходятся в якорную рубрику, рубрика передаёт оценки комитету по решению о найме, комитет выдаёт решение, а результаты калибровки по смещениям интервьюеров возвращаются в рубрику" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar18a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="26" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЭТАП</text>
+  <rect x="20" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="96" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Первичный отбор</text>
+  <text x="96" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">требования роли</text>
+  <rect x="192" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="268" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Практика: код</text>
+  <text x="268" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">задача engagement</text>
+  <rect x="364" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="440" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Сценарий заказчика</text>
+  <text x="440" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">конфликт объёма</text>
+  <rect x="536" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="612" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Разбор проекта</text>
+  <text x="612" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">жизнь после выпуска</text>
+  <rect x="708" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="784" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Совместная работа</text>
+  <text x="784" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">объяснение решений</text>
+  <line x1="172" y1="68" x2="190" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <line x1="344" y1="68" x2="362" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <line x1="516" y1="68" x2="534" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <line x1="688" y1="68" x2="706" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+
+  <text x="20" y="118" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">СИГНАЛ</text>
+  <line x1="96" y1="96" x2="96" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="268" y1="96" x2="268" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="440" y1="96" x2="440" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="612" y1="96" x2="612" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="784" y1="96" x2="784" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <rect x="20" y="128" width="152" height="36" rx="18" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="96" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">порог, без балла</text>
+  <rect x="192" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="268" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">построение</text>
+  <rect x="364" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">суждение с заказчиком</text>
+  <rect x="536" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="612" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">эксплуатация</text>
+  <rect x="708" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="784" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">коммуникация</text>
+
+  <text x="96" y="210" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">в рубрику</text>
+  <text x="96" y="225" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">не входит</text>
+  <line x1="268" y1="164" x2="268" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="440" y1="164" x2="440" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="612" y1="164" x2="612" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="784" y1="164" x2="784" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <rect x="192" y="196" width="668" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="526" y="216" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">якорная рубрика: оценки 1–4 по четырём сигналам</text>
+  <text x="526" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">оценка = якорь + наблюдение · interview_rubric.py</text>
+
+  <line x1="526" y1="244" x2="526" y2="282" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <rect x="376" y="284" width="300" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="526" y="308" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Комитет по решению о найме</text>
+  <text x="526" y="326" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">решение · уровень</text>
+  <line x1="376" y1="312" x2="306" y2="312" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <rect x="104" y="294" width="200" height="36" rx="18" fill="none" stroke="var(--sF)" stroke-width="1.6"/>
+  <text x="204" y="316" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">нанять · перемерить · отказ</text>
+  <path d="M676,312 H830 V252" fill="none" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar18a)"/>
+  <text x="690" y="332" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">калибровка по смещениям</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Каждый оцениваемый этап измеряет один сигнал: второй этап на тот же сигнал удваивает вес этого сигнала в решении и расходует время кандидата, а другой сигнал оставляет неизмеренным. Комитет решает по рубрике с записанными наблюдениями; если решение по сигналу зависит от смещения интервьюера, сигнал измеряется повторно, а калибровка уточняет якоря рубрики.</figcaption>
+</figure>
+
+<p>Оценка ставится по якорной рубрике: каждому значению шкалы от 1 до 4 соответствует описание наблюдаемого поведения, интервьюер выбирает описание, совпадающее с наблюдением, и число следует из выбранного описания. Метод построения однозначных якорей для шкал оценки предложили Смит и Кендалл: значение шкалы описывается ожидаемым поведением, чтобы разные оценщики понимали его одинаково.<a class="src" href="https://doi.org/10.1037/h0047060" target="_blank" rel="noreferrer">Smith, Kendall, 1963</a> В пересмотренном мета-анализе Сэкетта и соавторов структурированные интервью заняли первое место по валидности среди процедур отбора персонала.<a class="src" href="https://experts.umn.edu/en/publications/revisiting-meta-analytic-estimates-of-validity-in-personnel-selec/" target="_blank" rel="noreferrer">Sackett et al., 2022</a> Оценка без записанного наблюдения не принимается, потому что комитет не может проверить её соответствие якорю.</p>
+
+<dl class="def">
+<dt>Калибровка интервьюеров <span class="en">(interviewer calibration)</span></dt>
+<dd>Регулярное сравнение оценок, которые разные интервьюеры ставят одним и тем же кандидатам или записям упражнений. Смещение интервьюера равно среднему отклонению его оценок от оценок остальной панели на общих случаях; смещение, по модулю не меньшее порога, означает, что оценка зависит от того, кто её поставил.</dd>
+<dt>Определение уровня <span class="en">(levelling)</span></dt>
+<dd>Решение об уровне должности, на который принимается кандидат. Оно принимается по профилю сигналов, то есть по оценке каждого сигнала в отдельности, поскольку один и тот же средний балл соответствует разным профилям. Уровень задаёт ожидания, вилку оплаты и то, какие engagement инженер ведёт самостоятельно.</dd>
+</dl>
+
+<figure class="code" data-fold="26">
+<figcaption><span class="file">interview_rubric.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from enum import StrEnum
+from statistics import fmean
+
+BAR = 2.5                                # нижняя граница по каждому сигналу
+DRIFT = 0.5                              # смещение, после которого нужна калибровка
+
+
+class Signal(StrEnum):
+    BUILDING = "построение"
+    OPERATING = "эксплуатация"
+    JUDGEMENT = "суждение с заказчиком"
+    COMMUNICATION = "коммуникация"
+
+
+ANCHORS: dict[Signal, tuple[str, str, str, str]] = {   # якоря для оценок 1, 2, 3, 4
+    Signal.BUILDING: ("решение не работает", "работает на примере, границы не проверены",
+                      "границы и ошибки обработаны, есть тест", "3 и качество измерено"),
+    Signal.OPERATING: ("не знает, что было после выпуска", "описывает инцидент без причины",
+                       "находит причину по трассам", "3 и меняет процесс"),
+    Signal.JUDGEMENT: ("принимает любой объём", "видит конфликт, выбора не предлагает",
+                       "переводит конфликт в выбор с ценой", "3 и сужает объём без потери доверия"),
+    Signal.COMMUNICATION: ("адресат не понял", "понятно инженеру, не руководителю",
+                           "понятно обоим, вывод в начале", "3 и глубина по реакции"),
+}
+STAGES = {"practical": Signal.BUILDING, "scenario": Signal.JUDGEMENT,
+          "deep_dive": Signal.OPERATING, "collaboration": Signal.COMMUNICATION}
+
+
+@dataclass(frozen=True)
+class Score:
+    candidate: str
+    interviewer: str
+    signal: Signal
+    value: int
+    evidence: str                        # наблюдение, к которому привязан якорь
+
+    def __post_init__(self) -&gt; None:
+        if not 1 &lt;= self.value &lt;= len(ANCHORS[self.signal]):
+            raise ValueError(f"оценка {self.value} вне шкалы 1–4")
+        if not self.evidence.strip():
+            raise ValueError("оценка без наблюдения не принимается")
+
+
+def offsets(scores: list[Score]) -&gt; dict[str, float]:
+    """Среднее отклонение интервьюера от остальной панели на общих кандидатах."""
+    items: defaultdict[tuple[str, Signal], dict[str, int]] = defaultdict(dict)
+    for s in scores:
+        items[(s.candidate, s.signal)][s.interviewer] = s.value
+    deltas: defaultdict[str, list[float]] = defaultdict(list)
+    for marks in items.values():
+        for who, value in marks.items():
+            others = [v for w, v in marks.items() if w != who]
+            if others:                   # кандидата оценил один человек: сравнивать не с кем
+                deltas[who].append(value - fmean(others))
+    return {who: round(fmean(d), 2) for who, d in sorted(deltas.items())}
+
+
+def profile(scores: list[Score], candidate: str,
+            shift: dict[str, float] | None = None) -&gt; dict[Signal, float]:
+    shift = shift or {}
+    per_signal: defaultdict[Signal, list[float]] = defaultdict(list)
+    for s in scores:
+        if s.candidate == candidate:
+            per_signal[s.signal].append(s.value - shift.get(s.interviewer, 0.0))
+    return {sig: round(fmean(v), 2) for sig, v in per_signal.items()}
+
+
+def decide(scores: list[Score], candidate: str, drift: dict[str, float]) -&gt; str:
+    raw = profile(scores, candidate)
+    if missing := [str(sig) for sig in Signal if sig not in raw]:
+        return "нет решения: не измерено " + ", ".join(missing)
+    adjusted = profile(scores, candidate, drift)
+    if unstable := [str(sig) for sig in Signal if (raw[sig] &gt;= BAR) != (adjusted[sig] &gt;= BAR)]:
+        return "перемерить: " + ", ".join(unstable)
+    return "нанять" if min(raw.values()) &gt;= BAR else "не нанимать"
+
+
+if __name__ == "__main__":
+    assert len(set(STAGES.values())) == len(STAGES) == len(Signal)   # этап = один сигнал
+    panel = ["Анна", "Борис", "Вера", "Глеб"]
+    calibration = [Score(rec, who, Signal.BUILDING, v, "запись упражнения")
+                   for rec, values in (("rec-1", (2, 3, 2, 2)), ("rec-2", (3, 4, 3, 3)),
+                                       ("rec-3", (1, 2, 1, 1)))
+                   for who, v in zip(panel, values, strict=True)]
+    offs = offsets(calibration)
+    assert offs == {"Анна": -0.33, "Борис": 1.0, "Вера": -0.33, "Глеб": -0.33}
+    drift = {who: o for who, o in offs.items() if abs(o) &gt;= DRIFT}
+    assert drift == {"Борис": 1.0}
+
+    loop = [Score("К-41", "Борис", Signal.BUILDING, 3, "тест на границы есть, метрики нет"),
+            Score("К-41", "Глеб", Signal.OPERATING, 3, "нашёл причину по трассе"),
+            Score("К-41", "Вера", Signal.JUDGEMENT, 4, "предложил выбор с ценой"),
+            Score("К-41", "Анна", Signal.COMMUNICATION, 3, "вывод в первой фразе"),
+            Score("К-42", "Анна", Signal.BUILDING, 3, "границы обработаны"),
+            Score("К-42", "Вера", Signal.JUDGEMENT, 3, "назвал цену объёма"),
+            Score("К-42", "Анна", Signal.COMMUNICATION, 3, "понятно обоим")]
+    assert decide(loop, "К-41", drift) == "перемерить: построение"
+    assert decide(loop, "К-42", drift) == "нет решения: не измерено эксплуатация"
+    loop.append(Score("К-42", "Глеб", Signal.OPERATING, 2, "инцидент без причины"))
+    assert decide(loop, "К-42", drift) == "не нанимать"
+    for bad in ((5, "наблюдение"), (3, " ")):
+        try:
+            Score("К-43", "Анна", Signal.BUILDING, *bad)
+            raise AssertionError("недопустимая оценка принята")
+        except ValueError:
+            pass
+    print("смещения панели:", offs, "· К-41:", decide(loop, "К-41", drift))</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="!= (adjusted[sig]">строка 77</span><p>Поправка на смещение используется только для проверки устойчивости решения. Если исходный и скорректированный баллы сигнала лежат по разные стороны границы, функция возвращает указание перемерить сигнал, и исправленный балл в решение не попадает.</p></div>
+  <div><span class="at" data-anchor="len(set(STAGES.values()))">строка 83</span><p>Утверждение проверяет правило диаграммы: четыре оцениваемых этапа измеряют четыре разных сигнала. Второй этап на тот же сигнал удвоил бы его вес и оставил другой сигнал неизмеренным.</p></div>
+  <div><span class="at" data-anchor="abs(o)">строка 91</span><p>При четырёх интервьюерах снисходительный интервьюер сдвигает смещение каждого коллеги на треть своего, отсюда значения −0,33 у остальных. Порог 0,5 выбран выше этого сдвига.</p></div>
+</div>
+</figure>
+
+<div class="note" data-level="2">Оценки кандидатов и записи калибровочных упражнений являются персональными данными. Срок хранения и круг доступа к ним определяет политика работодателя, а запись упражнения делается только с согласия участника.</div>
+
+<p>Уровень определяется после решения о найме по тому же профилю. Типичная ошибка на этом шаге состоит в занижении уровня людям из клиентских ролей: бывший инженер presales получает 3 за построение и 4 за суждение с заказчиком, и уровень, выведенный из одного упражнения с кодом, оказывается ниже работы, которую он будет делать с первой недели. Правило уровня, записанное как минимальные оценки по каждому сигналу, предотвращает эту ошибку, потому что уровень выводится из всех четырёх оценок.</p>
+
+<h3 id="s-18-5"><span class="num">18.5</span>Staffing и утилизация</h3>
+
+<p>План staffing, распределение инженеров по заказчикам на квартал, сопоставляет три оси: инженеров, заказчиков и фазу engagement. Фаза задаёт нагрузку в FTE, эквивалентах полной занятости одного инженера: сборка требует 1,0 FTE, пилот 0,8, эксплуатация и передача по 0,4, presales 0,2. На заказчика назначаются двое, и каждый нужный навык должен быть у обоих, иначе уход одного человека останавливает engagement.</p>
+
+<dl class="def">
+<dt>Утилизация <span class="en">(utilisation)</span></dt>
+<dd>Доля рабочего времени инженера, назначенная на engagement заказчиков. Остальное время отводится на извлечение паттернов, разработку модулей, найм и обучение.</dd>
+</dl>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Матрица staffing на квартал: шесть инженеров в строках и восемь заказчиков в столбцах с фазой engagement в заголовке, в ячейках доля времени инженера у заказчика, у каждого заказчика ровно двое, справа столбец резерва на паттерны и модули не меньше двадцати процентов и столбец утилизации с потолком в восемьдесят процентов" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar18b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="28" y="38" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ИНЖЕНЕР</text>
+  <text x="28" y="54" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">% времени</text>
+  <text x="144" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF1</text>
+  <text x="144" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">эксплуатация</text>
+  <text x="216" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF2</text>
+  <text x="216" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">пилот</text>
+  <text x="288" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF3</text>
+  <text x="288" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">сборка</text>
+  <text x="360" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF4</text>
+  <text x="360" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">эксплуатация</text>
+  <text x="432" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF5</text>
+  <text x="432" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">передача</text>
+  <text x="504" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF6</text>
+  <text x="504" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">сборка</text>
+  <text x="576" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">P1</text>
+  <text x="576" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">presales</text>
+  <text x="648" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">P2</text>
+  <text x="648" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">presales</text>
+  <text x="731" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sG)">паттерны</text>
+  <text x="731" y="54" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">≥ 20</text>
+  <text x="822" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">утилизация</text>
+  <text x="822" y="54" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">потолок 80</text>
+
+  <line x1="20" y1="64" x2="866" y2="64" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="20" y1="104" x2="866" y2="104" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="144" x2="866" y2="144" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="184" x2="866" y2="184" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="224" x2="866" y2="224" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="264" x2="866" y2="264" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="304" x2="866" y2="304" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="688" y1="56" x2="688" y2="344" stroke="var(--line)" stroke-width="1"/>
+  <line x1="772" y1="56" x2="772" y2="344" stroke="var(--line)" stroke-width="1"/>
+  <line x1="820" y1="70" x2="820" y2="300" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="3 3"/>
+
+  <text x="28" y="89" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Анна</text>
+  <rect x="112" y="70" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="144" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="256" y="70" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="288" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="616" y="70" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="648" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="700" y="70" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="780" y="79" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="79" width="40" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="89" font-family="Inter,sans-serif" font-size="11" fill="currentColor">80</text>
+
+  <text x="28" y="129" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Борис</text>
+  <rect x="184" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="216" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">40</text>
+  <rect x="400" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="432" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="544" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="576" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="616" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="648" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="700" y="110" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="780" y="119" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="119" width="40" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="129" font-family="Inter,sans-serif" font-size="11" fill="currentColor">80</text>
+
+  <text x="28" y="169" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Вера</text>
+  <rect x="184" y="150" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="216" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">40</text>
+  <rect x="400" y="150" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="432" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="544" y="150" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="576" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="700" y="150" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="159" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="159" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="169" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="209" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Глеб</text>
+  <rect x="112" y="190" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="144" y="209" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="472" y="190" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="504" y="209" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="700" y="190" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="209" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="199" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="199" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="209" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="249" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Дина</text>
+  <rect x="256" y="230" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="288" y="249" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="328" y="230" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="360" y="249" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="700" y="230" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="249" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="239" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="239" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="249" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="289" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Егор</text>
+  <rect x="328" y="270" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="360" y="289" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="472" y="270" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="504" y="289" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="700" y="270" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="289" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="279" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="279" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="289" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="329" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">спрос, FTE</text>
+  <text x="144" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0,4</text>
+  <text x="216" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0,8</text>
+  <text x="288" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">1,0</text>
+  <text x="360" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0,4</text>
+  <text x="432" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0,4</text>
+  <text x="504" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">1,0</text>
+  <text x="576" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0,2</text>
+  <text x="648" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0,2</text>
+  <text x="731" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--sG)">1,6</text>
+  <text x="822" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">4,4</text>
+
+  <text x="20" y="380" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">У каждого заказчика двое. Пунктирные ячейки: presales; вертикальный пунктир: потолок 80.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> При утилизации 100 % в плане не остаётся времени на паттерны и модули, и squad перестаёт их производить. Поэтому резерв на паттерны задан отдельным столбцом плана с минимумом 20 %: без явного минимума это время расходуется первым, потому что у работы над паттернами нет внешнего заказчика.</figcaption>
+</figure>
+
+<p>Листинг ищет назначение перебором с возвратом, начиная с фаз с наибольшей нагрузкой и с наименее загруженных инженеров. Первый прогон завершается отказом: навык edge, то есть развёртывание моделей на GPU заводских площадок, нужен Helix и есть только у Глеба. Руководитель закрывает этот пробел планом обучения из <a href="#s-18-7" data-secref="18.7">раздела 18.7</a>: Егор работает в паре с Глебом и получает навык edge, после чего назначение находится при утилизации каждого инженера не выше 80 %.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">staffing_model.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from fractions import Fraction
+from itertools import combinations
+
+MAX_UTIL = Fraction("0.8")               # остальное: паттерны и модули
+TEAM = 2                                 # двое на заказчика: второй снимает риск ключевого человека
+
+
+class Phase(StrEnum):
+    PRESALES = "presales"
+    BUILD = "сборка"
+    PILOT = "пилот"
+    RUN = "эксплуатация"
+    HANDOVER = "передача"
+
+
+LOAD = {Phase.PRESALES: Fraction("0.2"), Phase.BUILD: Fraction("1.0"), Phase.PILOT: Fraction("0.8"),
+        Phase.RUN: Fraction("0.4"), Phase.HANDOVER: Fraction("0.4")}   # FTE на заказчика
+
+
+@dataclass(frozen=True)
+class Engineer:
+    name: str
+    skills: frozenset[str]
+
+
+@dataclass(frozen=True)
+class Customer:
+    code: str
+    phase: Phase
+    skills: frozenset[str]
+
+
+class Infeasible(Exception):
+    """План невозможен; сообщение называет причину."""
+
+
+def covered(team: tuple[Engineer, ...], customer: Customer) -&gt; bool:
+    """Нет единственной точки отказа: каждый навык есть хотя бы у двоих."""
+    return all(sum(skill in e.skills for e in team) &gt;= 2 for skill in customer.skills)
+
+
+def gaps(engineers: list[Engineer], customers: list[Customer]) -&gt; list[str]:
+    return [f"{c.code}: {skill} есть у {n} из 2 нужных" for c in customers
+            for skill in sorted(c.skills) if (n := sum(skill in e.skills for e in engineers)) &lt; 2]
+
+
+def plan(engineers: list[Engineer], customers: list[Customer],
+         max_util: Fraction = MAX_UTIL) -&gt; dict[str, tuple[str, ...]]:
+    if found := gaps(engineers, customers):
+        raise Infeasible("; ".join(found))
+    demand, capacity = sum(LOAD[c.phase] for c in customers), max_util * len(engineers)
+    if demand &gt; capacity:
+        raise Infeasible(f"спрос {float(demand)} FTE больше ёмкости {float(capacity)} FTE")
+    order = sorted(customers, key=lambda c: (-LOAD[c.phase], c.code))
+    load = {e.name: Fraction(0) for e in engineers}
+    chosen: dict[str, tuple[str, ...]] = {}
+
+    def place(i: int) -&gt; bool:
+        if i == len(order):
+            return True
+        c = order[i]
+        share = LOAD[c.phase] / TEAM
+        for team in combinations(sorted(engineers, key=lambda e: (load[e.name], e.name)), TEAM):
+            if not covered(team, c) or any(load[e.name] + share &gt; max_util for e in team):
+                continue
+            for e in team:
+                load[e.name] += share
+            chosen[c.code] = tuple(sorted(e.name for e in team))
+            if place(i + 1):
+                return True
+            for e in team:
+                load[e.name] -= share
+            del chosen[c.code]
+        return False
+
+    if not place(0):
+        raise Infeasible("при заданных ограничениях назначения нет")
+    return dict(sorted(chosen.items()))
+
+
+def utilisation(engineers: list[Engineer], customers: list[Customer],
+                assignment: dict[str, tuple[str, ...]]) -&gt; dict[str, Fraction]:
+    phase = {c.code: c.phase for c in customers}
+    util = {e.name: Fraction(0) for e in engineers}
+    for code, team in assignment.items():
+        for name in team:
+            util[name] += LOAD[phase[code]] / len(team)
+    return util
+
+
+if __name__ == "__main__":
+    def skills(*names: str) -&gt; frozenset[str]:
+        return frozenset(names)
+
+    squad = [Engineer("Анна", skills("agents", "mcp", "evals")),
+             Engineer("Борис", skills("rag", "evals", "security", "voice", "agents")),
+             Engineer("Вера", skills("agents", "voice", "security", "rag")),
+             Engineer("Глеб", skills("rag", "edge", "mcp", "evals")),
+             Engineer("Дина", skills("evals", "observability", "agents", "mcp", "rag")),
+             Engineer("Егор", skills("mcp", "observability", "rag", "security"))]
+    customers = [Customer("CF1", Phase.RUN, skills("mcp", "evals")),
+                 Customer("CF2", Phase.PILOT, skills("voice", "rag")),
+                 Customer("CF3", Phase.BUILD, skills("agents", "mcp")),
+                 Customer("CF4", Phase.RUN, skills("observability", "rag")),
+                 Customer("CF5", Phase.HANDOVER, skills("security", "agents")),
+                 Customer("CF6", Phase.BUILD, skills("edge", "rag")),
+                 Customer("P1", Phase.PRESALES, skills("agents")),
+                 Customer("P2", Phase.PRESALES, skills("evals"))]
+    try:
+        plan(squad, customers)
+        raise AssertionError("план с единственным носителем edge принят")
+    except Infeasible as err:
+        assert str(err) == "CF6: edge есть у 1 из 2 нужных"
+    squad[5] = replace(squad[5], skills=squad[5].skills | {"edge"})   # план обучения: пара с Глебом
+    assignment = plan(squad, customers)
+    util = utilisation(squad, customers, assignment)
+    assert max(util.values()) &lt;= MAX_UTIL and sum(util.values()) == Fraction("4.4")
+    assert {"Глеб", "Егор"} &lt;= set(assignment["CF6"])
+    try:
+        plan(squad, customers, max_util=Fraction("0.7"))
+        raise AssertionError("спрос выше ёмкости принят")
+    except Infeasible as err:
+        assert str(err).startswith("спрос 4.4 FTE")
+    print(assignment, {n: f"{float(u):.0%}" for n, u in util.items()})</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if found := gaps(engineers, customers):">строка 53</span><p>Проверка навыков выполняется до поиска и называет заказчика и навык. По сообщению «CF6: edge есть у 1 из 2 нужных» руководитель составляет план обучения; общее сообщение «назначения нет» причину не называет.</p></div>
+  <div><span class="at" data-anchor="if demand">строка 56</span><p>Спрос 4,4 FTE не превышает ёмкость 4,8 FTE при потолке 0,8 на шестерых инженеров и превышает ёмкость 4,2 FTE при потолке 0,7. Резерв на паттерны входит в план как ограничение, и поиск отклоняет любое назначение, которое его нарушает.</p></div>
+</div>
+</figure>
+
+<h3 id="s-18-6"><span class="num">18.6</span>Партнёрство с Sales</h3>
+
+<p>Многие проблемы engagement возникают из условий, согласованных при продаже. Руководитель squad договаривается с Sales о критериях квалификации, которые проверяются до подписания договора, и о том, что происходит со сделкой, не прошедшей критерий. Последствие для каждого критерия записано в таблице: сделка без владельца задачи не переходит в engagement, работа вне AI-продукта передаётся интегратору, а остальные невыполненные критерии меняют фазы и ворота в SOW, описании объёма работ из <a href="#s-16-7" data-secref="16.7">раздела 16.7</a>.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Критерий</th><th>Проверка до подписания</th><th>Если не выполнен</th></tr></thead>
+<tbody>
+<tr><td>Владелец задачи</td><td>у заказчика назван конкретный сотрудник</td><td>engagement не начинается</td></tr>
+<tr><td>Метрика успеха</td><td>базовая линия измерима, <a href="#s-2-7" data-secref="2.7">раздел 2.7</a></td><td>discovery отдельной фазой</td></tr>
+<tr><td>Доступ к данным</td><td>выдаётся в сроки пилота</td><td>ворота пилота сдвигаются в SOW</td></tr>
+<tr><td>AI-продукт</td><td>задача касается модели, инструментов или оценки</td><td>работа передаётся интегратору</td></tr>
+</tbody></table></div>
+
+<p>Инженер presales участвует в сделке с первой технической встречи. Его вклад состоит в оценке объёма и рисков, которую Sales может показать заказчику, и в праве заявить, что обещанный объём нельзя построить за двенадцать недель. Объём работ, характерный для системного интегратора, отклоняется по признакам <a href="#s-1-7" data-secref="1.7">раздела 1.7</a> до коммерческого предложения, потому что после подписания договора отказ обходится дороже.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Оценивать участие FDE в presales числом закрытых сделок. Такая метрика вознаграждает согласие на любой объём, и squad обязан выполнять обещания, которые дали другие. Метрикой presales служит доля сделок, дошедших до production в обещанный срок.</div>
+
+<h3 id="s-18-7"><span class="num">18.7</span>Устранение пробелов в навыках</h3>
+
+<p>Пробел в навыках обнаруживается в плане staffing до того, как приводит к инциденту: так в <a href="#s-18-5" data-secref="18.5">разделе 18.5</a> обнаружился пробел edge у Helix. Squad, работающий с агентными системами, проверяет покрытие навыков в четырёх областях: протокол MCP из <a href="#ch-6" data-secref="6">главы 6</a>, tool calling из <a href="#s-3-5" data-secref="3.5">раздела 3.5</a>, выбор и поведение foundation models из <a href="#ch-3" data-secref="3">главы 3</a>, оценка из <a href="#ch-12" data-secref="12">главы 12</a>. План обучения привязывается к задачам engagement, чтобы новый навык применялся в работе с начала обучения.</p>
+
+<p>План обучения содержит цель, выраженную артефактом, например самостоятельное проведение ворот релиза CF4 к концу квартала, наставника из squad и время, выделенное в плане staffing. Основной способ передачи навыка составляет работа в паре с инженером, который им владеет, на задачах действующего заказчика. По итогам инженер делает внутренний доклад, из которого остальные инженеры squad узнают применённые решения.</p>
+
+<h3 id="s-18-8"><span class="num">18.8</span>Вход в roadmap и брифы для высшего руководства</h3>
+
+<p>Полевое знание, то есть записанные в журналах engagement наблюдения о повторяющихся проблемах заказчиков, проходит петлю из пяти узлов: engagement в поле, реестр паттернов, ревью roadmap, выпуск продукта и внедрение выпуска в конфигурации заказчиков. Решения о продукте принимает команда продукта; руководитель squad отвечает за измерения на рёбрах петли. Два измерения выражены кодом: проверка выпуска на конфигурациях всех заказчиков и ранжирование входа в roadmap.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 330" role="img" aria-label="Петля из пяти узлов: engagement в поле передают записи в реестр паттернов, реестр передаёт кандидатов на ревью roadmap, ревью ведёт к выпуску продукта, выпуск ведёт к внедрению в поле, а внедрение возвращается в поле; на каждом ребре подписано измерение, от вхождений со ссылками до часов обхода после выпуска" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar18c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="110" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Поле: engagement</text>
+  <text x="110" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">8 заказчиков · журналы</text>
+  <rect x="350" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="440" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Реестр паттернов</text>
+  <text x="440" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">раздел 16.3</text>
+  <rect x="680" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="770" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Ревью roadmap</text>
+  <text x="770" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">бриф на страницу</text>
+  <rect x="680" y="240" width="180" height="60" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="770" y="265" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Выпуск продукта</text>
+  <text x="770" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">модуль · платформа</text>
+  <rect x="350" y="240" width="180" height="60" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="440" y="265" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Внедрение в поле</text>
+  <text x="440" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">конфигурации заказчиков</text>
+
+  <line x1="200" y1="70" x2="342" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="275" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">вхождения со ссылками</text>
+  <text x="275" y="107" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">и часы обхода</text>
+  <line x1="530" y1="70" x2="672" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="605" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">баллы по весам:</text>
+  <text x="605" y="107" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">заказчики, риск, обход</text>
+  <line x1="770" y1="100" x2="770" y2="232" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="756" y="164" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">принято в квартал</text>
+  <text x="756" y="179" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">или отклонено с причиной</text>
+  <line x1="680" y1="270" x2="538" y2="270" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="605" y="292" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">доля заказчиков</text>
+  <text x="605" y="307" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">на новой версии</text>
+  <path d="M350,270 H110 V108" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="230" y="292" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">часы обхода после выпуска</text>
+  <text x="230" y="307" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">падают до нуля</text>
+
+  <text x="440" y="175" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">цикл: один квартал</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Полевое знание даёт измеримый результат только после того, как возвращается к заказчикам выпуском продукта: на последнем ребре петли часы обхода у затронутых заказчиков падают до нуля. Остальные рёбра измеряют промежуточные переходы: вхождения со ссылками, баллы ранжирования, решение ревью и долю заказчиков на новой версии.</figcaption>
+</figure>
+
+<p>Выпуск общего модуля проверяется на конфигурации каждого заказчика до того, как попадает к этому заказчику. Benchmark прогоняет один набор задач на конфигурации каждого engagement до и после выпуска и отмечает регрессию отдельно по качеству, задержке и стоимости. Регрессия у заказчика останавливает обновление конфигурации этого заказчика; остальные заказчики получают выпуск.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">benchmark_suite.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import math
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+
+MAX_QUALITY_DROP = 0.02                  # абсолютная доля задач
+MAX_GROWTH = 0.10                        # относительный рост p95 и стоимости
+
+
+@dataclass(frozen=True)
+class Task:
+    id: str
+    steps: int                           # сколько шагов рассуждения требует задача
+    needs_citation: bool
+
+
+@dataclass(frozen=True)
+class Config:
+    engagement: str
+    model: str
+    reach: int                           # до какого числа шагов модель справляется
+    top_k: int
+    eur_per_1k_tokens: float
+
+
+@dataclass(frozen=True)
+class Run:
+    correct: bool
+    latency_ms: int
+    tokens: int
+
+
+@dataclass(frozen=True)
+class Row:
+    engagement: str
+    quality: float
+    p95_ms: int
+    cost_eur: float
+    regressions: tuple[str, ...] = ()
+
+
+def fake_system(cfg: Config, task: Task) -&gt; Run:
+    """Детерминированная замена системы engagement: механизм вместо случайности."""
+    grounded = cfg.top_k &gt;= 3 or not task.needs_citation
+    tokens = 500 + 300 * cfg.top_k + 150 * task.steps
+    latency = 200 + 60 * cfg.top_k + (350 if cfg.model == "model-pro" else 120) * task.steps
+    return Run(task.steps &lt;= cfg.reach and grounded, latency, tokens)
+
+
+def p95(values: list[int]) -&gt; int:
+    ordered = sorted(values)
+    return ordered[math.ceil(0.95 * len(ordered)) - 1]     # метод ближайшего ранга
+
+
+def benchmark(tasks: list[Task], configs: list[Config], system: Callable[[Config, Task], Run],
+              baseline: dict[str, Row] | None = None) -&gt; list[Row]:
+    rows = []
+    for cfg in configs:
+        runs = [system(cfg, t) for t in tasks]
+        row = Row(cfg.engagement, round(sum(r.correct for r in runs) / len(runs), 3),
+                  p95([r.latency_ms for r in runs]),
+                  round(sum(r.tokens for r in runs) / 1000 * cfg.eur_per_1k_tokens, 2))
+        old = (baseline or {}).get(cfg.engagement)
+        if old is not None:
+            checks = ((old.quality - row.quality &gt; MAX_QUALITY_DROP,
+                       f"качество {old.quality:.2f} → {row.quality:.2f}"),
+                      (row.p95_ms &gt; old.p95_ms * (1 + MAX_GROWTH),
+                       f"p95 {old.p95_ms} → {row.p95_ms} мс"),
+                      (row.cost_eur &gt; old.cost_eur * (1 + MAX_GROWTH),
+                       f"стоимость {old.cost_eur} → {row.cost_eur} EUR"))
+            row = replace(row, regressions=tuple(text for failed, text in checks if failed))
+        rows.append(row)
+    return rows
+
+
+if __name__ == "__main__":
+    tasks = [Task(f"t{i:02d}", steps=1 + i % 4, needs_citation=i % 2 == 0) for i in range(40)]
+    v24 = [Config("CF1", "model-pro", reach=4, top_k=5, eur_per_1k_tokens=0.012),
+           Config("CF4", "model-flash", reach=3, top_k=3, eur_per_1k_tokens=0.003),
+           Config("CF5", "model-pro", reach=4, top_k=4, eur_per_1k_tokens=0.012)]
+    baseline = {row.engagement: row for row in benchmark(tasks, v24, fake_system)}
+    assert baseline["CF1"].quality == 1.0 and baseline["CF4"].quality == 0.75
+
+    # модуль v2.5 снижает top_k по умолчанию до 2; CF1 закрепил своё значение
+    v25 = [c if c.engagement == "CF1" else replace(c, top_k=2) for c in v24]
+    report = {row.engagement: row for row in benchmark(tasks, v25, fake_system, baseline)}
+    assert report["CF1"].regressions == ()
+    assert report["CF4"].regressions == ("качество 0.75 → 0.25",)
+    assert report["CF5"].regressions == ("качество 1.00 → 0.50",)
+    assert report["CF4"].cost_eur &lt; baseline["CF4"].cost_eur          # дешевле, но хуже
+    print("модуль v2.5:", {e: list(r.regressions) or "без регрессий" for e, r in report.items()})</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="MAX_QUALITY_DROP,">строка 66</span><p>Регрессия определяется относительно базовой линии той же конфигурации, потому что базовое качество у заказчиков разное: у CF4 на лёгкой модели оно равно 0,75, у CF1 1,00.</p></div>
+  <div><span class="at" data-anchor="replace(c, top_k=2)">строка 86</span><p>Выпуск v2.5 меняет значение по умолчанию. CF1 закрепил своё значение и сохранил качество, CF4 и CF5 унаследовали новое и потеряли задачи со ссылками на источники; стоимость у CF4 при этом снизилась.</p></div>
+</div>
+</figure>
+
+<p>Реестр паттернов накапливает кандидатов быстрее, чем команда продукта успевает их реализовать, поэтому squad раз в квартал передаёт ранжированный вход. Ранжирование использует три величины с явными весами: число затронутых заказчиков, выручку под риском, то есть продления и расширения, зависящие от решения, и стоимость обходов в часах. Веса задаются управленческим решением и печатаются в брифе, поэтому команда продукта может оспорить правило ранжирования и пересчитать порядок по другим весам.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">roadmap_input.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+POINTS_PER_CUSTOMER = 30                 # ширина проблемы важнее одного крупного заказчика
+EUR_PER_POINT = 10_000                   # выручка под риском: продления и расширения
+HOURS_PER_POINT = 20                     # обход по журналу времени
+TOP = 3                                  # в бриф попадают первые три
+
+
+@dataclass(frozen=True)
+class Entry:
+    id: str
+    title: str
+    customers: frozenset[str]
+    revenue_at_risk_eur: int
+    workaround_hours: int
+    evidence: tuple[str, ...]            # ссылки на записи реестра паттернов
+
+    def points(self) -&gt; int:
+        return (POINTS_PER_CUSTOMER * len(self.customers)
+                + self.revenue_at_risk_eur // EUR_PER_POINT
+                + self.workaround_hours // HOURS_PER_POINT)
+
+
+def rank(entries: list[Entry]) -&gt; tuple[list[Entry], list[str]]:
+    ranked = [e for e in entries if e.evidence]
+    skipped = [f"{e.id}: нет доказательств" for e in entries if not e.evidence]
+    ranked.sort(key=lambda e: (-e.points(), -len(e.customers), e.id))   # правило равенства
+    return ranked, skipped
+
+
+def eur(amount: int) -&gt; str:
+    return f"{amount:,}".replace(",", " ")
+
+
+def brief(entries: list[Entry], quarter: str) -&gt; str:
+    ranked, skipped = rank(entries)
+    lines = [f"Вход в roadmap от регионального squad, {quarter}",
+             f"Решение: взять в квартал {', '.join(e.id for e in ranked[:TOP])}",
+             f"Правило: {POINTS_PER_CUSTOMER} баллов за заказчика, 1 за {eur(EUR_PER_POINT)} EUR "
+             f"под риском, 1 за {HOURS_PER_POINT} ч обхода; при равенстве больше заказчиков", ""]
+    for n, e in enumerate(ranked[:TOP], 1):
+        lines += [f"{n}. {e.title} [{e.id}], {e.points()} баллов",
+                  f"   {', '.join(sorted(e.customers))}; {eur(e.revenue_at_risk_eur)} EUR; "
+                  f"{e.workaround_hours} ч; {', '.join(e.evidence)}"]
+    lines += ["", "Ниже черты: " + ", ".join(f"{e.id} ({e.points()})" for e in ranked[TOP:]),
+              "Не ранжировано: " + ("; ".join(skipped) or "нет")]
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    registry = [
+        Entry("approval", "Одобрение, привязанное к аргументам", frozenset({"CF1", "CF4", "CF5"}),
+              420_000, 356, ("pattern:approval", "fr:approval-primitive")),
+        Entry("residency", "Данные только в регионе", frozenset({"CF1", "CF5"}),
+              600_000, 180, ("pattern:residency",)),
+        Entry("offline-eval", "Оценка на площадке без сети", frozenset({"CF6"}),
+              870_000, 240, ("pattern:offline-eval",)),
+        Entry("voice-barge-in", "Перебивание в голосовом канале", frozenset({"CF2"}),
+              150_000, 90, ("trace:mh-0311",)),
+        Entry("sap-adapter", "Адаптер SAP", frozenset({"CF3"}), 300_000, 400, ()),
+    ]
+    ranked, skipped = rank(registry)
+    assert [e.points() for e in ranked] == [149, 129, 129, 49]
+    assert [e.id for e in ranked[:TOP]] == ["approval", "residency", "offline-eval"]
+    assert skipped == ["sap-adapter: нет доказательств"]
+    text = brief(registry, "Q4 2026")
+    assert text.splitlines()[1] == "Решение: взять в квартал approval, residency, offline-eval"
+    assert len(text.splitlines()) &lt;= 40                                 # одна страница
+    print(text.splitlines()[1], "·", len(text.splitlines()), "строк брифа")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if not e.evidence">строка 28</span><p>Запись без доказательств не ранжируется и выводится в брифе в строке «Не ранжировано»: адаптер SAP с 400 часами обхода не получает места в списке, пока в реестре нет подтверждающих записей.</p></div>
+  <div><span class="at" data-anchor="-len(e.customers), e.id">строка 29</span><p>Правило равенства записано в коде. Записи residency и offline-eval набрали по 129 баллов, и выше ставится residency, которая затрагивает двух заказчиков, тогда как offline-eval затрагивает одного. Без явного правила порядок равных записей совпал бы с их порядком во входном списке.</p></div>
+</div>
+</figure>
+
+<p>Для высшего руководства компании тот же вход излагается на одной странице по форме меморандума <a href="#s-2-8" data-secref="2.8">раздела 2.8</a>. Первая строка содержит запрашиваемое решение, за ней следуют правило ранжирования, три позиции с заказчиками и суммами и список позиций ниже черты. Технические детали переводятся в последствия: какие продления находятся под риском и сколько часов squad перестанет тратить на обходы после выпуска.</p>
+
+<h3 id="s-18-9"><span class="num">18.9</span>Менторство и co-building</h3>
+
+<p>Engagement считается успешно завершённым, когда команда заказчика эксплуатирует и развивает систему без участия squad. Co-building, совместная разработка, означает, что инженеры заказчика пишут код системы вместе с FDE с первой недели engagement. Руководитель включает это в план: пара из FDE и инженера заказчика на каждый компонент и план передачи с датами, по которому ответственность за компоненты переходит по одному.</p>
+
+<p>Независимость команды заказчика определяется по трём величинам. Первые две являются долями: доля изменений, слитых инженерами заказчика без правок FDE, и доля инцидентов, закрытых дежурными заказчика самостоятельно. Третья величина равна времени до первого выпуска, который заказчик самостоятельно провёл через ворота релиза. Когда обе доли устойчиво растут, а самостоятельный выпуск уже состоялся, FDE выходят из engagement по модели выхода из <a href="#s-1-9" data-secref="1.9">раздела 1.9</a>.</p>
+
+<div class="note" data-level="2">Та же схема применяется к новым инженерам squad. Первые недели новичок работает в паре на engagement в фазе эксплуатации: трассы, ворота релиза и журнал решений там уже существуют, поэтому ошибка новичка обнаруживается до выпуска.</div>
+
+<h3 id="s-18-10" data-level="3"><span class="num">18.10</span>Вглубь: дрейф калибровки, утилизация против паттернов, выгорание</h3>
+
+<h4 data-level="3">Дрейф калибровки интервьюеров</h4>
+
+<p data-level="3">Согласованность оценок, достигнутая калибровкой при запуске процесса, со временем снижается: интервьюер, проведший за квартал тридцать встреч, может начать оценивать кандидатов относительно недавних кандидатов, и якоря рубрики перестают определять оценку. Такой дрейф проявляется как смещение, растущее от квартала к кварталу, поэтому squad раз в квартал проводит сессию калибровки на записях упражнений и хранит историю смещений. Если смещение сохраняется после сессии, интервьюер повторно разбирает якоря, а на его этапах временно назначается второй оценщик.</p>
+
+<h4 data-level="3">Утилизация против времени на паттерны</h4>
+
+<p data-level="3">Формула Кингмана приближает среднее время ожидания в очереди с одним обслуживающим узлом произведением трёх сомножителей: множителя загрузки ρ/(1 − ρ), где ρ означает загрузку узла, множителя изменчивости потока заявок и времени обслуживания и среднего времени обслуживания.<a class="src" href="https://en.wikipedia.org/wiki/Kingman%27s_formula" target="_blank" rel="noreferrer">Kingman, 1961</a> При неизменных двух последних сомножителях рост загрузки с 80 до 90 % увеличивает ожидание более чем вдвое, с 90 до 95 % ещё примерно вдвое. Инженера squad можно рассматривать как такой узел для срочных запросов заказчиков: при высокой загрузке каждый инцидент вытесняет плановую работу, и первой откладывается работа над паттернами. Поэтому в <code>staffing_model.py</code> резерв задан ограничением <code>MAX_UTIL</code>, которое поиск назначения не нарушает.</p>
+
+<h4 data-level="3">Объём, проданный Sales, и presales FDE</h4>
+
+<p data-level="3">Даже при общих критериях сделка иногда подписывается с объёмом, который presales FDE не оценивал или оценил иначе, потому что сделку требуется закрыть до конца квартала продаж. Для этого случая squad применяет процедуру: в первую неделю расхождение между проданным объёмом и оценкой presales записывается в журнал решений engagement из <a href="#s-1-8" data-secref="1.8">раздела 1.8</a>. При разборе последующей задержки эта запись указывает её причину в расхождении объёма; без записи задержку относят на счёт инженеров squad.</p>
+
+<h4 data-level="3">Консультационные навыки, которые не проверяет код</h4>
+
+<p data-level="3">Упражнение с кодом измеряет построение и не содержит ситуаций, в которых инженер обсуждает приоритеты со спонсором или сообщает о срыве срока. Эти навыки измеряет этап сценария заказчика, и его материалы готовятся заранее: конфликт объёма написан заранее, наблюдаемые признаки каждого уровня описаны заранее, а роль заказчика исполняет обученный сотрудник по сценарию. Без заранее написанного сценария оценка зависит от того, как интервьюер импровизирует роль заказчика, и разные кандидаты решают разные задачи.</p>
+
+<h4 data-level="3">Дрейф лояльности и выгорание</h4>
+
+<p data-level="3">Инженер, работающий полгода внутри организации заказчика, может постепенно принять её приоритеты как собственные: соглашается на объём, который отклонил бы в первую неделю, и защищает решения заказчика перед командой продукта. Такой дрейф нарушает третью лояльность из <a href="#s-1-6" data-secref="1.6">раздела 1.6</a>, лояльность фактам: конфликт между заказчиком и продуктом решается по предпочтению заказчика без измерения. Дрейф обнаруживается по журналу решений: отказов в нём становится меньше, исключений больше. Второй риск составляет выгорание, которое Всемирная организация здравоохранения описывает в Международной классификации болезней 11-го пересмотра (МКБ-11) как профессиональный феномен с тремя измерениями: истощением, увеличением психологической дистанции от работы или негативизмом и цинизмом по отношению к ней и снижением профессиональной эффективности.<a class="src" href="https://www.who.int/news/item/28-05-2019-burn-out-an-occupational-phenomenon-international-classification-of-diseases" target="_blank" rel="noreferrer">WHO, ICD-11, 2019</a> Руководитель снижает оба риска ротацией инженеров на границах фаз, регулярными встречами один на один и резервом времени, который не расходуется на инциденты.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему в процессе найма два этапа не должны измерять один и тот же сигнал?</summary>
+<div class="ans"><p>Второй этап на тот же сигнал удваивает вес этого сигнала в решении и расходует время кандидата, а при неизменном числе этапов другой сигнал остаётся неизмеренным.</p></div>
+</details>
+<details>
+<summary>Что означает смещение интервьюера +1,0 и что делает комитет с решением, которое от него зависит?</summary>
+<div class="ans"><p>Интервьюер в среднем ставит на один балл больше, чем остальная панель на общих случаях. Если оценка сигнала кандидата оказывается по разные стороны границы до и после поправки на это смещение, комитет назначает повторное измерение сигнала, а интервьюер проходит повторную калибровку по якорям. Исправленный балл в решение не попадает, потому что среднее смещение не показывает, как интервьюер оценил именно этого кандидата.</p></div>
+</details>
+<details>
+<summary>Что теряет squad при плане staffing с утилизацией 100 % по сравнению с планом с 80 %, если спрос покрыт в обоих случаях?</summary>
+<div class="ans"><p>При загрузке, близкой к полной, каждый срочный запрос вытесняет плановую работу, и первой откладывается работа над паттернами и модулями, у которой нет внешнего заказчика. Squad продолжает выполнять текущие engagement, но перестаёт производить модули, которые сокращают затраты на следующие engagement.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Результат руководителя измеряется системами заказчиков в production; стандарты squad выражены исполнимыми проверками, а общий benchmark обнаруживает регрессии общего модуля у каждого заказчика.</li>
+<li>Процесс найма строится от четырёх сигналов: каждый этап измеряет один сигнал по якорной рубрике, а калибровка по смещениям показывает, где оценка зависит от интервьюера.</li>
+<li>План staffing учитывает фазы, навыки, пару инженеров на заказчика и резерв на паттерны; при утилизации 100 % времени на паттерны не остаётся, и squad перестаёт производить модули.</li>
+<li>Вход в roadmap ранжируется по явным весам с правилом равенства; его результат измеряется после выпуска продукта по часам обхода у затронутых заказчиков.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-12" data-secref="12">Глава 12: ворота релиза в каждом репозитории</a>
+<a href="#ch-16" data-secref="16">Глава 16: реестр паттернов и модуль</a>
+<a href="#ch-17" data-secref="17">Глава 17: архитектурные решения и их ревью</a>
+</p>
+</div>
+</section>

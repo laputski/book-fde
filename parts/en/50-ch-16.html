@@ -1,0 +1,888 @@
+<!-- ────────────────────────── CHAPTER 16 ────────────────────────── -->
+<section class="chapter" id="ch-16">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter sixteen</p>
+    <span class="strata" role="img" aria-label="Layers F and G: people and process, product and feedback">
+      <i></i><i></i><i></i><i></i><i></i><i data-s="F"></i><i data-s="G"></i>
+    </span>
+  </div>
+  <h2 id="s-16"><span class="num">16</span>From Field Patterns to Reusable Modules and Business Value</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>tell a field pattern from a coincidence of code and apply the rule of three to it;</li>
+<li>extract a module in which the differences between customers are typed configuration checked by compatibility tests;</li>
+<li>write a feature request with affected customers, measured workaround cost and evidence;</li>
+<li>compute a business case from a baseline and a counterfactual as a range of scenarios;</li>
+<li>tie every payment in a SOW to an executable acceptance criterion.</li>
+</ul>
+</div>
+
+<h3 id="s-16-1"><span class="num">16.1</span>The task: a module from three engagements</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-6" data-secref="G.6">Case file CF6 · Helix Manufacturing</a></span>
+  <span class="tag">fourth customer</span>
+  <span class="tag">14 plants</span>
+  <span class="tag">3 air-gapped</span>
+  <span class="tag">SOW</span>
+  <span>manufacturing</span>
+</div>
+
+<p>One FDE team has completed three engagements: the contact-centre assistant at Nordbank (<a href="#ch-6" data-secref="6">Chapter 6</a>), the operator assistant and incident triage at Orion (<a href="#ch-4" data-secref="4">Chapters 4</a> and <a href="#ch-8" data-secref="8">8</a>), and the assistant for residents of Northgate (<a href="#ch-10" data-secref="10">Chapter 10</a>). The three systems differ in industry and regulation but share a skeleton: the assistant answers only from the customer's sources and cites them, and it executes an action with a side effect only after a human approves it. Each time the skeleton was written anew by copying parts of the previous repository.</p>
+
+<p>The fourth customer is Helix Manufacturing. The technicians' assistant of <a href="#ch-14" data-secref="14">Chapter 14</a> explains a defect from the maintenance log; the new engagement adds a spare-part order action, which a site engineer approves, including at the three air-gapped plants. The Staff FDE assigned to Helix must extract from the three repositories a module called "grounded assistant with approvals", write the product team a feature request about what the platform lacked, design the deployment of the module at four customers, and prepare the business case and the SOW for Helix. The numbers in this chapter are fictional, like the customers themselves, and are not industry statistics.</p>
+
+<h3 id="s-16-2"><span class="num">16.2</span>Why the value of Staff work grows non-linearly</h3>
+
+<p>An FDE's work is measured by what runs in production at the customer; a Staff FDE's work is also measured by how much cheaper the next engagement becomes. The assistant's skeleton took 34 engineer-weeks at Nordbank, 26 at Orion, built from a copy, and 22 at Northgate. Copying cut the effort by 8 and then by a further 4 weeks, but in each engagement some weeks went into fixing again defects already fixed in the previous copy. The target for Helix is nine weeks to connect the module and zero weeks to repeat fixes of defects already fixed.</p>
+
+<dl class="def">
+<dt>Reusable module</dt>
+<dd>Code that solves a recurring task of several customers with one core, in which the differences between customers are moved into a validated configuration. A module has an owner, a version, a contract checked against each customer's configuration, and an upgrade path; a modified copy in another repository is not a module.</dd>
+</dl>
+
+<p>Engagement code without an owner becomes a liability once the engineer leaves, as <a href="#s-1-6" data-secref="1.6">Section 1.6</a> shows, and copies multiply that liability by the number of customers: a vulnerability fix goes in N times into N diverged repositories. In a module a fix goes in once and reaches every customer with the next release. The listings below show this difference on one defect.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Copies and a module">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_copy.py</span></figcaption>
+      <pre><code># Three copies of one assistant after three engagements; files joined for display.
+
+# nordbank/assistant.py
+NORDBANK_PROMPT = "You assist Nordbank operators. Answer only from the bank's knowledge base."
+NORDBANK_MIN_SCORE = 0.62
+
+
+def nordbank_prompt(question: str, passages: list[tuple[str, float]]) -&gt; str | None:
+    cited = [text for text, score in passages if score &gt;= NORDBANK_MIN_SCORE]
+    return f"{NORDBANK_PROMPT}\n{cited}\n{question}" if cited else None
+
+
+def nordbank_execute(action: str, target: str, approved: set[tuple[str, str]]) -&gt; bool:
+    return any(name == action for name, _ in approved)
+
+
+# orion/assistant.py: a copy of nordbank with other names and threshold
+ORION_PROMPT = "You assist Orion Telecom operators. Answer only from the knowledge base."
+ORION_MIN_SCORE = 0.55
+
+
+def orion_prompt(question: str, passages: list[tuple[str, float]]) -&gt; str | None:
+    cited = [text for text, score in passages if score &gt;= ORION_MIN_SCORE]
+    return f"{ORION_PROMPT}\n{cited}\n{question}" if cited else None
+
+
+def orion_execute(action: str, target: str, approved: set[tuple[str, str]]) -&gt; bool:
+    return any(name == action for name, _ in approved)
+
+
+# northgate/assistant.py: a copy of orion; the city audit found the approval defect
+NORTHGATE_PROMPT = "You assist Northgate residents. Answer only from city documents."
+NORTHGATE_MIN_SCORE = 0.70
+
+
+def northgate_prompt(question: str, passages: list[tuple[str, float]]) -&gt; str | None:
+    cited = [text for text, score in passages if score &gt;= NORTHGATE_MIN_SCORE]
+    return f"{NORTHGATE_PROMPT}\n{cited}\n{question}" if cited else None
+
+
+def northgate_execute(action: str, target: str, approved: set[tuple[str, str]]) -&gt; bool:
+    return (action, target) in approved             # fixed only here
+
+
+if __name__ == "__main__":
+    approved = {("submit", "req-17")}               # a human approved request req-17
+    assert not northgate_execute("submit", "req-99", approved)
+    assert nordbank_execute("submit", "req-99", approved)       # the fix was not carried over
+    assert orion_execute("submit", "req-99", approved)
+    passages = [("regulation 4.2", 0.60)]
+    assert orion_prompt("deadline?", passages) is not None
+    assert nordbank_prompt("deadline?", passages) is None           # same search, another threshold in code
+    print("the fix exists in one copy out of three")</code></pre>
+    </figure>
+    <p>The customer's name, the system prompt and the relevance threshold are hard-coded in three copies of one solution. The defect that lets an approval of request req-17 authorise executing req-99 is fixed only at Northgate. It remains at Nordbank and Orion, and the copies share no test that would reveal it.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">client_module.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+MODULE_VERSION = "2.4.0"
+SUPPORTED_SCHEMAS = frozenset({3, 4})         # schema 2 was retired in version 2.0.0
+
+
+class ApprovalPolicy(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    approver_role: str = Field(min_length=3)
+    ttl_s: int = Field(default=900, ge=60, le=86_400)
+
+
+class ClientConfig(BaseModel):
+    """Everything in which customers differ. The module core contains no customer names."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    schema_version: int
+    client: str = Field(pattern=r"^[a-z][a-z0-9-]{2,30}$")
+    prompt_id: str                             # prompt version in the instruction registry
+    min_score: float = Field(ge=0.3, le=0.95)
+    public_users: bool = False
+    require_citations: bool = True
+    offline: bool = False
+    model_host: Literal["cloud", "on_site"] = "cloud"
+    actions: dict[str, ApprovalPolicy] = Field(default_factory=dict)
+
+    @property
+    def namespace(self) -&gt; str:
+        return f"{self.client}/"
+
+    @model_validator(mode="after")
+    def allowed_combinations(self) -&gt; ClientConfig:
+        if self.schema_version not in SUPPORTED_SCHEMAS:
+            raise ValueError(f"schema {self.schema_version} is not supported by module {MODULE_VERSION}")
+        if self.public_users and not self.require_citations:
+            raise ValueError("a public service answers only with source citations")
+        if self.offline and self.model_host != "on_site":
+            raise ValueError("an air-gapped site needs an on-site model")
+        return self
+
+
+@dataclass(frozen=True)
+class Passage:
+    doc_id: str                                # "helix/wo-118": the tenant is part of the id
+    text: str
+    score: float
+
+
+@dataclass(frozen=True)
+class GroundedAssistant:
+    config: ClientConfig
+
+    def prompt(self, question: str, passages: list[Passage]) -&gt; str | None:
+        own = [p for p in passages if p.doc_id.startswith(self.config.namespace)]
+        cited = sorted((p for p in own if p.score &gt;= self.config.min_score), key=lambda p: -p.score)
+        if self.config.require_citations and not cited:
+            return None
+        sources = "\n".join(f"[{p.doc_id}] {p.text}" for p in cited)
+        return f"@{self.config.prompt_id}\n{sources}\n{question}"
+
+    def may_execute(self, action: str, target: str,
+                    approvals: dict[tuple[str, str], float], now: float) -&gt; bool:
+        policy = self.config.actions.get(action)
+        granted_at = approvals.get((action, target))
+        return policy is not None and granted_at is not None and now - granted_at &lt;= policy.ttl_s
+
+
+def compatibility_test(config: ClientConfig) -&gt; list[str]:
+    """One contract for all; runs on every configuration at every release."""
+    bot, ns = GroundedAssistant(config), config.namespace
+    failures: list[str] = []
+    leaked = bot.prompt("question", [Passage("other/doc-1", "foreign document", 0.99)]) or ""
+    if "other/" in leaked:
+        failures.append("another customer's document reached the prompt")
+    ranked = bot.prompt("question", [Passage(ns + "a", "weak", config.min_score),
+                                   Passage(ns + "b", "strong", 0.99)]) or ""
+    if not ranked or ranked.index(f"[{ns}b]") &gt; ranked.index(f"[{ns}a]"):
+        failures.append("sources are not ordered by relevance")
+    for action, policy in config.actions.items():
+        if bot.may_execute(action, "t-2", {(action, "t-1"): 0.0}, now=1.0):
+            failures.append(f"{action}: approval is not bound to the target")
+        if bot.may_execute(action, "t-1", {(action, "t-1"): 0.0}, now=policy.ttl_s + 1.0):
+            failures.append(f"{action}: an expired approval was accepted")
+    if bot.may_execute("undeclared", "t-1", {("undeclared", "t-1"): 0.0}, now=1.0):
+        failures.append("an action absent from the configuration was executed")
+    return failures
+
+
+if __name__ == "__main__":
+    configs = [
+        ClientConfig(schema_version=4, client="nordbank", prompt_id="nb-contact@7", min_score=0.62,
+                     actions={"create_dispute": ApprovalPolicy(approver_role="operator")}),
+        ClientConfig(schema_version=3, client="orion", prompt_id="or-assist@12", min_score=0.55,
+                     actions={"publish_status": ApprovalPolicy(approver_role="duty_engineer", ttl_s=300)}),
+        ClientConfig(schema_version=4, client="northgate", prompt_id="ng-citizen@5", min_score=0.70,
+                     public_users=True, actions={"submit_request": ApprovalPolicy(approver_role="resident")}),
+        ClientConfig(schema_version=4, client="helix", prompt_id="hx-maint@1", min_score=0.60,
+                     offline=True, model_host="on_site",
+                     actions={"order_part": ApprovalPolicy(approver_role="site_engineer", ttl_s=3600)}),
+    ]
+    assert {c.client: compatibility_test(c) for c in configs} == {c.client: [] for c in configs}
+    base = {"schema_version": 4, "client": "helix", "prompt_id": "hx-maint@1", "min_score": 0.6}
+    for bad in ({"public_users": True, "require_citations": False}, {"offline": True},
+                {"schema_version": 2}, {"approve_by_name": True}):
+        try:
+            ClientConfig.model_validate(base | bad)
+            raise AssertionError(f"invalid configuration accepted: {bad}")
+        except ValidationError:
+            pass
+    print("module", MODULE_VERSION, "is compatible with", len(configs), "customer configurations")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="Everything in which customers differ">line 19</span><p>The configuration class holds every difference between customers that the module's code expresses. Forbidding extra fields rejects at load time a configuration with the <code>approve_by_name</code> flag, which the schema does not contain; without the prohibition the flag would be dropped without an error message.</p></div>
+        <div><span class="at" data-anchor="def allowed_combinations">line 36</span><p>The validator rejects combinations that are dangerous although every field is valid: a public service without citations, an air-gapped site with a cloud model.</p></div>
+        <div><span class="at" data-anchor="startswith(self.config.namespace)">line 58</span><p>Tenant isolation is checked in the core by the document's namespace, so the documents of a foreign index connected by mistake do not reach the prompt.</p></div>
+        <div><span class="at" data-anchor="def compatibility_test">line 72</span><p>One contract runs on every customer's current configuration at every release. A release that fails the contract on even one configuration is delivered to no customer.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>In the copies the differences between customers are scattered through the code; in the module they sit in one typed class and are checked at load time.</p>
+    <p>A fix in a copy stays in that copy, while a fix in the core becomes the behaviour of every customer with the next release.</p>
+    <p>The copies have no shared contract, so divergence is detected during an audit or an incident; the module's contract runs before the release.</p>
+  </div>
+</div>
+
+<h3 id="s-16-3"><span class="num">16.3</span>Pattern mining</h3>
+
+<p>Patterns are mined from the records of the three engagements: the decision logs described in <a href="#s-1-8" data-secref="1.8">Section 1.8</a>, commit histories, traces and eval runs. The log is read first: code shows the shape of a solution, and the constraint that determined this shape is recorded in the log. Identical code is not a pattern by itself: one engineer may have written the same function in two repositories out of habit, and then no shared task or constraint stands behind it.</p>
+
+<dl class="def">
+<dt>Field pattern</dt>
+<dd>A triple of a user problem, an environmental constraint and a solution shape that recurred independently in several engagements and is backed by links to records.</dd>
+<dt>Pattern registry</dt>
+<dd>A log of pattern candidates with occurrences per engagement, links to evidence and workaround hours. The registry shows which candidate is ready to become a module and which trait the others lack.</dd>
+</dl>
+
+<p>The threshold is the rule of three, which Martin Fowler attributes to Don Roberts: two similar pieces of code do not yet require refactoring, and at the third occurrence the shared code is extracted.<a class="src" href="https://en.wikipedia.org/wiki/Rule_of_three_(computer_programming)" target="_blank" rel="noreferrer">Fowler et al., Refactoring, 1999: the rule of three</a> For field patterns the rule applies to each trait separately, and two occurrences move a candidate only onto a watch list. Action approval passes the threshold on every trait: the user asks for an action, the customer requires a human decision, and the solution each time consists of an interrupt, an approval bound to the arguments and an audit entry.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Candidate</th><th>Seen at</th><th>Threshold</th><th>Decision</th></tr></thead>
+<tbody>
+<tr><td>Answers only from sources, with citations</td><td>CF1, CF4, CF5</td><td>3 of 3</td><td>module core</td></tr>
+<tr><td>Approval bound to arguments</td><td>CF1, CF4, CF5</td><td>3 of 3; workaround 356 h</td><td>module core and feature request</td></tr>
+<tr><td>Data stays in region</td><td>CF1, CF5; CF4 without a link</td><td>2 of 3</td><td>watch list, check at Helix</td></tr>
+<tr><td>SOAP adapter to the mainframe</td><td>CF1</td><td>1 of 3</td><td>stays with Nordbank</td></tr>
+<tr><td>Chargeback across business units</td><td>CF4</td><td>1 of 3</td><td>stays with Orion</td></tr>
+</tbody></table></div>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">pattern_registry.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+EVIDENCE_KINDS = ("decision:", "commit:", "trace:", "eval:")
+
+
+class Kind(StrEnum):
+    PROBLEM = "problem"           # a recurring user need
+    CONSTRAINT = "constraint"     # a recurring constraint of the environment
+    SOLUTION = "solution"         # a recurring shape of the solution
+
+
+@dataclass(frozen=True)
+class Occurrence:
+    engagement: str               # case-file code: "CF1"
+    kind: Kind
+    evidence: str                 # decision-log entry, commit, trace or eval run
+    workaround_hours: int = 0     # hours spent working around the product, from timesheets
+
+
+@dataclass
+class Pattern:
+    id: str
+    title: str
+    occurrences: list[Occurrence] = field(default_factory=list)
+
+    def engagements(self, kind: Kind) -&gt; set[str]:
+        return {o.engagement for o in self.occurrences if o.kind == kind}
+
+    def promotion_blockers(self, threshold: int = 3) -&gt; list[str]:
+        """An empty list means the pattern is ready to become a module."""
+        blockers = [f"{kind}: {len(self.engagements(kind))} of {threshold}"
+                    for kind in Kind if len(self.engagements(kind)) &lt; threshold]
+        unverifiable = [o.engagement for o in self.occurrences
+                        if not o.evidence.startswith(EVIDENCE_KINDS)]
+        if unverifiable:
+            blockers.append(f"occurrences without a verifiable link: {sorted(set(unverifiable))}")
+        return blockers
+
+
+@dataclass
+class PatternRegistry:
+    patterns: dict[str, Pattern] = field(default_factory=dict)
+
+    def record(self, pattern_id: str, title: str, occurrence: Occurrence) -&gt; None:
+        pattern = self.patterns.setdefault(pattern_id, Pattern(pattern_id, title))
+        if occurrence not in pattern.occurrences:          # re-reading does not double the count
+            pattern.occurrences.append(occurrence)
+
+    def promotable(self) -&gt; list[str]:
+        return sorted(pid for pid, p in self.patterns.items() if not p.promotion_blockers())
+
+    def workaround_hours(self, pattern_id: str) -&gt; dict[str, int]:
+        hours: defaultdict[str, int] = defaultdict(int)
+        for o in self.patterns[pattern_id].occurrences:
+            hours[o.engagement] += o.workaround_hours
+        return dict(hours)
+
+
+if __name__ == "__main__":
+    reg = PatternRegistry()
+    approval, residency = "approval bound to arguments", "data stays in region"
+    for cf, action, hours in (("CF1", "create_dispute", 140), ("CF4", "publish_status", 96),
+                              ("CF5", "submit_request", 120)):
+        reg.record("approval", approval, Occurrence(cf, Kind.PROBLEM, f"decision:{cf}-{action}"))
+        reg.record("approval", approval, Occurrence(cf, Kind.CONSTRAINT, f"eval:{cf}-approvals"))
+        reg.record("approval", approval, Occurrence(cf, Kind.SOLUTION, f"commit:{cf}-{action}", hours))
+    reg.record("approval", approval, Occurrence("CF1", Kind.PROBLEM, "decision:CF1-create_dispute"))
+    for cf in ("CF1", "CF5"):
+        reg.record("residency", residency, Occurrence(cf, Kind.CONSTRAINT, f"decision:{cf}-dpo"))
+        reg.record("residency", residency, Occurrence(cf, Kind.SOLUTION, f"commit:{cf}-region"))
+    reg.record("residency", residency, Occurrence("CF4", Kind.PROBLEM, "the team says so"))
+
+    assert len(reg.patterns["approval"].occurrences) == 9 and reg.promotable() == ["approval"]
+    assert reg.workaround_hours("approval") == {"CF1": 140, "CF4": 96, "CF5": 120}
+    blockers = reg.patterns["residency"].promotion_blockers()
+    assert "problem: 1 of 3" in blockers and "constraint: 2 of 3" in blockers
+    assert any("CF4" in b for b in blockers)
+    print("ready for a module:", reg.promotable(), "· residency waits on:", blockers)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="for kind in Kind if">line 36</span><p>The threshold is checked for each trait separately, and the list of blockers names the missing trait together with its count of occurrences.</p></div>
+  <div><span class="at" data-anchor="startswith(EVIDENCE_KINDS)">line 38</span><p>An occurrence without a link to a record blocks promotion. "We had that too" indicates where to look for a record and does not count as evidence.</p></div>
+  <div><span class="at" data-anchor="hours[o.engagement] +=">line 59</span><p>Hours are summed per engagement, because a request to the product team needs the workaround cost at each affected customer.</p></div>
+</div>
+</figure>
+
+<p>The registry is kept from the first week of an engagement, and workaround hours are recorded while the work happens. An occurrence reconstructed from memory in the last week fails the link check. The record of a candidate that stays with one customer tells the next team why it is not moved into the module.</p>
+
+<h3 id="s-16-4"><span class="num">16.4</span>The module and multi-client deployment</h3>
+
+<p>Every difference between customers found while mining patterns receives one of three decisions. A difference expressible as a parameter value is moved into the configuration: the relevance threshold, the approver's role, the approval's lifetime, the place where the model runs. A difference that needs other code at one customer is implemented in that customer's repository as an extension behind the module's interface, without a fork of the core. A difference that cannot be expressed without a new platform capability becomes a feature request.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 380" role="img" aria-label="Flow from field work to the product: the repositories of three engagements pass records to a pattern registry, a candidate that passes the rule of three becomes a module with a core and a configuration for each of four customers, the module is handed to the product team, and dashed edges show feature requests from the registry and upgrades that reach customers through their configurations and compatibility tests" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar16a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <path d="M321,157 V36 H799 V149" fill="none" stroke="var(--sG)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar16a)"/>
+  <text x="560" y="27" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">feature request: customers, workaround hours, traces</text>
+
+  <text x="100" y="97" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">engagement repositories</text>
+  <rect x="20" y="108" width="160" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Nordbank · CF1</text>
+  <text x="100" y="146" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">decision log · traces</text>
+  <rect x="20" y="174" width="160" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="195" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Orion · CF4</text>
+  <text x="100" y="212" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">commits · evals</text>
+  <rect x="20" y="240" width="160" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="261" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Northgate · CF5</text>
+  <text x="100" y="278" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">audit · traces</text>
+  <path d="M180,133 H208 V265 H180" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <line x1="180" y1="199" x2="228" y2="199" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar16a)"/>
+
+  <rect x="236" y="157" width="170" height="84" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="321" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">pattern registry</text>
+  <text x="321" y="203" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">occurrences · links</text>
+  <text x="321" y="220" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">rule of three</text>
+  <line x1="406" y1="199" x2="448" y2="199" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar16a)"/>
+  <text x="427" y="190" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">≥ 3</text>
+
+  <rect x="456" y="56" width="222" height="286" rx="8" fill="none" stroke="var(--sG)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="472" y="70" width="190" height="52" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="567" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">module core v2.4</text>
+  <text x="567" y="110" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">answer · approval · audit</text>
+  <text x="567" y="142" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">configuration per customer</text>
+
+  <rect x="472" y="152" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="169" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Nordbank</text>
+  <text x="486" y="184" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">approver=operator</text>
+  <rect x="638" y="166" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <rect x="472" y="198" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="215" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Orion</text>
+  <text x="486" y="230" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ttl_s=300</text>
+  <rect x="638" y="212" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <rect x="472" y="244" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="261" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Northgate</text>
+  <text x="486" y="276" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">public_users=true</text>
+  <rect x="638" y="258" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <rect x="472" y="290" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="307" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Helix</text>
+  <text x="486" y="322" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">offline=true</text>
+  <rect x="638" y="304" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+
+  <line x1="678" y1="199" x2="728" y2="199" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar16a)"/>
+  <rect x="736" y="157" width="126" height="84" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="799" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">product</text>
+  <text x="799" y="201" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">team</text>
+  <text x="799" y="220" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">platform</text>
+
+  <path d="M799,241 V300 H686" fill="none" stroke="var(--sG)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar16a)"/>
+  <text x="788" y="270" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">upgrades</text>
+  <text x="788" y="287" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">v2.4 → v2.5</text>
+
+  <rect x="236" y="356" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <text x="256" y="366" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">compatibility test: every configuration passes the module contract at every release</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> A pattern becomes a module when the differences between customers are expressed as typed configuration checked by a compatibility test. Every difference receives one of three decisions: a parameter is moved into the configuration, a difference in code stays as an extension in the engagement repository, a missing platform capability goes to the product team as a feature request.</figcaption>
+</figure>
+
+<p>The configuration in the <code>client_module.py</code> listing of <a href="#s-16-2" data-secref="16.2">Section 16.2</a> is typed and validated at load time, so an error in it is detected before the first call in production. Type checking rejects typos and extra fields, the validator rejects dangerous combinations, and the compatibility test runs one contract on each customer's configuration. The release of the core itself passes the gates of <a href="#s-12-8" data-secref="12.8">Section 12.8</a> on the evaluation sets of all customers at once.</p>
+
+<p>Module versions follow semantic versioning: the major number grows with an incompatible change, the minor with a compatible addition, the patch with a fix.<a class="src" href="https://semver.org/" target="_blank" rel="noreferrer">Semantic Versioning 2.0.0</a> A change to the configuration schema after which a previously valid configuration no longer loads is incompatible as well. The module therefore accepts two schema versions for a while, customer configurations migrate one at a time with their tests run, and only then is the old schema retired.</p>
+
+<p>In a multi-client deployment each customer deploys the module inside its own perimeter. The core code, the contract and the release process are shared; data, indexes, keys, logs and approvals are kept inside the customer's perimeter. Where one instance serves several tenants, as Orion's platform does in <a href="#s-13-5" data-secref="13.5">Section 13.5</a>, the namespace is derived from the caller's identity and checked by the core on every access to sources.</p>
+
+<div class="note" data-level="2">A customer's configuration is kept in the module's repository next to its compatibility test, so that CI checks the current version of the configuration. Secrets and system addresses are not part of it and are injected at deployment inside the customer's perimeter.</div>
+
+<div class="warn"><b>Common mistake</b>Making a "temporary" fork of the core for one customer's urgent requirement. The fork receives no module fixes, its test stops running after the first conflict, and two releases later returning to the shared version costs more than the original change. An urgent requirement is met with an extension or a new parameter whose test is added to the contract.</div>
+
+<h3 id="s-16-5"><span class="num">16.5</span>The evidence-backed feature request</h3>
+
+<p>The approval interrupt of the agent platform contains the action's name but not its arguments or expiry, and in each of the three engagements a wrapper was written to add them. The wrapper went into the module and binds approvals only for the agents that connect the module. Only the platform can guarantee such binding for every agent, so the capability has to be implemented there. A request for this capability competes in the product queue with requests from other teams and, as <a href="#s-1-6" data-secref="1.6">Section 1.6</a> says, is accepted on the basis of evidence.</p>
+
+<p>An evidence-backed request describes the problem as observed platform behaviour and proposes a minimal interface separately. It lists the affected customers with the workaround cost in hours from timesheets and links to traces and eval runs. Its section on what happens if the change is not built states the cost: about 120 hours for the wrapper in every new engagement. A request declined with a recorded reason closes the question: the team knows that the wrapper stays in the module.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">feature_request.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Evidence:
+    engagement: str                   # case-file code of the affected customer
+    workaround_hours: int             # measured from timesheets
+    links: tuple[str, ...]            # traces, eval runs, decision-log entries
+
+
+@dataclass(frozen=True)
+class FeatureRequest:
+    title: str
+    problem: str
+    proposed_interface: str
+    if_not_built: str
+    evidence: tuple[Evidence, ...] = ()
+
+    def refusals(self) -&gt; list[str]:
+        found: list[str] = []
+        if not self.evidence:
+            found.append("no affected customers named")
+        found += [f"{e.engagement}: workaround cost not measured"
+                  for e in self.evidence if e.workaround_hours &lt;= 0]
+        found += [f"{e.engagement}: no links to traces or evals"
+                  for e in self.evidence if not e.links]
+        return found
+
+    def render(self, hourly_cost: int) -&gt; str:
+        if problems := self.refusals():
+            raise ValueError("request refused: " + "; ".join(problems))
+        hours = sum(e.workaround_hours for e in self.evidence)
+        rows = [f"- {e.engagement}: {e.workaround_hours} h; {', '.join(e.links)}"
+                for e in sorted(self.evidence, key=lambda e: e.engagement)]
+        return "\n".join([
+            f"# {self.title}",
+            f"Problem: {self.problem}",
+            f"Affected customers: {len(self.evidence)}",
+            f"Workaround cost: {hours} h, {hours * hourly_cost} EUR",
+            "Evidence:", *rows,
+            f"Proposed interface: {self.proposed_interface}",
+            f"If not built: {self.if_not_built}",
+        ])
+
+
+if __name__ == "__main__":
+    request = FeatureRequest(
+        title="Approval bound to arguments as a platform primitive",
+        problem="the approval interrupt contains the action name but not its arguments or expiry",
+        proposed_interface="interrupt(action, args_hash, approver_role, ttl_s) -&gt; ApprovalToken",
+        if_not_built="every engagement writes its own wrapper; a wrapper defect is fixed N times",
+        evidence=(Evidence("CF4", 96, ("trace:or-0412", "eval:or-approvals@3")),
+                  Evidence("CF1", 140, ("decision:D-31", "eval:nb-approvals@5")),
+                  Evidence("CF5", 120, ("trace:ng-0907", "decision:D-12"))),
+    )
+    text = request.render(hourly_cost=95)
+    assert "Workaround cost: 356 h, 33820 EUR" in text
+    assert text.index("- CF1") &lt; text.index("- CF4") &lt; text.index("- CF5")
+    for broken, reason in ((FeatureRequest("x", "y", "z", "w"), "no affected"),
+                           (FeatureRequest("x", "y", "z", "w", (Evidence("CF1", 0, ("trace:1",)),)),
+                            "not measured")):
+        try:
+            broken.render(hourly_cost=95)
+            raise AssertionError("a request without evidence was accepted")
+        except ValueError as err:
+            assert reason in str(err)
+    print(text.splitlines()[0], "· 3 customers affected, 356 h of workaround")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="workaround_hours: int">line 9</span><p>The cost is kept in hours from timesheets and turned into money only when rendered: hours can be checked against records, while the vendor and the product team use different rates.</p></div>
+  <div><span class="at" data-anchor="if problems := self.refusals():">line 32</span><p>A refusal lists every shortcoming at once, so that the author corrects the request in one round of correspondence.</p></div>
+</div>
+</figure>
+
+<h3 id="s-16-6"><span class="num">16.6</span>The business case and ROI</h3>
+
+<p>The ROI hypothesis of <a href="#s-2-7" data-secref="2.7">Section 2.7</a> answered the scoping question of whether to start. The business case answers the questions of Helix's chief financial officer: how much to invest, when the investment returns and how reliable that is. It starts from the baseline measured in discovery: diagnosing a defect takes 38 minutes on average over 212 work orders, there are about nine thousand diagnoses a month, and a technician hour costs 58 EUR. Savings are counted against the counterfactual: independently of the project, Helix is rolling out a new catalogue search that will reduce diagnosis time by 4%, and that effect is not credited to the assistant.</p>
+
+<dl class="def">
+<dt>Payback period</dt>
+<dd>The number of the period in which the project's cumulative cash flow, including the initial investment, first becomes non-negative. It ignores the time value of money.</dd>
+<dt>Net present value, NPV</dt>
+<dd>The sum of the project's cash flows, each divided by (1 + r)<sup>t</sup>, where r is the discount rate per period and t the number of the period. The customer's finance function sets the rate.</dd>
+</dl>
+
+<p>Every assumption has a range, so the case is computed in three scenarios that differ in the share of time removed, the speed of adoption and the running cost. A sensitivity analysis scales adoption, the least certain assumption, on its own. Money is computed in <code>Decimal</code>: accountants reconcile the case, and a discrepancy of cents with their calculation would make them recheck every other number.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">business_case.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from decimal import ROUND_HALF_UP, Decimal
+
+CENT = Decimal("0.01")
+
+
+def ramp(values: str) -&gt; tuple[Decimal, ...]:
+    return tuple(Decimal(v) for v in values.split())
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """Measured in discovery before any change; the sample size is part of the baseline."""
+    sample_orders: int = 212
+    diagnoses_per_month: int = 9_000
+    minutes_per_diagnosis: Decimal = Decimal(38)
+    loaded_cost_per_hour: Decimal = Decimal(58)
+    counterfactual_drift: Decimal = Decimal("0.04")    # improvement that happens without the system
+
+
+@dataclass(frozen=True)
+class Scenario:
+    name: str
+    time_reduction: Decimal           # share of diagnosis time the assistant removes
+    adoption: tuple[Decimal, ...]     # adoption by month; the last value holds afterwards
+    run_cost_month: Decimal
+    build_cost: Decimal = Decimal(370_000)
+
+
+def cash_flows(base: Baseline, s: Scenario, horizon: int = 24) -&gt; list[Decimal]:
+    if base.sample_orders &lt; 200:
+        raise ValueError("baseline not measured: no business case is computed")
+    counterfactual = base.minutes_per_diagnosis * (1 - base.counterfactual_drift)
+    flows = [-s.build_cost]
+    for month in range(1, horizon + 1):
+        adoption = s.adoption[min(month, len(s.adoption)) - 1]
+        saved_hours = base.diagnoses_per_month * counterfactual * s.time_reduction * adoption / 60
+        flows.append(saved_hours * base.loaded_cost_per_hour - s.run_cost_month)
+    return flows
+
+
+def payback_month(flows: list[Decimal]) -&gt; int | None:
+    total = Decimal(0)
+    for month, flow in enumerate(flows):
+        total += flow
+        if month and total &gt;= 0:
+            return month
+    return None
+
+
+def npv(flows: list[Decimal], monthly_rate: Decimal = Decimal("0.008")) -&gt; Decimal:
+    value = sum((f / (1 + monthly_rate) ** m for m, f in enumerate(flows)), Decimal(0))
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def adoption_sensitivity(base: Baseline, s: Scenario) -&gt; dict[str, tuple[Decimal, int | None]]:
+    out: dict[str, tuple[Decimal, int | None]] = {}
+    for factor in ("0.5", "0.75", "1"):
+        scaled = replace(s, adoption=tuple(a * Decimal(factor) for a in s.adoption))
+        flows = cash_flows(base, scaled)
+        out[factor] = (npv(flows), payback_month(flows))
+    return out
+
+
+SCENARIOS = (
+    Scenario("low", Decimal("0.15"), ramp("0.1 0.3 0.5 0.6"), Decimal(22_000)),
+    Scenario("expected", Decimal("0.25"), ramp("0.2 0.5 0.75 0.9"), Decimal(21_000)),
+    Scenario("high", Decimal("0.35"), ramp("0.3 0.6 0.9 1"), Decimal(19_000)),
+)
+
+if __name__ == "__main__":
+    base = Baseline()
+    low, expected, high = (cash_flows(base, s) for s in SCENARIOS)
+    assert [payback_month(f) for f in (low, expected, high)] == [None, 10, 6]
+    assert npv(expected) == Decimal("628845.79") and npv(low) &lt; 0 &lt; npv(high)
+    assert expected[12] == Decimal("50409.60")          # a month at full adoption, to the cent
+    by_adoption = adoption_sensitivity(base, SCENARIOS[1])
+    assert by_adoption["0.75"] == (Decimal("264905.88"), 14)
+    assert by_adoption["0.5"][0] &lt; 0 and by_adoption["0.5"][1] is None
+    try:
+        cash_flows(replace(base, sample_orders=30), SCENARIOS[1])
+        raise AssertionError("a business case without a measured baseline was computed")
+    except ValueError:
+        pass
+    print("payback: low none, expected 10, high 6 months; NPV at 50 % adoption:", by_adoption["0.5"][0])</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="counterfactual_drift: Decimal">line 20</span><p>The counterfactual improvement is subtracted before savings are computed; otherwise the effect of the new catalogue search would be credited to the assistant.</p></div>
+  <div><span class="at" data-anchor="base.sample_orders">line 33</span><p>The case refuses a sample of fewer than two hundred work orders: a mean over thirty orders fluctuates more than the expected effect.</p></div>
+  <div><span class="at" data-anchor="a * Decimal(factor)">line 61</span><p>Sensitivity scales the whole adoption curve: slow growth of adoption postpones the benefit, and discounting reduces the present value of the postponed benefit.</p></div>
+</div>
+</figure>
+
+<p>In the expected scenario the investment of 370,000 EUR pays back in month ten, and the NPV over 24 months at 0.8% a month, about 10% a year, is roughly 629,000 EUR. In the high scenario payback comes in month six; in the low one it does not come within two years. The sensitivity analysis names the deciding assumption: at three quarters of planned adoption payback moves to month fourteen, and at half the NPV is negative. Payback therefore depends primarily on whether technicians use the assistant.</p>
+
+<div class="warn"><b>Common mistake</b>Showing the board only the expected scenario. The board takes a single number as a promise, and at the first deviation from it the discussion turns to finding who is to blame. A range with the deciding variable named lets the discussion address which assumption failed and how to manage that variable.</div>
+
+<h3 id="s-16-7"><span class="num">16.7</span>SOW, acceptance and exit</h3>
+
+<dl class="def">
+<dt>Statement of work, SOW</dt>
+<dd>An appendix to the contract that fixes an engagement's scope, deliverables, timeline, and procedure for acceptance and payment.</dd>
+<dt>Acceptance criterion</dt>
+<dd>A condition tied to a SOW clause and executable on measured data: a metric, its source, a threshold and an observation window. The result does not depend on which party runs it.</dd>
+</dl>
+
+<p>The payment model is chosen by how well the scope is known. Time and materials pays for time spent and suits discovery, where the scope is unknown by definition. Fixed scope suits a phase with a described deliverable, such as the pilot. Outcome-based payment ties part of the fee to a business metric and fits only when the metric is measured independently and the vendor influences its value, which is why at Helix it covers only part of the production payment.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 312" role="img" aria-label="Timeline of the commercial phases of the Helix engagement: discovery, pilot, production and handover are separated by four gates; before each gate stands an acceptance test with its SOW clause and threshold, an arrow leads from the test to a payment with its share of the fee, and the bottom row names the payment model of each phase" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar16b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="124" y="68" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">phase</text>
+  <text x="124" y="108" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">gate</text>
+  <text x="124" y="161" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">acceptance test</text>
+  <text x="124" y="227" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">payment</text>
+  <text x="124" y="258" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">payment model</text>
+
+  <rect x="144" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="230" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">discovery</text>
+  <text x="230" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">weeks 1–2</text>
+  <rect x="324" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="410" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">pilot at two plants</text>
+  <text x="410" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">weeks 3–6</text>
+  <rect x="504" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="590" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">production</text>
+  <text x="590" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">weeks 7–9</text>
+  <rect x="684" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="770" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">handover</text>
+  <text x="770" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">weeks 10–12</text>
+
+  <line x1="320" y1="113" x2="320" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="500" y1="113" x2="500" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="680" y1="113" x2="680" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="860" y1="113" x2="860" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <circle cx="320" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="320" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">1</text>
+  <circle cx="500" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="500" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">2</text>
+  <circle cx="680" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="680" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">3</text>
+  <circle cx="860" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="860" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">4</text>
+
+  <rect x="148" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="160" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 2.1</text>
+  <text x="160" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">baseline ≥ 200 orders</text>
+  <text x="160" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">with timestamps</text>
+  <rect x="328" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="340" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 3.2</text>
+  <text x="340" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">groundedness ≥ 0.90</text>
+  <text x="340" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">and bound approvals</text>
+  <rect x="508" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="520" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 4.1</text>
+  <text x="520" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">p95 ≤ 2 s · ≥ 99.5%</text>
+  <text x="520" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">14 days in a row</text>
+  <rect x="688" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="700" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 5.3</text>
+  <text x="700" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">two releases without FDE</text>
+  <text x="700" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">and a runbook drill</text>
+
+  <line x1="164" y1="190" x2="164" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <line x1="344" y1="190" x2="344" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <line x1="524" y1="190" x2="524" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <line x1="704" y1="190" x2="704" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <rect x="150" y="216" width="30" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="188" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">15%</text>
+  <rect x="330" y="216" width="60" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="398" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">30%</text>
+  <rect x="510" y="216" width="70" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="588" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">35%</text>
+  <rect x="690" y="216" width="40" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="738" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">20%</text>
+
+  <text x="230" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">time and materials</text>
+  <text x="410" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">fixed scope</text>
+  <text x="590" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">fixed + outcome-based</text>
+  <text x="770" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">fixed scope</text>
+
+  <text x="440" y="294" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">A failed test names its SOW clause and holds that payment; the criterion is not renegotiated after the fact.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> A payment is triggered by a test that either party can run: a phase gate is passed when the criteria of its SOW clause hold on measured metrics, and an invoice is issued only after a passed test. The payment model is chosen for each phase by how well its scope is known.</figcaption>
+</figure>
+
+<p>An acceptance criterion is written so that either party running it gets the same result. "The assistant works reliably" contains no metric, threshold or observation window and is therefore not a criterion; "availability of at least 99.5% according to Helix's monitoring over 14 consecutive days" contains all three. The metrics come from the traces and eval runs of <a href="#ch-12" data-secref="12">Chapters 12</a> and <a href="#ch-13" data-secref="13">13</a>, and the SOW names the system whose data is the source of truth. Acceptance then reduces to a report on that system's data.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">acceptance_criteria.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import operator
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+
+OPS: dict[str, Callable[[float, float], bool]] = {"&gt;=": operator.ge, "&lt;=": operator.le}
+
+
+@dataclass(frozen=True)
+class Criterion:
+    clause: str                   # SOW clause: "4.1"
+    metric: str                   # metric name in the measurement report
+    op: str
+    threshold: float
+    window_days: int = 0          # consecutive days the metric must be measured
+
+    def __post_init__(self) -&gt; None:
+        if self.op not in OPS or not re.fullmatch(r"\d+\.\d+", self.clause):
+            raise ValueError(f"criterion {self.clause}/{self.metric} cannot be executed")
+
+    def failure(self, measured: Mapping[str, tuple[float, int]]) -&gt; str | None:
+        if self.metric not in measured:
+            return f"SOW {self.clause}: {self.metric} not measured"
+        value, days = measured[self.metric]
+        if days &lt; self.window_days:
+            return f"SOW {self.clause}: {self.metric} measured {days} of {self.window_days} days"
+        if not OPS[self.op](value, self.threshold):
+            return f"SOW {self.clause}: {self.metric} = {value}, required {self.op} {self.threshold}"
+        return None
+
+
+def acceptance_report(criteria: list[Criterion], payments: Mapping[str, int],
+                      measured: Mapping[str, tuple[float, int]]) -&gt; dict[str, list[str]]:
+    """For every payment clause of the SOW: an empty list means the invoice may be issued."""
+    untested = sorted(set(payments) - {c.clause for c in criteria})
+    if untested:
+        raise ValueError(f"payment without an executable test: SOW {untested}")
+    report: dict[str, list[str]] = {clause: [] for clause in payments}
+    for c in criteria:
+        if (problem := c.failure(measured)) and c.clause in report:
+            report[c.clause].append(problem)
+    return report
+
+
+if __name__ == "__main__":
+    payments = {"2.1": 15, "3.2": 30, "4.1": 35, "5.3": 20}          # share of the fee, %
+    criteria = [
+        Criterion("2.1", "baseline_orders", "&gt;=", 200),
+        Criterion("3.2", "groundedness", "&gt;=", 0.90),
+        Criterion("3.2", "approval_bound_to_args", "&gt;=", 1.0),
+        Criterion("4.1", "p95_first_token_s", "&lt;=", 2.0, window_days=14),
+        Criterion("4.1", "availability", "&gt;=", 0.995, window_days=14),
+        Criterion("5.3", "releases_without_fde", "&gt;=", 2),
+        Criterion("5.3", "runbook_drills_passed", "&gt;=", 1),
+    ]
+    measured = {"baseline_orders": (212, 10), "groundedness": (0.93, 1),
+                "approval_bound_to_args": (1.0, 1), "p95_first_token_s": (1.7, 14),
+                "availability": (0.993, 14)}
+    report = acceptance_report(criteria, payments, measured)
+    assert [c for c, failed in report.items() if not failed] == ["2.1", "3.2"]
+    assert report["4.1"] == ["SOW 4.1: availability = 0.993, required &gt;= 0.995"]
+    assert report["5.3"] == ["SOW 5.3: releases_without_fde not measured",
+                             "SOW 5.3: runbook_drills_passed not measured"]
+    for bad in (lambda: Criterion("4.1", "quality", "satisfactory", 0.0),
+                lambda: acceptance_report(criteria[:1], payments, measured)):
+        try:
+            bad()
+            raise AssertionError("an unexecutable criterion or an untested payment was accepted")
+        except ValueError:
+            pass
+    print("payable: SOW 2.1, 3.2; not accepted:", sorted(c for c, f in report.items() if f))</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def __post_init__">line 19</span><p>A criterion that cannot be executed is rejected when the SOW is drafted: at acceptance a criterion is no longer renegotiated after the fact.</p></div>
+  <div><span class="at" data-anchor="untested = sorted(set(payments)">line 37</span><p>A payment clause without a criterion stops the report: without this check the clause would have an empty list of violations, and its invoice would count as allowed.</p></div>
+</div>
+</figure>
+
+<p>Exit follows the model chosen in the first week (<a href="#s-1-9" data-secref="1.9">Section 1.9</a>) and is described by what the customer does without the vendor's engineers: release a new version of its configuration, run a runbook drill, read the trace of an incident. Along with the code the customer receives the evaluation sets, the compatibility test, the decision log and the feature requests that name it as affected. Clause 5.3 requires two releases without the FDE, because the handover is confirmed by actions that the customer's team has performed on its own.</p>
+
+<p>A separate SOW clause sets out the rights to the code. Conceptually one distinguishes code created for the customer during the engagement, such as the adapter to Helix's MES, from the module that existed before the engagement: the former is often transferred to the customer, the latter usually stays with the vendor with a right of use for the customer. Mixing the two in one repository makes any such clause unenforceable. This describes the engineering side of the question and is not legal advice: the contract and the parties' lawyers decide the terms.</p>
+
+<div class="warn"><b>Common mistake</b>Tying a payment to a date or to "completion of the pilot", which the parties understand differently. The issued invoice becomes the subject of a dispute that is settled by negotiation, because the contract names no data that confirm completion. A payment is tied to a SOW clause with an executable criterion and issued on that criterion's report.</div>
+
+<h3 id="s-16-8"><span class="num">16.8</span>Writing for non-engineers and change management</h3>
+
+<p>The business case and the SOW are read by the production director, the chief financial officer and procurement, and for them the memo follows the form of <a href="#s-2-8" data-secref="2.8">Section 2.8</a> and opens with the decision requested. Helix's memo asks for approval of a four-week pilot at two plants and names the stop condition (fewer than 60% of shifts using the assistant by the end of week five of the engagement), three options priced from the scenarios of the business case, and the decision deadline. Technical quantities become consequences: instead of "p95 latency" the memo says "within two seconds in 19 cases out of 20".</p>
+
+<p>Since adoption determines the outcome, change management is included in the scope of the delivery. Adoption metrics come from the same traces: the share of shifts in which a technician asked the assistant and the share of explanations rejected. Each plant appoints a champion from its site engineers, trained first, who records technicians' objections in the pattern registry. Training uses the plant's own work orders, because technicians trust answers that concern the machines of their own plant.</p>
+
+<p>A trusted advisor, in the equation of Maister, Green and Galford, earns trust through credibility, reliability and intimacy and loses it through self-orientation.<a class="src" href="https://trustedadvisor.com/why-trust-matters/understanding-trust/understanding-the-trust-equation" target="_blank" rel="noreferrer">Maister, Green, Galford, The Trusted Advisor, 2000</a> The customer suspects an engineer promoting a module of self-orientation, and recommendations against the engineer's own benefit reduce that suspicion, for instance a scenario without payback in the business case. Scope is negotiated in the same way as the refusal of the integrator's role in <a href="#s-1-7" data-secref="1.7">Section 1.7</a>: a new requirement is discussed together with the change of gates, payments and acceptance criteria that it causes.</p>
+
+<h3 id="s-16-9" data-level="3"><span class="num">16.9</span>In depth: premature abstraction, configuration drift, ROI without a baseline</h3>
+
+<h4 data-level="3">Premature abstraction from two customers</h4>
+
+<p data-level="3">After Nordbank and Orion, a module built from two occurrences would have fixed a coincidence in the core: both approvers were employees with a corporate identity, whereas at Northgate a resident with a city-portal account approves the request. Sandi Metz assesses the price of such a mistake as follows: duplication is far cheaper than the wrong abstraction.<a class="src" href="https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction" target="_blank" rel="noreferrer">Metz, The Wrong Abstraction, 2016</a> After two occurrences, therefore, only the contract is abstracted, a test of the shared behaviour run on both repositories, and the core is extracted after the third.</p>
+
+<h4 data-level="3">Configuration drift and the compatibility test</h4>
+
+<p data-level="3">Configurations drift the way code does. Suppose Orion raises the approval lifetime to eight hours for night shifts, Nordbank lowers the relevance threshold after operators complain, and both changes pass review at the customer. A value out of bounds is detected by the validator, and a change in the core's behaviour on the new values by the contract run on the current configuration. An edit made in the customer's environment bypassing the repository is detected only by comparing the deployed configuration with the repository, which is why that comparison is part of the release procedure.</p>
+
+<h4 data-level="3">ROI without a measured baseline</h4>
+
+<p data-level="3">A baseline reconstructed after the fact from memory is, as a rule, inflated in the project's favour, which is why <code>business_case.py</code> refuses a small sample. Three methods give a sound estimate: measure the baseline at plants the assistant has not reached yet and connect them in steps, as in <a href="#s-2-7" data-secref="2.7">Section 2.7</a>; compare shifts with and without the assistant in the same weeks; or replace the savings claim with measurable claims about adoption and state that the monetary effect is unproven. The errors of such comparisons are analysed in <a href="#s-2-10" data-secref="2.10">Section 2.10</a>. Choosing a baseline to obtain the desired result of the case is unacceptable.</p>
+
+<h4 data-level="3">Rights to engagement code</h4>
+
+<p data-level="3">Engagement code and module code are separated by origin. The adapter to Helix's MES is part of the engagement's deliverables, the core that existed before Helix is part of the vendor's pre-existing work, and an improvement to the core made during the work at Helix falls into an intermediate category that gives rise to disputes. Any contractual decision is enforceable only if the three kinds are physically separated and core changes ship in releases that record their origin. The contract and the parties' lawyers determine the rights to each kind; this section is not legal advice.</p>
+
+<h4 data-level="3">A feature request that competes with your own module</h4>
+
+<p data-level="3">An accepted request for approval as a platform primitive would make part of the module redundant, and the module's author has a motive to weaken the request. The third loyalty of <a href="#s-1-6" data-secref="1.6">Section 1.6</a> resolves this conflict: the request is filed with full evidence. The module is designed to be replaced by the platform capability: the approval policy is declarative in the configuration, and the core switches to the platform primitive in a compatible release. Compatibility of the release means that customer configurations load without changes during this transition.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why is identical code in two repositories not a field pattern?</summary>
+<div class="ans"><p>The coincidence may come from one engineer's habit, whereas a pattern requires the problem, the constraint and the solution shape to recur at different customers, backed by records. Besides, two occurrences move a candidate only onto a watch list.</p></div>
+</details>
+<details>
+<summary>Why are savings in the business case counted against the counterfactual rather than the baseline?</summary>
+<div class="ans"><p>The counterfactual accounts for changes that would have happened without the project. Counting against the baseline would credit Helix's assistant with the effect of the new catalogue search.</p></div>
+</details>
+<details>
+<summary>What must happen for Helix to be invoiced under SOW clause 4.1?</summary>
+<div class="ans"><p>Both criteria of the clause must pass on data from the monitoring system named in the SOW over 14 consecutive days: p95 no higher than two seconds and availability no lower than 99.5%. The basis for the invoice is a report without violations on both criteria.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>A Staff FDE's contribution is also measured by the lower cost of subsequent engagements, which a module, an evidence-backed request and a repeatable commercial model provide. A fix in a module reaches every customer with one release, while in copies of code it is made separately in each repository.</li>
+<li>A pattern needs three occurrences of problem, constraint and solution backed by records, and becomes a module when customer differences are configuration with compatibility tests.</li>
+<li>A feature request is accepted on affected customers, measured workaround cost and evidence; a business case is computed against the counterfactual as a range of scenarios.</li>
+<li>Every SOW payment is tied to an executable acceptance criterion, exit is described by the customer's actions, and engagement code and the module are physically separated.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-1" data-secref="1">Chapter 1: the three loyalties and exit models</a>
+<a href="#ch-2" data-secref="2">Chapter 2: the baseline and the ROI hypothesis</a>
+<a href="#ch-17" data-secref="17">Chapter 17: total cost of ownership</a>
+</p>
+</div>
+</section>

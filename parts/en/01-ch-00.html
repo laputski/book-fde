@@ -1,0 +1,178 @@
+<!-- ══════════════════════════ INTRODUCTION ══════════════════════════ -->
+<section class="chapter" id="ch-0">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Introduction</p>
+    <span class="strata" role="img" aria-label="All seven layers are touched: customer systems, model, tools, evaluation, security, people, product">
+      <i data-s="A"></i><i data-s="B"></i><i data-s="C"></i><i data-s="D"></i><i data-s="E"></i><i data-s="F"></i><i data-s="G"></i>
+    </span>
+  </div>
+  <h2 id="s-0"><span class="num">0</span>How This Book Works</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading the introduction you will be able to</p>
+<ul>
+<li>pick the detail level and the reading order that fit your role;</li>
+<li>read the seven-layer indicator in the heading of every chapter;</li>
+<li>recognise the six recurring customers the chapters refer to;</li>
+<li>understand how the listings are verified and by which rules the diagrams are drawn.</li>
+</ul>
+</div>
+
+<h3 id="s-0-1"><span class="num">0.1</span>Who this book is for</h3>
+
+<p>This book is written for the engineer who works on the customer's side: embeds in the customer's organisation, learns its data and systems, builds agentic solutions on top of them, and is accountable for the solution reaching production and delivering measurable value. The industry calls this role the Forward Deployed Engineer. The book prepares for it and for what follows it: the Staff Forward Deployed Engineer position, the management of a team of such engineers, and the roles of applied and advisory AI architect.</p>
+
+<p>The reference point is the requirements of Google Cloud job posts of 2026; the list below comes from the Staff Forward Deployed Engineer, GenAI post (Warsaw), read in September 2026.<a class="src" href="https://www.google.com/about/careers/applications/jobs/results/124220019683795654-staff-forward-deployed-engineer-genai-google-cloud" target="_blank" rel="noreferrer">Google Careers, Staff Forward Deployed Engineer, GenAI, Google Cloud</a> The minimum qualifications include eight years of building and shipping production-grade AI solutions, leading technical discovery sessions with business stakeholders and engineering teams, and pipelines for structured and unstructured data with vector databases and RAG-like architectures. The preferred qualifications name multi-agent systems with the ReAct, self-reflection and hierarchical delegation patterns, LLM-native metrics such as tokens/sec and cost-per-request, state management and granular tracing, and the responsibilities include evaluation pipelines. Every one of these requirements is mapped to sections of the book in <a href="#app-a" data-secref="A">Appendix A</a>.</p>
+
+<p>The technical core of the book is vendor-neutral: protocols, patterns and listings do not depend on a particular model or cloud. Where a decision depends on the platform, the chapter carries an "On Google Cloud" section and, when the difference changes the decision, a comparison with the alternatives. The reader is assumed to write Python confidently and to have built at least one system with a language model; the mechanisms of Python itself are not covered here.</p>
+
+<h3 id="s-0-2"><span class="num">0.2</span>Three levels of detail</h3>
+
+<p>The material is marked up so that the same text reads at three levels of detail. The level is selected with the switch in the top bar.</p>
+
+<dl class="def">
+<dt>Detail level</dt>
+<dd>One of three modes of showing the text. Overview keeps the definitions, the core exposition, the diagrams, the considered solution and the takeaways. Standard adds the walkthroughs of naive solutions, line-by-line annotations of listings, the Google Cloud section and the self-check questions. Full adds justifications, non-obvious cases and the internal mechanics.</dd>
+</dl>
+
+<p>The text of any level reads as a complete exposition: no visible paragraph opens with a reference to a hidden one. When a link leads to a passage of a deeper level than the selected one, the chapter that contains the passage is revealed to the full level, and a notice at the bottom of the screen says so; the selected level itself does not change.</p>
+
+<p data-level="2">The "In depth" sections at the end of every chapter are shown only at the full level. They collect the cases that show up in production at a customer: idempotency of tool calls under stacked retries, leakage of access rights through a reranker, invalidation of the prompt cache by the order of tools, the double-execution window between a call and a checkpoint, contamination of evaluation sets by examples from the prompt.</p>
+
+<h3 id="s-0-3"><span class="num">0.3</span>The seven layers of a customer system</h3>
+
+<p>The book describes the systems an FDE takes to production with the same seven layers, and many difficulties arise at their seams. The layers serve as a shared coordinate system: the indicator in a chapter's heading shows which layers the chapter touches, and colour on the diagrams means a layer only.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 320" role="img" aria-label="The seven layers of a customer system: people address the model, the model acts through tools inside the customer's systems, the evaluation layer observes the model and the tools, the product layer receives field patterns, and the security layer frames everything else" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="18" y="26" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sE)">E · security and governance: trust boundaries, policies, audit, data sovereignty</text>
+  <rect x="14" y="36" width="852" height="270" rx="8" fill="none" stroke="var(--sE)" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+  <g data-step="1" data-caption="People state the task and accept the result: discovery, approvals, trust.">
+    <rect x="40" y="90" width="150" height="60" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+    <text x="115" y="114" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">F · people and process</text>
+    <text x="115" y="132" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ch. 1, 2, 11, 18</text>
+    <line x1="190" y1="120" x2="242" y2="120" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar0)"/>
+    <text x="216" y="110" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">task</text>
+  </g>
+
+  <g data-step="2" data-caption="The model plans and acts through tools inside the customer's running systems.">
+    <rect x="250" y="90" width="170" height="60" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="335" y="114" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">B · model and agent</text>
+    <text x="335" y="132" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ch. 3, 4, 7, 8, 9</text>
+    <line x1="420" y1="120" x2="472" y2="120" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar0)"/>
+    <text x="446" y="110" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">call</text>
+    <rect x="480" y="90" width="150" height="60" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+    <text x="555" y="114" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">C · tools</text>
+    <text x="555" y="132" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ch. 6, 7, 10</text>
+    <line x1="630" y1="120" x2="682" y2="120" stroke="currentColor" stroke-width="1.5" marker-start="url(#ar0)" marker-end="url(#ar0)"/>
+    <text x="656" y="110" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">read, write</text>
+    <rect x="690" y="90" width="150" height="60" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+    <text x="765" y="114" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">A · customer systems</text>
+    <text x="765" y="132" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ch. 2, 5, 6, 14</text>
+  </g>
+
+  <g data-step="3" data-caption="The evaluation and observability layer monitors the model and the tools: traces, metrics, release gates.">
+    <rect x="250" y="210" width="380" height="56" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="440" y="233" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">D · evaluation and observability</text>
+    <text x="440" y="251" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ch. 12, 13, 15</text>
+    <line x1="335" y1="150" x2="335" y2="204" stroke="var(--sD)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar0)"/>
+    <line x1="555" y1="150" x2="555" y2="204" stroke="var(--sD)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar0)"/>
+    <text x="445" y="185" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">traces and evaluations</text>
+  </g>
+
+  <g data-step="4" data-caption="Recurring field patterns are passed into the product as modules and feature requests.">
+    <rect x="690" y="210" width="150" height="56" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+    <text x="765" y="233" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">G · product</text>
+    <text x="765" y="251" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ch. 16, 17, 18</text>
+    <line x1="630" y1="238" x2="682" y2="238" stroke="var(--sG)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar0)"/>
+    <text x="656" y="228" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">patterns</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The seven layers as the route of one task: from people through the model and the tools to the customer's systems, watched by the evaluation layer, feeding back into the product, and inside the security frame. The chapter numbers under a layer's name say where its main mechanisms are covered. The buttons under the diagram reveal it step by step.</figcaption>
+</figure>
+
+<p>The colours of the layers come from the palette of the ragworld.org series, which is based on the Okabe and Ito palette, distinguishable under colour-vision deficiencies.<a class="src" href="https://jfly.uni-koeln.de/color/" target="_blank" rel="noreferrer">Okabe, Ito, Color Universal Design</a> The meanings of the colours in this book are its own: in the RAG World registry the same colours denote the RAG strata, while the indicator in a chapter's heading denotes the layers of a customer system.</p>
+
+<h3 id="s-0-4"><span class="num">0.4</span>The case files</h3>
+
+<p>Chapters 1–17 each work with one of six fictional customers, Chapter 18 with all six, and the artefacts built in one chapter are used in the next ones: the bank's ontology from <a href="#ch-2" data-secref="2">Chapter 2</a> becomes the tool set of the MCP server in <a href="#ch-6" data-secref="6">Chapter 6</a>, the same server is called by the long-running agent of <a href="#ch-9" data-secref="9">Chapter 9</a>, and the releases of the bank's assistant pass the evaluation gate of <a href="#ch-12" data-secref="12">Chapter 12</a>.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Case file</th><th>Customer</th><th>What shapes the tasks</th></tr></thead>
+<tbody>
+<tr><td><span class="lvl">CF1</span></td><td>Nordbank Regional, a regional bank</td><td>a mainframe and a 2009 SOAP layer, an approval chain through the chief information security officer, data kept in-region, PSD2 and DORA</td></tr>
+<tr><td><span class="lvl">CF2</span></td><td>Meridian Health Network, a hospital network</td><td>health data on-prem, departmental ACLs, scanned documents, voice intake within 800 ms</td></tr>
+<tr><td><span class="lvl">CF3</span></td><td>Transkontinent Logistics, logistics</td><td>SAP, telematics, customs PDFs in six languages, a cost ceiling per document</td></tr>
+<tr><td><span class="lvl">CF4</span></td><td>Orion Telecom, telecom</td><td>five business units on one platform, chargeback, real-time incident triage</td></tr>
+<tr><td><span class="lvl">CF5</span></td><td>City of Northgate, a municipality</td><td>public users, data sovereignty, accessibility, the EU AI Act</td></tr>
+<tr><td><span class="lvl">CF6</span></td><td>Helix Manufacturing, manufacturing</td><td>fourteen plants, three of them air-gapped, edge GPUs, open-weights models on site</td></tr>
+</tbody></table></div>
+
+<p>All six are fictional, and resemblances to real organisations are coincidental. Their systems and constraints are assembled from typical situations. The dossiers with the systems of record, constraints, regulation and stakeholder roles are given in <a href="#app-g" data-secref="G">Appendix G</a>. The badge with a case-file code at the start of a chapter says which customer the chapter works with.</p>
+
+<h3 id="s-0-5"><span class="num">0.5</span>Listings and how they are verified</h3>
+
+<p>The listings are written in Python 3.13 and verified by tools: each is extracted from the assembled book, parsed, passed through the linter and the type checker and, unless marked otherwise, executed as a standalone program with assertions at the end. Naive listings are executed too, and a listing that must not be executed (for instance, one with a deliberate infinite loop) is marked "not executed" in its header. Vendor SDKs are not imported in the listings: typed protocols and deterministic fakes are used instead, so verification depends on no network, no keys and no vendor library versions. <a href="#app-b" data-secref="B">Appendix B</a> maps the fakes to the vendor tools they stand in for.</p>
+
+<p data-level="2">Explanations of a listing are moved out of the code into line-by-line notes under it: the code stays short and a note may be long. The listings of both locales coincide in everything except comments and natural-language strings, and the locale comparison tool among the repository checks verifies that coincidence.</p>
+
+<div class="note" data-level="2">The triple of tabs "Naive", "Considered", "The difference" appears in each of Chapters 1–18. At the overview level only the considered solution is shown. In process chapters the listings in the tabs record process artefacts as code: the engagement plan in <a href="#ch-1" data-secref="1">Chapter 1</a>, the requirements register in <a href="#ch-2" data-secref="2">Chapter 2</a>, the check of team standards in <a href="#ch-18" data-secref="18">Chapter 18</a>.</div>
+
+<h3 id="s-0-6"><span class="num">0.6</span>Diagrams</h3>
+
+<p>The diagrams are drawn by hand in SVG and show a mechanism: a state machine, a sequence of calls, a data flow, a decision tree, a trust-boundary map, a timeline. The caption under a diagram states the conclusion that follows from it; the description of what is drawn is given in the diagram's text alternative for screen readers. Some diagrams are revealed step by step with the buttons under them; in print, such diagrams are shown whole.</p>
+
+<dl class="def">
+<dt>Trust-boundary map</dt>
+<dd>A diagram on which regions with different levels of trust in data and code are separated by frames, and every crossing of a frame is labelled: who passes, with which credentials, and what is checked at the crossing. Such maps are used in the chapters on data, integration and security.</dd>
+</dl>
+
+<h3 id="s-0-7"><span class="num">0.7</span>The ragworld series</h3>
+
+<p>The book is part of a series of projects connected with the RAG World registry at <a href="https://ragworld.org">ragworld.org</a>. The RAG World registry describes retrieval-augmented generation technologies and their maturity levels; the textbook <a href="https://github.com/laputski/book-python">"Advanced Python for RAG"</a> covers the mechanisms of the language such systems are built on; <a href="https://github.com/laputski/causa-rag">causa-rag</a> serves as an example of a diagnostic bench for RAG that scores every question separately, names the pipeline stage that failed, and diffs two runs question by question. This book refers to the registry and the Python textbook in <a href="#ch-5" data-secref="5">Chapter 5</a>, and to the diagnostic bench in <a href="#ch-5" data-secref="5">Chapters 5</a> and <a href="#ch-12" data-secref="12">12</a>.</p>
+
+<h3 id="s-0-8"><span class="num">0.8</span>Reading order by role</h3>
+
+<p>The chapters are ordered so that each depends only on the previous ones, but reading in order is not required. For an engineer preparing for the FDE role, Parts I–IV at the standard level are recommended. For a candidate for a Staff position, Parts II–IV and <a href="#ch-16" data-secref="16">Chapters 16</a>–<a href="#ch-17" data-secref="17">17</a> at the full level are recommended; for an architect, <a href="#ch-2" data-secref="2">Chapter 2</a>, Parts II–III and <a href="#ch-14" data-secref="14">Chapters 14</a> and <a href="#ch-17" data-secref="17">17</a> at the full level. For a team lead, the overview level for Parts II–IV and the full level for <a href="#ch-1" data-secref="1">Chapters 1</a>, <a href="#ch-2" data-secref="2">2</a> and <a href="#ch-18" data-secref="18">18</a> are recommended. Detailed routes by role are given in <a href="#app-f" data-secref="F">Appendix F</a>.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>What does colour mean on the diagrams of this book, and how does it differ from colour in the RAG World registry?</summary>
+<div class="ans"><p>Colour means one of the seven layers of a customer system and nothing else. The palette is the palette of the series, but the meanings of the colours are this book's own: in the registry the same colour denotes a RAG stratum.</p></div>
+</details>
+<details>
+<summary>Why do the listings not import vendor SDKs?</summary>
+<div class="ans"><p>So that verification of the listings depends on no network, no keys and no library versions. Typed protocols and deterministic fakes let every listing be executed and type-checked; Appendix B maps the fakes to the vendor tools.</p></div>
+</details>
+<details>
+<summary>What happens when a link lands on a passage of a deeper level than the one selected?</summary>
+<div class="ans"><p>The chapter that contains the passage is revealed to the full level, and a notice at the bottom of the screen says that text of a deeper level is shown. The selected level itself does not change, and the next change of level applies to that chapter again.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Takeaways of the introduction</p>
+<ul>
+<li>The text of each of the three detail levels reads as a complete exposition; the "In depth" sections are shown only at the full level.</li>
+<li>The seven layers of a customer system are the shared coordinate system: the indicator in a chapter's heading and the colour on the diagrams.</li>
+<li>Chapters 1–17 each work with one of six fictional customers, Chapter 18 with all six; the artefacts of one chapter are used in the next ones.</li>
+<li>Every listing passes the linter and the type checker and is executed; every diagram shows a mechanism, and its caption states a conclusion.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#app-a" data-secref="A">Appendix A: map to the job requirements</a>
+<a href="#app-f" data-secref="F">Appendix F: reading plan by role</a>
+<a href="#app-g" data-secref="G">Appendix G: case files</a>
+</p>
+</div>
+</section>

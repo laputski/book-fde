@@ -1,0 +1,1054 @@
+<!-- ────────────────────────── CHAPTER 7 ────────────────────────── -->
+<section class="chapter" id="ch-7">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter seven</p>
+    <span class="strata" role="img" aria-label="Layers B and C: model and agent, tools">
+      <i></i><i data-s="B"></i><i data-s="C"></i><i></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-7"><span class="num">7</span>The Single Agent: ReAct, Tools and Failure</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>tell a task that needs a loop from a task for which a pipeline is enough;</li>
+<li>express the ReAct loop as a state machine in which every transition passes a budget check;</li>
+<li>describe tools with types so that the schema, the write flag and the timeout follow from the code;</li>
+<li>choose between an error as an observation, a fallback and a stop according to the class of the error;</li>
+<li>compare ADK, LangGraph and CrewAI by where the state schema is declared and stored.</li>
+</ul>
+</div>
+
+<h3 id="s-7-1"><span class="num">7.1</span>The task: the shipment-exception agent</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-3" data-secref="G.3">Case file CF3 · Transkontinent Logistics</a></span>
+  <span class="tag">telematics</span>
+  <span class="tag">carrier APIs</span>
+  <span class="tag">customs</span>
+  <span>logistics, 18 countries</span>
+</div>
+
+<p>Some of the forty thousand shipments a day produce exceptions: a consignment has been standing still longer than its estimated time, and the cause of the stop is unknown. At peak hours TKL's dispatch room receives about five hundred such exceptions an hour, and each one takes a person between four and ten minutes of work. The analysis follows the same order every time, with different data in each case: the dispatcher looks at the tractor unit's telematics, asks the carrier about the trip, checks the customs status of the consignment, and then decides what to tell the customer.</p>
+
+<p>The agent is given the same sequence with the same sources. Telematics returns the position, the temperature and the time of the last event. The carrier API answers with the status of the trip, and each of the seventeen carriers imposes its own rate limit. The customs system returns the status of the consignment and a list of missing documents. The only write action is called <code>notify_customer</code> and sends the customer a message about the new delivery date.</p>
+
+<p>The volume of the stream and the waiting dispatcher impose three constraints. Five hundred exceptions an hour under a cost ceiling per exception mean that the number of model calls per exception is bounded. A waiting dispatcher means a latency ceiling of twenty-five seconds. A message to the customer means that the side effect is allowed at most once per exception, and a retried tool call after a timeout must not send a second message. The tools of this agent are described as explained in <a href="#s-6-5" data-secref="6.5">Section 6.5</a>, and their protection against retries is built as shown in <a href="#s-6-8" data-secref="6.8">Section 6.8</a>.</p>
+
+<h3 id="s-7-2"><span class="num">7.2</span>Why an agent is a loop with a budget</h3>
+
+<dl class="def">
+<dt>Agent</dt>
+<dd>A program in which a language model chooses the next action from a declared set of tools, observes the result of that action and repeats the choice until it considers the task solved or until an external constraint ends the repetition. An agent differs from a pipeline in who determines the order of steps: in a pipeline the order is fixed by code, in an agent the model computes it at every step.</dd>
+</dl>
+
+<p>Moving the order of steps from code into the model increases cost and latency and reduces predictability, so the move needs a justification. At TKL the justification is the distribution of the exceptions. Roughly six exceptions in ten are resolved by one and the same sequence of three reads, and for them a pipeline is faster, cheaper and better covered by tests. The remaining four require the next question to depend on the previous answer: an empty status from the carrier means that customs should be checked, and a mismatch between the telematics and the waybill means that the warehouse of dispatch should be checked.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Property</th><th>Fixed pipeline</th><th>Agent loop</th></tr></thead>
+<tbody>
+<tr><td>Order of steps</td><td>fixed by code, visible when reading</td><td>computed by the model at every step</td></tr>
+<tr><td>Model calls per exception</td><td>one</td><td>three to eight</td></tr>
+<tr><td>p95 latency</td><td>about three seconds</td><td>eight to twenty-five seconds</td></tr>
+<tr><td>Coverage of exceptions</td><td>six in ten</td><td>about nine in ten</td></tr>
+<tr><td>Reproducibility of a failure</td><td>full: the same input yields the same path</td><td>partial: the path is reconstructed from the trace</td></tr>
+</tbody></table></div>
+
+<p>Before any code was written, TKL took a decision: the pipeline handles the recognised patterns of exceptions, and the loop receives the other exceptions. The split keeps cost and latency low for most of the stream, and the loop's expenses arise only where the next step depends on the previous answer. The loop receives exceptions that no pattern recognised, and it will fail to resolve some of them; the stopping condition without a found cause, that is, the loop's budget, is therefore designed together with the loop itself.</p>
+
+<p>A loop without a budget is not admissible in a design, for three reasons. It has no upper bound on cost, so it cannot be compared with human labour. It has no upper bound on latency, so the dispatcher does not know whether to wait for an answer. It has no limit on the number of side effects, so a single network failure can lead to two messages to the customer. Every design decision in this chapter bounds the loop along one of these three axes and leaves the choice of the next step to the model.</p>
+
+<div class="warn"><b>Common mistake</b>Building an agent where a pipeline is enough. The symptom: if the traces of ninety per cent of runs contain the same sequence of tools, the model reproduces a fixed order, and each step of that order is paid for with a separate model call. Such a sequence is moved into the pipeline's code, and the loop is applied to the remaining runs.</div>
+
+<h3 id="s-7-3"><span class="num">7.3</span>The ReAct loop as a state machine</h3>
+
+<dl class="def">
+<dt>ReAct, reasoning and acting</dt>
+<dd>A scheme of agent operation in which the model alternates between reasoning about the next step and acting with a tool, while the result of the action returns to the context as an observation and takes part in the next round of reasoning. In the original work the model ends the task with a dedicated <code>finish[answer]</code> action, and the step limit (seven for HotpotQA, five for FEVER) is set by the experimental setup; in the system of this chapter the step limit and the other stopping conditions are set by the loop's code.<a class="src" href="https://arxiv.org/abs/2210.03629" target="_blank" rel="noreferrer">Yao et al., ReAct, ICLR 2023</a></dd>
+<dt>Observation</dt>
+<dd>The record of the outcome of one tool call in the agent's state: the tool's name, the content of the response, an error flag and a machine-readable code. The observation is stored separately from the model's reasoning, because the evidence for the final answer is computed from the observations.</dd>
+</dl>
+
+<p>This chapter describes the ReAct loop as a finite state machine with four working states and two terminal ones. In the Plan state the model receives the task together with all accumulated observations and returns either tool calls or a finished conclusion. In the Action state the loop executes the calls, respecting the timeout of each tool. In the Observation state the outcomes of the calls, failures included, are written into the state. The optional Reflection state adds a step in which the model assesses whether what has been gathered is sufficient, without calling any tools.</p>
+
+<p>There are two terminal states, and the calling code must tell them apart. Answer means that the model considered the task solved and returned a structured result. Stop means that there is no result because a budget has been exhausted, and the work passes to a human. The result type contains fields by which the calling code tells an answer from a stop.</p>
+
+<p>Every transition of the machine passes a budget check, because different transitions consume different resources. The transition from Plan to Action spends a step and, for write tools, one unit of side effects. The transition from Action to Observation spends time. The return from Observation to Plan spends tokens, because the whole accumulated context is sent to the model again. A check performed only on entry to the loop accounts for none of these expenses.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 372" role="img" aria-label="The ReAct loop as a finite state machine: an exception enters the planning state, passes to action and observation, after which the budget check either returns control to planning, directly or through optional reflection, or stops the work; a separate transition from planning leads to the structured answer" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar7a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="147" width="130" height="44" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="85" y="174" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">exception</text>
+
+  <rect x="186" y="136" width="150" height="66" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="261" y="163" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Plan</text>
+  <text x="261" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">what to learn next</text>
+
+  <rect x="376" y="136" width="150" height="66" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="451" y="163" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Action</text>
+  <text x="451" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">calls with timeouts</text>
+
+  <rect x="566" y="136" width="150" height="66" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="641" y="163" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Observation</text>
+  <text x="641" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">result or error</text>
+
+  <rect x="746" y="52" width="118" height="42" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="805" y="79" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Answer</text>
+  <rect x="746" y="254" width="118" height="42" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="805" y="281" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Stop</text>
+
+  <rect x="536" y="244" width="150" height="62" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="611" y="270" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Budget</text>
+  <text x="611" y="290" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">steps · tokens · time</text>
+
+  <rect x="286" y="244" width="150" height="62" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="361" y="270" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Reflection</text>
+  <text x="361" y="290" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">optional step</text>
+
+  <line x1="150" y1="169" x2="178" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <line x1="336" y1="169" x2="368" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <line x1="526" y1="169" x2="558" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <rect x="159" y="164" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+  <rect x="347" y="164" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+  <rect x="537" y="164" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+
+  <path d="M261,136 V73 H738" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <path d="M641,202 V236" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <line x1="686" y1="275" x2="738" y2="275" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <text x="716" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">spent</text>
+  <path d="M566,306 V332 H210 V208" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7a)"/>
+  <path d="M536,275 H444" fill="none" stroke="var(--sB)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar7a)"/>
+  <path d="M286,275 H261 V208" fill="none" stroke="var(--sB)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar7a)"/>
+
+  <rect x="20" y="348" width="10" height="10" rx="2" fill="none" stroke="var(--sE)" stroke-width="1.4"/>
+  <text x="40" y="357" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">budget check before a transition: steps, tokens, time, side effects</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Every transition of the machine needs a budget check, because the expenses are spread over different transitions: a step and a side effect are spent on action, time while a tool is awaited, tokens on the return to planning. A single check on entry to the loop bounds none of the three expenses.</figcaption>
+</figure>
+
+<p>The loop follows in two versions: the considered one is visible at every level, the naive one from the Standard level on. The naive version expresses the same ReAct scheme and works on a prepared scenario, because the model stub stops asking for tools on its fourth turn. The considered version uses the same algorithm and states every property of the loop explicitly: the number of steps, the number of side effects, the form of a tool failure and the form of the result.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Two ways to write an agent loop">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_agent.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import json
+
+TELEMATICS = {"SHP-8842": {"delay_h": 9, "last_scan": "Wrocław", "temp_c": 4}}
+
+
+def call_tool(name: str, args: dict[str, str]) -> str:
+    if name == "get_telematics":
+        return json.dumps(TELEMATICS[args["shipment_id"]])
+    return "{}"
+
+
+class ScriptedModel:
+    """A model stub: tool calls first, then the text of the answer."""
+
+    def __init__(self) -> None:
+        self.turn = 0
+
+    def next(self, history: list[str]) -> tuple[str, dict[str, str]] | str:
+        self.turn += 1
+        if self.turn &lt;= 3:
+            return "get_telematics", {"shipment_id": "SHP-8842"}
+        return "delay of 9 hours, the cargo is in Wrocław"
+
+
+def run(question: str) -> tuple[str, list[str]]:
+    model = ScriptedModel()
+    history = [question]
+    while True:                                  # no limit on steps, time or money
+        step = model.next(history)
+        if isinstance(step, str):
+            return step, history
+        name, args = step
+        history.append(call_tool(name, args))
+
+
+if __name__ == "__main__":
+    answer, history = run("what is happening with shipment SHP-8842?")
+    assert answer.startswith("delay")
+    assert len(history) == 4                     # the question and three identical calls
+    print("answer obtained after 3 calls; the scenario stopped the loop, not a budget")</code></pre>
+    </figure>
+    <p>The loop ends only because the model stub stops asking for tools on its fourth turn. A real model that receives an empty answer from customs may keep repeating the same call, and <code>while True</code> will keep executing it until the provider's quota runs out. A tool failure here raises an exception out of the loop, and the dispatcher receives a Python stack trace instead of an explanation. The result comes back as a string without separate fields for the cause, the action and the list of sources read, so its completeness cannot be checked.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">agent_loop.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from pydantic import BaseModel, Field
+
+
+class BudgetExceeded(Exception):
+    """The loop must stop: one of the budgets is exhausted."""
+
+
+@dataclass
+class Budget:
+    max_steps: int = 8
+    max_side_effects: int = 1
+    steps: int = 0
+    side_effects: int = 0
+
+    def charge_step(self) -> None:
+        self.steps += 1
+        if self.steps &gt; self.max_steps:
+            raise BudgetExceeded("steps")
+
+    def charge_side_effect(self) -> None:
+        self.side_effects += 1
+        if self.side_effects &gt; self.max_side_effects:
+            raise BudgetExceeded("side effects")
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    arguments: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class Observation:
+    tool: str
+    content: str
+    is_error: bool = False
+    code: str = ""
+
+
+class Finding(BaseModel):
+    """The structured result of an investigation: cause, action, evidence."""
+
+    cause: str
+    action: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+@dataclass
+class AgentState:
+    task: str
+    budget: Budget = field(default_factory=Budget)
+    observations: list[Observation] = field(default_factory=list)
+
+    def evidence(self) -> list[str]:
+        return [o.tool for o in self.observations if not o.is_error]
+
+
+class Model(Protocol):
+    def decide(self, state: AgentState) -> ToolCall | Finding: ...
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    handler: Callable[[Mapping[str, Any]], str]
+    side_effect: bool = False
+
+
+class Registry:
+    def __init__(self, tools: Sequence[Tool]) -> None:
+        self.tools = {t.name: t for t in tools}
+
+    def invoke(self, call: ToolCall, budget: Budget) -> Observation:
+        tool = self.tools.get(call.name)
+        if tool is None:
+            return Observation(call.name, f"no tool named {call.name}", True, "unknown_tool")
+        if tool.side_effect:
+            budget.charge_side_effect()
+        try:
+            return Observation(call.name, tool.handler(call.arguments))
+        except TimeoutError:
+            return Observation(call.name, "the system did not answer in time", True, "upstream_timeout")
+
+
+def run(model: Model, registry: Registry, state: AgentState) -> Finding:
+    while True:
+        try:
+            state.budget.charge_step()
+            decision = model.decide(state)
+            if isinstance(decision, Finding):
+                return decision
+            state.observations.append(registry.invoke(decision, state.budget))
+        except BudgetExceeded as stop:
+            return Finding(cause=f"budget exhausted: {stop}", action="escalate_to_human",
+                           evidence=state.evidence())
+
+
+class ScriptedModel:
+    """A model stub: reads the observations and emits the next step of the scenario."""
+
+    def decide(self, state: AgentState) -> ToolCall | Finding:
+        seen = state.evidence()
+        for name in ("get_telematics", "get_carrier_status", "get_customs_status"):
+            if name not in seen:
+                return ToolCall(name, {"shipment_id": "SHP-8842"})
+        if "notify_customer" not in seen:
+            return ToolCall("notify_customer", {"shipment_id": "SHP-8842", "eta": "2026-03-04"})
+        return Finding(cause="cargo held by customs: document M-4 is missing",
+                       action="notify_customer", evidence=seen)
+
+
+if __name__ == "__main__":
+    flaky = {"n": 0}
+
+    def customs(args: Mapping[str, Any]) -> str:
+        flaky["n"] += 1
+        if flaky["n"] == 1:
+            raise TimeoutError
+        return "hold: document M-4 required"
+
+    registry = Registry([
+        Tool("get_telematics", lambda a: "delay 9 h, Wrocław"),
+        Tool("get_carrier_status", lambda a: "trip rescheduled to 4 March"),
+        Tool("get_customs_status", customs),
+        Tool("notify_customer", lambda a: "message sent", side_effect=True),
+    ])
+    state = AgentState(task="exception on SHP-8842")
+    found = run(ScriptedModel(), registry, state)
+    assert found.action == "notify_customer"
+    assert found.evidence == ["get_telematics", "get_carrier_status",
+                              "get_customs_status", "notify_customer"]
+    assert state.budget.steps == 6          # five calls, the retry included, and the conclusion
+    assert state.budget.side_effects == 1
+
+    tight = AgentState(task="the same exception", budget=Budget(max_steps=2))
+    stopped = run(ScriptedModel(), Registry(list(registry.tools.values())), tight)
+    assert stopped.action == "escalate_to_human" and tight.budget.steps == 3
+    print("the loop ended with a structured answer and stopped on the budget")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="class Finding(BaseModel):">line 46</span><p>The result of the loop is declared as a type with three fields. The cause, the proposed action and the list of evidence are checked by code before they reach the dispatcher, and the evaluation set of <a href="#ch-12" data-secref="12">Chapter 12</a> is built from the same fields.</p></div>
+        <div><span class="at" data-anchor="def evidence(self)">line 60</span><p>Only observations without an error count as evidence. A tool that answered with a timeout confirms nothing, and its name in the list of evidence would make a failed call grounds for a conclusion.</p></div>
+        <div><span class="at" data-anchor="state.budget.charge_step()">line 94</span><p>The step is charged before the model is called. If the step were charged after a successful call, a call that ended in the provider's timeout, and may already have been paid for, would not reach the counter, and the budget would not bound the cost.</p></div>
+        <div><span class="at" data-anchor="if tool.side_effect:">line 83</span><p>The write flag comes from the tool's description declared in <a href="#s-6-5" data-secref="6.5">Section 6.5</a> and a call to such a tool spends a separate budget. A limit on the number of steps does not limit the number of messages to the customer: eight steps allow eight writes.</p></div>
+        <div><span class="at" data-anchor="except TimeoutError:">line 87</span><p>A tool failure is recorded as an observation with a code and returned to the model, and the loop continues. On receiving <code>upstream_timeout</code> the model may retry the call or continue without it; an exception raised out of the loop would end the work before that choice.</p></div>
+        <div><span class="at" data-anchor="except BudgetExceeded as stop:">line 99</span><p>An exhausted budget returns the same structured result as success, but with the action <code>escalate_to_human</code> and with the evidence gathered before the stop. The dispatcher continues the analysis from the sources the agent did not get to read.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference is the exit condition. The naive loop exits only when the model returns text instead of a tool call, which means that the exit condition is determined by the model. The considered loop also exits when the budget is exhausted, and that condition is checked by the loop's code, which is responsible for cost and latency.</p>
+    <p>The second difference is the handling of a failure. In the naive loop a tool failure is an exception and ends the work. In the considered one it is recorded as an observation and taken into account by the model in its next decision, while only an exhausted budget ends the work.</p>
+    <p>The third difference is the shape of the result. A string allows neither checking the completeness of the analysis nor telling a conclusion from a refusal. A typed result with a cause, an action and evidence allows both, and the evaluation of <a href="#ch-12" data-secref="12">Chapter 12</a> uses the same fields.</p>
+  </div>
+</div>
+
+<h3 id="s-7-4"><span class="num">7.4</span>Tool schemas and parallel calls</h3>
+
+<p>The model receives all information about a tool from its descriptor: a name, a description and an argument schema. When these three fields are written by hand, they drift away from the handler's code when the handler changes, and the drift is discovered only through a wrong call in the field. Therefore the arguments are declared as a type, the schema is generated from the type, and the purpose of the tool is written in the docstring of that same type.</p>
+
+<p>Besides the name, the description and the schema, the <code>Tool</code> type contains two more fields used by the loop. The write flag <code>side_effect</code>, introduced in <a href="#s-6-5" data-secref="6.5">Section 6.5</a>, tells whether a call spends the side-effect budget and whether a retry is allowed after an uncertain outcome; in the listing it is also passed to the model in the descriptor. The timeout is set for each tool separately. TKL's customs system answers within seconds while the carrier API takes tens of seconds, and a timeout common to the loop would have to be set by the slowest of them.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">tool_registry.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic import BaseModel, Field, ValidationError
+
+
+class GetCarrierStatus(BaseModel):
+    """The status of the trip at the carrier. Call it when telematics shows a delay
+    and the cause is not visible. Not for customs delays."""
+
+    shipment_id: str = Field(pattern=r"^SHP-\d{4}$", description="Shipment identifier")
+    carrier: str = Field(description="Carrier code taken from telematics")
+
+
+class NotifyCustomer(BaseModel):
+    """Tell the customer about a delay and the new delivery date. One shipment, one message."""
+
+    shipment_id: str = Field(pattern=r"^SHP-\d{4}$")
+    eta_iso: str = Field(description="The new date in ISO-8601 format")
+    idempotency_key: str = Field(min_length=8, description="Session, step and arguments")
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    args: type[BaseModel]
+    handler: Callable[[BaseModel], str]
+    side_effect: bool = False
+    timeout_s: float = 3.0
+
+    def descriptor(self) -> dict[str, Any]:
+        """What the model will see: name, purpose, argument schema, write flag."""
+        doc = " ".join((self.args.__doc__ or "").split())
+        return {"name": self.name, "description": doc,
+                "input_schema": self.args.model_json_schema(),
+                "side_effect": self.side_effect}
+
+
+class ToolError(Exception):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+class Registry:
+    def __init__(self) -> None:
+        self.tools: dict[str, Tool] = {}
+
+    def register(self, tool: Tool) -> None:
+        self.tools[tool.name] = tool
+
+    def descriptors(self, *, allow_side_effects: bool = True) -> list[dict[str, Any]]:
+        return [t.descriptor() for t in self.tools.values()
+                if allow_side_effects or not t.side_effect]
+
+    def call(self, name: str, arguments: Mapping[str, Any]) -> str:
+        tool = self.tools.get(name)
+        if tool is None:
+            raise ToolError("unknown_tool", name)
+        try:
+            args = tool.args.model_validate(dict(arguments))
+        except ValidationError as err:
+            raise ToolError("invalid_arguments", err.json()) from err
+        return tool.handler(args)
+
+
+if __name__ == "__main__":
+    registry = Registry()
+    registry.register(Tool("get_carrier_status", GetCarrierStatus,
+                           lambda a: "trip rescheduled to 4 March"))
+    registry.register(Tool("notify_customer", NotifyCustomer,
+                           lambda a: "message sent", side_effect=True, timeout_s=10.0))
+
+    schema = registry.descriptors()[0]["input_schema"]
+    assert schema["properties"]["shipment_id"]["pattern"] == r"^SHP-\d{4}$"
+    assert schema["required"] == ["shipment_id", "carrier"]
+    assert "Not for customs delays" in registry.descriptors()[0]["description"]
+    assert [d["name"] for d in registry.descriptors(allow_side_effects=False)] == \
+           ["get_carrier_status"]
+
+    ok = registry.call("get_carrier_status", {"shipment_id": "SHP-8842", "carrier": "PL-TRUCK"})
+    assert ok.startswith("trip")
+    try:
+        registry.call("get_carrier_status", {"shipment_id": "8842", "carrier": "PL-TRUCK"})
+        raise AssertionError("the schema must reject an identifier without the prefix")
+    except ToolError as err:
+        assert err.code == "invalid_arguments"
+    print("schema generated from types, write flagged, arguments checked before the call")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="self.args.__doc__">line 36</span><p>The purpose of the tool is taken from the docstring of the argument type, which means it is kept in the same place as the field constraints. The description and the schema therefore cannot drift apart: both are generated from one declaration.</p></div>
+  <div><span class="at" data-anchor="self.args.model_json_schema()">line 38</span><p>The schema is generated from the type, so the model sees the identifier pattern before the call. A constraint in the schema is checked by code on every call, whereas a request in the system prompt is not checked at all.</p></div>
+  <div><span class="at" data-anchor="timeout_s: float = 3.0">line 32</span><p>The timeout is set in the tool's description. The customs system answers within seconds and the carrier within tens of seconds, so a single loop timeout would have to be set by the slowest participant, and a failure of a fast system would be detected as late as a failure of the slow one.</p></div>
+  <div><span class="at" data-anchor="allow_side_effects: bool = True">line 55</span><p>The set of descriptors is narrowed by the write flag. The same parameter is used by the shadow run, which is not given the write tools, and by the observation mode, in which the agent only assembles an explanation.</p></div>
+  <div><span class="at" data-anchor="except ValidationError as err:">line 65</span><p>The arguments are checked before the handler runs, and a violation comes back with the code <code>invalid_arguments</code>. Given this code the model can correct the call, and the correction spends one step of the budget.</p></div>
+</div>
+</figure>
+
+<p>The model may return several calls in one step, and at TKL this is the main way to stay within the latency ceiling. Telematics, the carrier and customs do not depend on one another, so the three calls run simultaneously, and the step lasts as long as the slowest of the three takes to answer, whereas sequential calls would take the sum of the three times. The loop must follow two rules here: every call is bounded by its own timeout, and the failure of one call does not cancel the results of the others. The design of such a fan-out is explained together with the error policy in <a href="#s-7-6" data-secref="7.6">Section 7.6</a>.</p>
+
+<div class="note" data-level="2">Tool descriptors enter the context of every model call and are therefore paid for at every step of the loop. Eight tools with detailed descriptions take about fifteen hundred tokens, and at eight steps that amounts to twelve thousand tokens per exception. The ordering that places the descriptors in the stable prefix is explained in <a href="#s-4-5" data-secref="4.5">Section 4.5</a>.</div>
+
+<h3 id="s-7-5"><span class="num">7.5</span>Budgets</h3>
+
+<dl class="def">
+<dt>Loop budget</dt>
+<dd>A set of upper bounds on the resources of one agent run: the number of steps, the number of tokens, the running time and the number of side effects. The budget is checked before every transition of the machine and, once exhausted, ends the loop with a typed exception whose class lets the calling code tell exhausted time from exhausted steps.</dd>
+</dl>
+
+<p>All four resources are bounded, because they run out independently. Eight steps do not bound tokens if every step carries a growing context. A token ceiling does not bound time if the tools answer slowly. A time ceiling does not bound the number of messages to the customer, because a write takes a fraction of a second. Each of the four counters protects against only one way of overrunning the bounds.</p>
+
+<p>Budget exceptions differ by resource: every resource has its own exception class with a common ancestor. The dispatcher must distinguish "the agent did not finish within twenty-five seconds" from "the agent made eight steps and did not find the cause": the first means that the customs system answers slowly, the second means that the exception is atypical and needs a human. Both messages are built from the class of the exception.</p>
+
+<p>The clock is passed to the budget explicitly, as it is to the circuit breaker in <a href="#s-6-6" data-secref="6.6">Section 6.6</a>. Besides testability, this makes it possible to compute the budget pressure: the consumed fraction of the most exhausted resource. When the pressure rises above a threshold, the loop adds an instruction to the context to conclude the analysis with what has already been gathered. Such an instruction lets the model return a structured answer before the next step stops the loop on the budget.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">budget.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+
+class BudgetExceeded(Exception):
+    """The common ancestor: the loop must stop working and explain why."""
+
+    resource = "budget"
+
+
+class StepsExceeded(BudgetExceeded):
+    resource = "steps"
+
+
+class TokensExceeded(BudgetExceeded):
+    resource = "tokens"
+
+
+class TimeExceeded(BudgetExceeded):
+    resource = "time"
+
+
+class SideEffectsExceeded(BudgetExceeded):
+    resource = "side effects"
+
+
+@dataclass
+class Budget:
+    """The four budgets of one investigation, checked before every transition."""
+
+    now: Callable[[], float]
+    max_steps: int = 8
+    max_tokens: int = 60_000
+    max_seconds: float = 25.0
+    max_side_effects: int = 1
+    steps: int = 0
+    tokens: int = 0
+    side_effects: int = 0
+    started_at: float = field(default=0.0)
+
+    def __post_init__(self) -> None:
+        self.started_at = self.now()
+
+    def charge_step(self, tokens: int = 0) -> None:
+        self.steps += 1
+        self.tokens += tokens
+        if self.steps &gt; self.max_steps:
+            raise StepsExceeded(f"{self.steps} steps against a ceiling of {self.max_steps}")
+        if self.tokens &gt; self.max_tokens:
+            raise TokensExceeded(f"{self.tokens} tokens against a ceiling of {self.max_tokens}")
+        self.check_time()
+
+    def charge_side_effect(self) -> None:
+        self.side_effects += 1
+        if self.side_effects &gt; self.max_side_effects:
+            raise SideEffectsExceeded(f"{self.side_effects} write actions")
+
+    def check_time(self) -> None:
+        if self.now() - self.started_at &gt; self.max_seconds:
+            raise TimeExceeded(f"{self.now() - self.started_at:.1f} s against a ceiling of {self.max_seconds}")
+
+    def pressure(self) -> float:
+        """The share of the most exhausted budget: 0.0 at the start, 1.0 at the limit."""
+        return max(self.steps / self.max_steps, self.tokens / self.max_tokens,
+                   (self.now() - self.started_at) / self.max_seconds,
+                   self.side_effects / self.max_side_effects)
+
+
+if __name__ == "__main__":
+    clock = {"t": 100.0}
+    budget = Budget(now=lambda: clock["t"], max_steps=4, max_tokens=10_000, max_seconds=20.0)
+
+    budget.charge_step(tokens=3_000)
+    clock["t"] += 6.0
+    budget.charge_step(tokens=3_000)
+    assert round(budget.pressure(), 2) == 0.6          # tokens are spent faster than steps
+
+    budget.charge_side_effect()
+    try:
+        budget.charge_side_effect()
+        raise AssertionError("a second write action must be rejected")
+    except SideEffectsExceeded as err:
+        assert err.resource == "side effects"
+
+    clock["t"] += 15.0
+    try:
+        budget.charge_step(tokens=10)
+        raise AssertionError("exhausted time must stop the step")
+    except TimeExceeded:
+        pass
+
+    strict = Budget(now=lambda: clock["t"], max_steps=1)
+    strict.charge_step()
+    try:
+        strict.charge_step()
+        raise AssertionError("a second step beyond a ceiling of one step")
+    except StepsExceeded as err:
+        assert isinstance(err, BudgetExceeded)
+    print("four budgets, typed exceptions and pressure as a signal to conclude")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="class StepsExceeded(BudgetExceeded):">line 13</span><p>Every resource gets its own exception class with a common ancestor. The calling code catches the ancestor in order to stop and reads the resource field in order to explain to the dispatcher what exactly has run out.</p></div>
+  <div><span class="at" data-anchor="now: Callable[[], float]">line 33</span><p>The clock is passed in from outside, so a test checks the time budget instantly and with the same result every time. Reading the system clock inside the budget would make the listing impossible to verify without waiting.</p></div>
+  <div><span class="at" data-anchor="self.check_time()">line 53</span><p>Time is checked when a step is charged. An overrun caused by waiting for a slow tool is detected at the next charge, and the loop stops between steps. A separate timer could interrupt the loop in the middle of a request to the customer's system.</p></div>
+  <div><span class="at" data-anchor="def pressure(self)">line 64</span><p>Pressure returns the consumed fraction of the most exhausted resource. At a value above 0.8 the loop adds an instruction to the model's context to conclude the analysis: a soft finish yields a structured answer, while a hard stop yields only an escalation.</p></div>
+</div>
+</figure>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 390" role="img" aria-label="The sequence of one investigation in four steps: the loop receives three calls from the model and issues them simultaneously, one tool answers with a timeout and its failure becomes an observation, a retry of only the failed call brings the missing data, and the last step notifies the customer and returns a structured result" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar7b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="30" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="95" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">loop</text>
+  <rect x="235" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="300" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">model</text>
+  <rect x="465" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="530" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">tools</text>
+  <rect x="695" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="760" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">budget</text>
+  <line x1="95" y1="54" x2="95" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="300" y1="54" x2="300" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="530" y1="54" x2="530" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="760" y1="54" x2="760" y2="342" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="First budget step: the model receives the task with no observations and returns three independent calls, which the loop issues simultaneously.">
+    <line x1="103" y1="86" x2="292" y2="86" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="78" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">plan, 0 observations</text>
+    <line x1="292" y1="108" x2="103" y2="108" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">three calls at once</text>
+    <line x1="103" y1="130" x2="522" y2="130" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="122" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">telematics · carrier · customs</text>
+    <rect x="745" y="118" width="30" height="16" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="782" y="131" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">step 1 of 8</text>
+  </g>
+
+  <g data-step="2" data-caption="Telematics and the carrier answer, customs does not answer within its time: the timeout is written into the state as an observation with a code.">
+    <line x1="522" y1="160" x2="103" y2="160" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="152" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">telematics, carrier: done</text>
+    <line x1="522" y1="188" x2="103" y2="188" stroke="var(--sE)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar7b)"/>
+    <text x="415" y="180" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sE)">customs: upstream_timeout</text>
+    <rect x="80" y="198" width="30" height="16" rx="3" fill="var(--sC)" opacity="0.85"/>
+    <text x="117" y="211" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">error kept as an observation</text>
+  </g>
+
+  <g data-step="3" data-caption="Second budget step: the model receives two results and one error and retries only the failed call.">
+    <line x1="103" y1="238" x2="292" y2="238" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="230" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">plan, 3 observations</text>
+    <line x1="292" y1="260" x2="103" y2="260" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="197" y="252" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">retry customs only</text>
+    <line x1="103" y1="282" x2="522" y2="282" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <line x1="522" y1="304" x2="103" y2="304" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="296" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">hold: document M-4 missing</text>
+    <rect x="745" y="270" width="30" height="16" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="782" y="283" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">step 2 of 8</text>
+  </g>
+
+  <g data-step="4" data-caption="The third and fourth budget steps spend the only permitted side effect and return a result with four pieces of evidence.">
+    <line x1="103" y1="332" x2="522" y2="332" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar7b)"/>
+    <text x="415" y="324" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sE)">notify_customer with a key</text>
+    <rect x="745" y="320" width="30" height="16" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="782" y="333" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">effect 1 of 1</text>
+    <rect x="80" y="348" width="30" height="16" rx="3" fill="var(--sB)" opacity="0.85"/>
+    <text x="117" y="361" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">result: cause, action, 4 pieces of evidence</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The investigation fits into four steps under two conditions: the independent reads run simultaneously, and the failure of one read does not cancel the results of the other two, so only the failed call is retried. The buttons under the diagram reveal it step by step.</figcaption>
+</figure>
+
+<h3 id="s-7-6"><span class="num">7.6</span>Tool errors</h3>
+
+<p>A tool failure in an agent has three possible outcomes. The error can return to the model as an observation, and then the model chooses the next step. The loop can choose a fallback by itself, for example retry the call or turn to another source, and then the model sees the outcome of that attempt. Finally, the loop can stop and hand the work over to a human. The decision rests on two attributes: the class of the error and the write flag of the tool.</p>
+
+<p>The class of the error comes from the code that the tool returns, following the rules of <a href="#s-6-5" data-secref="6.5">Section 6.5</a>. Invalid arguments mean that the model made a mistake and can correct the call, so the error returns to the model as an observation. A transient failure means that the state of the call is unknown, and the decision is determined by the write flag: a read may be retried, whereas a write may not be retried until it is proven idempotent. An access denial means that a retry is useless, and the observation must explicitly forbid another attempt. An exhausted budget stops the loop regardless of the error class and the write flag.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 344" role="img" aria-label="A decision tree for a tool failure: the error class separates invalid arguments, a transient failure, an access denial and an exhausted budget, and for a transient failure an additional question about the write flag separates a safe retry from a mandatory handover to a human" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar7c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="16" y="142" width="170" height="56" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="101" y="168" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">tool failure</text>
+  <text x="101" y="187" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">code · side_effect</text>
+
+  <rect x="238" y="16" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="38" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">invalid arguments</text>
+  <text x="252" y="56" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">invalid_arguments</text>
+  <rect x="238" y="112" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="134" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">transient failure</text>
+  <text x="252" y="152" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">upstream_timeout</text>
+  <rect x="238" y="208" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="230" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">access denied</text>
+  <text x="252" y="248" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">forbidden</text>
+  <rect x="238" y="272" width="208" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="252" y="294" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">budget exhausted</text>
+  <text x="252" y="312" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">budget_exceeded</text>
+
+  <rect x="506" y="112" width="130" height="52" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="571" y="134" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">a write?</text>
+  <text x="571" y="152" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">side_effect</text>
+
+  <rect x="676" y="18" width="188" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="690" y="47" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">observation for the model</text>
+  <rect x="676" y="82" width="188" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="690" y="105" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">retry, then observation</text>
+  <text x="690" y="121" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">at most two attempts</text>
+  <rect x="676" y="146" width="188" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="690" y="169" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">stop, hand to a human</text>
+  <text x="690" y="185" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">write outcome unknown</text>
+  <rect x="676" y="210" width="188" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="690" y="233" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">observation, no retry</text>
+  <text x="690" y="249" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tool is excluded</text>
+  <rect x="676" y="274" width="188" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="690" y="303" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">the loop stops</text>
+
+  <path d="M186,170 H216 V42 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M186,170 H216 V138 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M186,170 H216 V234 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M186,170 H216 V298 H230" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,42 H668" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,138 H498" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M636,128 H650 V106 H668" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M636,148 H650 V170 H668" fill="none" stroke="var(--sE)" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,234 H668" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <path d="M446,298 H668" fill="none" stroke="var(--sE)" stroke-width="1.3" marker-end="url(#ar7c)"/>
+  <text x="644" y="100" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">no</text>
+  <text x="644" y="184" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">yes</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The decision on a timeout depends on the write flag: a read timeout permits a retry, while after a write timeout the outcome is unknown, so the work passes to a human unless the tool is protected by an idempotency key.</figcaption>
+</figure>
+
+<p>The error policy applies to each call of a parallel fan-out. Three calls run simultaneously, each with its own timeout, and some of them may fail. Under the rules of this section the loop receives a complete set of observations: for every call either a result or a failure with a code; in the listing below telematics answers, the carrier rejects the request over its rate limit, and customs does not answer within its timeout. If instead the first exception cancels the whole step, the successful reads are lost together with the failed ones.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">parallel_tools.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Observation:
+    tool: str
+    content: str
+    is_error: bool = False
+    code: str = ""
+
+
+@dataclass(frozen=True)
+class Request:
+    tool: str
+    timeout_s: float
+    latency_s: float          # how long the system takes to answer: for the stub only
+
+
+Handler = Callable[[Request], Awaitable[str]]
+
+
+async def call_one(request: Request, handler: Handler) -> Observation:
+    """One call with its own timeout: a failure is returned as an observation."""
+    try:
+        async with asyncio.timeout(request.timeout_s):
+            return Observation(request.tool, await handler(request))
+    except TimeoutError:
+        return Observation(request.tool, f"no answer within {request.timeout_s} s",
+                           True, "upstream_timeout")
+    except ConnectionError as err:
+        return Observation(request.tool, str(err), True, "upstream_error")
+
+
+async def fan_out(requests: Sequence[Request], handler: Handler) -> list[Observation]:
+    """All calls go out at once; the complete set of observations is returned."""
+    return list(await asyncio.gather(*(call_one(r, handler) for r in requests)))
+
+
+async def demo() -> tuple[list[Observation], float]:
+    async def upstream(request: Request) -> str:
+        await asyncio.sleep(request.latency_s)
+        if request.tool == "get_carrier_status":
+            raise ConnectionError("the carrier rejected the request: limit of 5 per second")
+        return f"{request.tool}: done"
+
+    requests = [
+        Request("get_telematics", timeout_s=1.0, latency_s=0.05),
+        Request("get_carrier_status", timeout_s=1.0, latency_s=0.05),
+        Request("get_customs_status", timeout_s=0.02, latency_s=0.06),
+    ]
+    started = time.perf_counter()
+    observations = await fan_out(requests, upstream)
+    return observations, time.perf_counter() - started
+
+
+if __name__ == "__main__":
+    results, elapsed = asyncio.run(demo())
+    by_tool = {o.tool: o for o in results}
+    assert len(results) == 3                                   # one observation per call
+    assert not by_tool["get_telematics"].is_error
+    assert by_tool["get_carrier_status"].code == "upstream_error"
+    assert by_tool["get_customs_status"].code == "upstream_timeout"
+    assert elapsed &lt; 0.12                                      # 0.12 s one after another
+    ok = [o.tool for o in results if not o.is_error]
+    assert ok == ["get_telematics"]
+    print("three calls at once, two failures as observations, one useful result")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="async with asyncio.timeout">line 30</span><p>The timeout is placed around each call separately. A common timeout for the whole fan-out would also cancel the calls that had already answered, and the step would end in a failure with no results.</p></div>
+  <div><span class="at" data-anchor="except ConnectionError as err:">line 35</span><p>A carrier's refusal over its rate limit means that the system answered and rejected the request; in the listing it is modelled by a <code>ConnectionError</code> and gets a code of its own, <code>upstream_error</code>. The model distinguishes "the system did not answer" from "the system rejected the request", and an immediate retry makes sense only in the first case.</p></div>
+  <div><span class="at" data-anchor="await asyncio.gather">line 41</span><p>Gathering the results returns one observation per call, because the exceptions are caught inside <code>call_one</code>. If an exception reaches the gathering, the fan-out loses the successful answers together with the failed one.</p></div>
+  <div><span class="at" data-anchor="timeout_s=0.02">line 54</span><p>The customs call is allowed less time than it needs to answer: this is how the listing reproduces the timeout of one participant in the fan-out. In the field this value comes from the tool's descriptor.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Retrying a call to a write tool after a timeout on the grounds that no answer was received. The action may have been performed: the absence of an answer does not tell a lost answer from an action that never happened, as shown in <a href="#s-6-8" data-secref="6.8">Section 6.8</a>. A retry is acceptable only when the tool accepts an idempotency key and returns the stored result for a known key.</div>
+
+<h3 id="s-7-7"><span class="num">7.7</span>Structured answers and confidence</h3>
+
+<dl class="def">
+<dt>Evidence</dt>
+<dd>An error-free observation on which the agent's conclusion rests, named in the final answer together with the tool and the record identifier. The list of evidence makes it possible to check the conclusion without repeating the investigation: the dispatcher sees which sources confirmed the cause and which were never read.</dd>
+</dl>
+
+<p>The result of the loop is returned as a typed object with three mandatory fields. The cause names what happened to the shipment. The action names what the agent proposes or has already done, including the value <code>escalate_to_human</code> for the case when the analysis is unfinished. The evidence lists the tools and record identifiers that confirm the cause. Free text is allowed as an additional field for the dispatcher, but decisions are made on the first three.</p>
+
+<p>The agent's confidence is computed from the evidence. A model asked to state its own confidence as a number tends to overstate it.<a class="src" href="https://arxiv.org/abs/2306.13063" target="_blank" rel="noreferrer">Xiong et al., ICLR 2024</a> At TKL the rule is stated in terms of coverage: a conclusion about a customs delay counts as confirmed if the evidence contains both the customs status and the carrier status, because the first without the second does not distinguish a delay at the border from a delay en route.</p>
+
+<p>This rule gives rise to a gate in front of the side effect. The <code>notify_customer</code> tool is called only when the set of evidence satisfies the coverage requirement for the proposed cause. The check is performed by the loop's code before the tool is called, because the model may not follow an instruction in the system prompt. The coverage requirements for each class of causes are set together with the evaluation set of <a href="#ch-12" data-secref="12">Chapter 12</a>, so changing them passes through the same release gate as a change of the prompt.</p>
+
+<h3 id="s-7-8"><span class="num">7.8</span>Frameworks: ADK, LangGraph, CrewAI</h3>
+
+<p>ADK, LangGraph and CrewAI execute the agent loop and differ in how state, tools and the budget are declared in them. These differences determine how much code will have to be rewritten when the platform changes. The table compares the frameworks along three questions: where the state schema is declared, how tools are attached to the agent, and what expresses the budget; the information follows the frameworks' documentation as of September 2026.<a class="src" href="https://adk.dev/sessions/state/" target="_blank" rel="noreferrer">adk.dev, session state</a><a class="src" href="https://docs.langchain.com/oss/python/langgraph/graph-api" target="_blank" rel="noreferrer">docs.langchain.com, Graph API</a><a class="src" href="https://docs.crewai.com/en/concepts/agents" target="_blank" rel="noreferrer">docs.crewai.com, agents</a></p>
+
+<div class="tw"><table>
+<thead><tr><th>Question</th><th>ADK</th><th>LangGraph</th><th>CrewAI</th></tr></thead>
+<tbody>
+<tr><td>State schema</td><td>the framework's session, a dictionary without a schema</td><td>the application's schema: TypedDict, dataclass or Pydantic</td><td>implicit in a crew (task outputs), a dictionary or a Pydantic model in Flows</td></tr>
+<tr><td>Attaching tools</td><td>functions and <code>McpToolset</code></td><td>graph nodes, including <code>ToolNode</code></td><td>the tools of the agent and the task</td></tr>
+<tr><td>Budget</td><td><code>max_llm_calls</code> in <code>RunConfig</code>, callbacks before and after a tool</td><td><code>recursion_limit</code>, <code>interrupt</code> for a handover to a human</td><td>the agent's <code>max_iter</code>, <code>max_rpm</code> and <code>max_execution_time</code></td></tr>
+<tr><td>What carries over unchanged</td><td>the step-selection logic</td><td>the step-selection logic and the state schema</td><td>role descriptions</td></tr>
+</tbody></table></div>
+
+<p>The logic that selects the next step carries over between frameworks almost unchanged, because its only input is the observations. The state schema is the harder to carry over, the smaller the part of it declared in the application's code. The next listing expresses one and the same investigation through stubs of two framework-like interfaces: in the first the runner stores the state, in the second the application declares the state schema.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">two_frameworks.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, TypedDict
+
+TOOLS = ("get_telematics", "get_carrier_status", "get_customs_status")
+
+
+@dataclass(frozen=True)
+class Step:
+    tool: str | None                       # None means "the investigation is over"
+    answer: str = ""
+
+
+def policy(evidence: Sequence[str]) -> Step:
+    """The agent's logic, shared by both frameworks and independent of either."""
+    for tool in TOOLS:
+        if tool not in evidence:
+            return Step(tool)
+    return Step(None, answer="customs delay, notify the customer")
+
+
+# ── Framework 1: the runner stores the state ──────────────────────────────────
+
+
+class Session:
+    """A skeleton in the spirit of ADK: the framework's session keeps untyped state."""
+
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {}
+
+
+class Runner:
+    def __init__(self, tools: Mapping[str, Callable[[], str]], max_steps: int = 6) -> None:
+        self.tools = tools
+        self.max_steps = max_steps
+
+    def run(self, session: Session) -> str:
+        session.state.setdefault("evidence", [])
+        for _ in range(self.max_steps):
+            step = policy(session.state["evidence"])
+            if step.tool is None:
+                return step.answer
+            self.tools[step.tool]()
+            session.state["evidence"].append(step.tool)
+        return "step budget exhausted"
+
+
+# ── Framework 2: the application declares the state schema ────────────────────
+
+
+class GraphState(TypedDict):
+    """The state schema is declared by the application and checked by its types."""
+
+    evidence: list[str]
+    answer: str
+    steps: int
+
+
+class Graph:
+    """A skeleton in the spirit of LangGraph: pure nodes, a route picks the next node."""
+
+    def __init__(self, nodes: Mapping[str, Callable[[GraphState], GraphState]],
+                 route: Callable[[GraphState], str], max_steps: int = 6) -> None:
+        self.nodes = nodes
+        self.route = route
+        self.max_steps = max_steps
+
+    def invoke(self, state: GraphState) -> GraphState:
+        for _ in range(self.max_steps):
+            name = self.route(state)
+            if name == "END":
+                return state
+            state = self.nodes[name](state)
+        state["answer"] = "step budget exhausted"
+        return state
+
+
+if __name__ == "__main__":
+    calls: list[str] = []
+
+    def make_tool(name: str) -> Callable[[], str]:
+        def tool() -> str:
+            calls.append(name)
+            return f"{name}: done"
+        return tool
+
+    runner = Runner({name: make_tool(name) for name in TOOLS})
+    session = Session()
+    assert runner.run(session) == "customs delay, notify the customer"
+    assert session.state["evidence"] == list(TOOLS)
+    assert calls == list(TOOLS)
+
+    def make_node(name: str) -> Callable[[GraphState], GraphState]:
+        def node(state: GraphState) -> GraphState:
+            calls.append(name)
+            return {"evidence": [*state["evidence"], name],
+                    "answer": state["answer"], "steps": state["steps"] + 1}
+        return node
+
+    def route(state: GraphState) -> str:
+        step = policy(state["evidence"])
+        if step.tool is None:
+            state["answer"] = step.answer
+            return "END"
+        return step.tool
+
+    graph = Graph({name: make_node(name) for name in TOOLS}, route)
+    final = graph.invoke({"evidence": [], "answer": "", "steps": 0})
+    assert final["answer"] == "customs delay, notify the customer"
+    assert final["evidence"] == list(TOOLS) and final["steps"] == 3
+    assert calls == list(TOOLS) * 2                      # one and the same investigation
+
+    assert set(GraphState.__annotations__) == {"evidence", "answer", "steps"}
+    assert "evidence" not in Session().state             # the runner has no state schema
+    print("one logic, two frameworks; the difference is who declares the state schema")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def policy(evidence:">line 16</span><p>The step-selection rule uses neither a session nor a graph and accepts only the list of evidence. The function therefore carries over unchanged when the framework changes and is written separately from either of them.</p></div>
+  <div><span class="at" data-anchor="self.state: dict[str, Any] = {}">line 31</span><p>The session state is a dictionary without a schema. A typo in a key name is caught neither by the types nor by the framework; in the field it shows up as an empty list of evidence.</p></div>
+  <div><span class="at" data-anchor="class GraphState(TypedDict):">line 53</span><p>The state schema is declared by the application, so the set of fields is checked by a static type checker and is visible in a diff. At the same time every field the framework uses has to be declared in the schema explicitly.</p></div>
+  <div><span class="at" data-anchor="GraphState.__annotations__">line 115</span><p>The check compares the declared schema with the expected one, and the agent's state goes through review in the same way as a database schema. The session of the first framework has no declared schema, so when the code moves to another platform the set of its keys has to be reconstructed from the code that reads them.</p></div>
+</div>
+</figure>
+
+<h3 id="s-7-9" data-level="2"><span class="num">7.9</span>On Google Cloud: ADK and Agent Runtime</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">ADK</span>
+  <span class="tag">Agent Runtime</span>
+  <span class="tag">MCP toolsets</span>
+</div>
+
+<p data-level="2">According to its documentation as of September 2026, the Agent Development Kit (ADK) builds a single agent from four concepts: an <code>LlmAgent</code> with a name, a model and an instruction; function tools whose schema is generated from the signature with type annotations and from the docstring; a session with a history of events and state in the form of a key-value dictionary; and a runner that executes the event loop and commits state changes.<a class="src" href="https://adk.dev/" target="_blank" rel="noreferrer">adk.dev, the ADK documentation</a> The machine of <a href="#s-7-3" data-secref="7.3">Section 7.3</a> maps onto them as follows: planning and the conclusion are performed by the agent, action and observation pass through the tools, and the budget is expressed by the <code>max_llm_calls</code> parameter of the run configuration <code>RunConfig</code> and by the callbacks <code>before_tool_callback</code> and <code>after_tool_callback</code>, which run before and after every tool call.<a class="src" href="https://adk.dev/runtime/runconfig/" target="_blank" rel="noreferrer">adk.dev, RunConfig</a><a class="src" href="https://adk.dev/callbacks/types-of-callbacks/" target="_blank" rel="noreferrer">adk.dev, callbacks</a> The <code>McpToolset</code> class connects to an MCP server, obtains the list of its tools and passes them to the agent as ADK tools, so the server of <a href="#ch-6" data-secref="6">Chapter 6</a> becomes available to the agent in the same way as local functions.<a class="src" href="https://adk.dev/tools-custom/mcp-tools/" target="_blank" rel="noreferrer">adk.dev, MCP tools</a></p>
+
+<p data-level="2">Agent Runtime (formerly Vertex AI Agent Engine) in Gemini Enterprise Agent Platform (formerly Vertex AI) is a fully managed environment for deploying, operating and scaling agents.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/runtime" target="_blank" rel="noreferrer">docs.cloud.google.com, Agent Runtime</a><a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes" target="_blank" rel="noreferrer">docs.cloud.google.com, name changes</a> The platform also stores sessions in Agent Platform Sessions and generates long-term memories from conversations in Agent Platform Memory Bank, and agent traces are written to Cloud Trace.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/sessions" target="_blank" rel="noreferrer">docs.cloud.google.com, Sessions</a><a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank" target="_blank" rel="noreferrer">docs.cloud.google.com, Memory Bank</a> The service names follow the Google Cloud documentation as of September 2026, and the design decision is stated in the concepts of this chapter, which do not depend on these names.</p>
+
+<p data-level="2">TKL's single agent uses two of these capabilities. Agent Platform Sessions stores the events and the state of a session, so the application needs no storage of its own for state between requests to the agent; <a href="#ch-9" data-secref="9">Chapter 9</a> explains this in detail. A trace in Cloud Trace consists of spans for model interactions and function calls, and from these spans <a href="#ch-13" data-secref="13">Chapter 13</a> builds cost attribution by business unit.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/tracing" target="_blank" rel="noreferrer">docs.cloud.google.com, tracing</a></p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>The frameworks set a limit on the number of steps themselves: <code>max_llm_calls</code> in ADK, <code>recursion_limit</code> in LangGraph, <code>max_iter</code> in CrewAI. The side-effect budget and the error policy by write flag described in this chapter are written in the application's code on any of the platforms. The platforms differ in where the state is declared and stored. In LangGraph building a graph starts with declaring the state schema, so the schema is kept in the application's code and moves together with it, while managed environments with a runner, such as Agent Runtime with ADK sessions, keep the state on their side and provide ready-made sessions and traces.<a class="src" href="https://docs.langchain.com/oss/python/langgraph/graph-api" target="_blank" rel="noreferrer">docs.langchain.com, LangGraph Graph API</a> The choice depends on who maintains the agent after the engagement ends: for a customer team with a platform of its own an explicit schema makes it possible to move the agent between environments, and a managed environment frees a team without a platform from operating the storage of sessions and traces.</div>
+
+<h3 id="s-7-10" data-level="3"><span class="num">7.10</span>In depth: the double side effect, hidden dependencies, loop detection</h3>
+
+<h4 data-level="3">A side effect performed twice</h4>
+
+<p data-level="3">The failure that made TKL tell a customer twice about a postponed delivery date occurred in the following sequence. The <code>notify_customer</code> tool ran and sent the message, but its response did not reach the loop within the seconds allotted to it. The loop recorded an observation with the code <code>upstream_timeout</code>, the model saw that the notification was unconfirmed, and it called the tool again. The second message reached the customer forty seconds after the first, and the dispatcher received a complaint.</p>
+
+<p data-level="3">Every participant in the chain worked according to its specification. The tool performed the requested action. The loop recorded that the outcome was unknown. The model retried the unconfirmed action. The defect is in the design of the tool: it did not accept the idempotency key described in <a href="#s-6-8" data-secref="6.8">Section 6.8</a> and therefore could not tell a retry from a new intent.</p>
+
+<p data-level="3">The fix consists of two parts. The write tool accepts a key derived from the session, the step number and the arguments, and for a known key returns the stored result of the first execution. The loop, in turn, gains the ability to read its own writes: after an uncertain outcome it calls a read of the same resource and learns whether the action took place. Both parts are needed: the read may not yet see a fresh write, and without the read the loop cannot tell the dispatcher whether the action took place.</p>
+
+<h4 data-level="3">Parallel calls with a hidden dependency</h4>
+
+<p data-level="3">A fan-out of parallel calls assumes that the calls are independent, and for telematics, customs and the carrier this holds for the data: no call uses the result of another. In terms of resources the calls are dependent: each of TKL's seventeen carriers has its own rate limit, and two exceptions about shipments of the same carrier, analysed at the same time, compete for a shared quota. Either of the two agents may receive the refusal for exceeding the limit, regardless of whose call exhausted the quota.</p>
+
+<p data-level="3">Such a dependency is expressed neither in the tool's descriptor nor in the model's context, because it is determined by the carrier's rate limit and does not depend on the content of an individual exception. The dependency is handled by a scheduler placed between the model and the tools. The scheduler accepts calls, groups them by the key of the limited resource, which for TKL is the carrier code, and lets through no more than the permitted number at a time while deferring the rest. For the model the three calls still complete in one step, while the fan-out runs within the carriers' limits.</p>
+
+<p data-level="3">The scheduler takes the loop's time budget into account: if the wait for quota exceeds the remaining budget, the scheduler immediately returns an observation with a refusal code. A constraint of an external resource is thus expressed in the same form as any other tool failure and is handled by the decision tree of <a href="#s-7-6" data-secref="7.6">Section 7.6</a>.</p>
+
+<h4 data-level="3">Confidence that the model reports about itself</h4>
+
+<p data-level="3">In TKL's evaluation sets the numerical confidence named by the model barely separated correct conclusions from incorrect ones: the share of correct conclusions among those marked "high confidence" differed from the share among those marked "medium" by only a few percentage points. The number is produced by the same generation process as the answer itself, so it is not an independent measurement of the answer's correctness.</p>
+
+<p data-level="3">A measurable substitute is a count of evidence. For each class of causes it is declared in advance which sources must confirm the conclusion: a customs delay requires the customs status and the carrier status, a breakdown requires telematics and the maintenance log. Confidence is expressed as the coverage of that requirement and checked by code. The value takes few distinct values, but its relation to correctness is verified on the evaluation set of <a href="#ch-12" data-secref="12">Chapter 12</a>, and the way it is computed does not depend on the model version.</p>
+
+<h4 data-level="3">Loop detection by hashing</h4>
+
+<p data-level="3">A budget stops a looping agent only once it is exhausted: an agent that calls the same tool with the same arguments eight steps in a row spends its whole step budget and ends with an escalation. Such loops are recognised without calls to the model. The loop computes a hash of the triple made of the tool name, the normalised arguments and the observation, and keeps the hashes of its steps.</p>
+
+<p data-level="3">A repeated hash means that the step produced no new observations, so the rule is strict: two identical steps in a row end the attempts with that tool, and three identical steps within one run stop the loop. The arguments are normalised, because the model may change insignificant details of a call: a different order of keys or a different case of the identifier yields a different string for the same call. A detected loop is written to the trace as a separate event, and the frequency of loops serves as a quality metric for the tools.</p>
+
+<h4 data-level="3">Where the state schema is declared</h4>
+
+<p data-level="3">Lock-in to a framework is measured by the volume of what has to be rebuilt during a migration to another framework. The step-selection logic carries over unchanged, because it depends only on the observations. A state schema that was never declared has to be reconstructed: a session dictionary that has grown to thirty keys over half a year is described nowhere except in the code that reads it, and for the migration the set of keys and their meaning are reconstructed from that code.</p>
+
+<p data-level="3">For an FDE who hands an agent over to the customer's team, a rule follows. The state schema is declared by the application, even if the framework does not demand it, and is kept next to the agent's code. The framework executes the loop and provides ready-made sessions, traces and deployment, while the domain concepts (cause, evidence, budget) are declared in the application's code. A change of framework then comes down to replacing the executor of the loop, and the state can be saved in a checkpoint and read again half a year later, as described in <a href="#ch-9" data-secref="9">Chapter 9</a>.</p>
+
+<div class="warn" data-level="3"><b>The budget as the only defence</b>If loops are stopped only by the step budget, every looping investigation spends the whole budget. A loop of three identical steps is recognised in a fraction of a millisecond and saves five model calls; at TKL, with five hundred exceptions an hour, those savings are comparable to the cost of the whole rest of the loop.</div>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why is a step budget not enough, and which three other resources are bounded?</summary>
+<div class="ans"><p>Because steps, tokens, time and side effects run out independently of one another. Eight steps allow eight messages to the customer and an arbitrarily long wait for a slow tool, while a growing context exhausts the tokens before the steps.</p></div>
+</details>
+<details>
+<summary>A write tool answered with a timeout. What does the loop do, and why?</summary>
+<div class="ans"><p>It stops and hands the work to a human if the tool does not accept an idempotency key: the absence of an answer does not tell a lost answer from an action that never happened, and a retry may create a second side effect. If the key is accepted, a retry with the same key is safe and returns the stored result of the first execution.</p></div>
+</details>
+<details>
+<summary>How does confidence computed from evidence differ from confidence named by the model?</summary>
+<div class="ans"><p>It is computed by code from error-free observations and verified on an evaluation set, whereas the number named by the model is produced by the same generation process as the answer and is not an independent measurement of its correctness. The way coverage is computed does not depend on the model version, so its values stay comparable when the version changes.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>The loop is applied to exceptions in which the next step depends on the previous answer; recognised patterns are handled by a pipeline, which is cheaper and faster.</li>
+<li>ReAct is expressed as a state machine in which every transition passes a check of four budgets: steps, tokens, time and side effects.</li>
+<li>A tool failure becomes an observation, a fallback or a stop according to the class of the error and the write flag; a parallel fan-out returns an observation for every call, the failed ones included.</li>
+<li>The result is returned as a type with a cause, an action and evidence, and confidence is computed as the coverage of the evidence requirements.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-6" data-secref="6">Chapter 6: the tools this loop calls</a>
+<a href="#ch-8" data-secref="8">Chapter 8: systems of several agents</a>
+<a href="#ch-9" data-secref="9">Chapter 9: state, checkpoints and resumption</a>
+</p>
+</div>
+</section>

@@ -1,0 +1,946 @@
+<!-- ────────────────────────── CHAPTER 11 ────────────────────────── -->
+<section class="chapter" id="ch-11">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter eleven</p>
+    <span class="strata" role="img" aria-label="Layers B, C and F: model and agent, tools, people and process">
+      <i></i><i data-s="B"></i><i data-s="C"></i><i></i><i></i><i data-s="F"></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-11"><span class="num">11</span>Interfaces for Agentic Systems</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>explain why an agent's interface is part of the safety system alongside policies and access checks;</li>
+<li>design an event protocol from which the interface builds the answer text, the tool log, the sources and the approval cards;</li>
+<li>choose the granularity of approvals and bind a human decision to the arguments of the action;</li>
+<li>split an 800 ms voice-turn budget across stages and handle barge-in without losing side effects;</li>
+<li>build explanations from the trace alone and measure trust calibration from users' decisions.</li>
+</ul>
+</div>
+
+<h3 id="s-11-1"><span class="num">11.1</span>The task: the clinical assistant and voice intake</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-2" data-secref="G.2">Case file CF2 · Meridian Health Network</a></span>
+  <span class="tag">9,000 clinicians</span>
+  <span class="tag">FHIR</span>
+  <span class="tag">voice in 800 ms</span>
+  <span>a hospital network</span>
+</div>
+
+<p>The guideline search of <a href="#ch-5" data-secref="5">Chapter 5</a> gave Meridian's clinicians answers with links to their sources. The customer states the next step this way: the assistant must answer questions and prepare actions. An emergency physician asks about a patient with suspected sepsis; the assistant answers from the protocol, checks allergies in the EHR and proposes a set of orders: an antibiotic, a lactate test, blood cultures. No order reaches the EHR without the physician's decision, and the decision must take seconds, because Meridian's sepsis protocol requires antibiotic therapy to start within the first hour.</p>
+
+<p>The second part of the task concerns the nurse hotline. A caller describes symptoms by voice; the agent asks clarifying questions, assesses urgency with the nursing protocol, and books a callback or transfers the call to the nurse on duty. No more than 800 ms may pass from the end of the caller's phrase to the first audio of the reply: in the pilot recordings, callers facing longer delays decided they had not been heard and started talking over the agent. The caller can interrupt the agent at any moment.</p>
+
+<p>Both parts of the task set four requirements for the interface. The clinician sees what the answer is based on. A proposed action is separated from the text and approved in the form in which it will be executed. A voice turn fits its budget, and after barge-in the state of the system is known. The clinicians' trust is measured so that it can be told apart from a habit of clicking "Approve". Interrupts and approval tokens on the runtime side are covered in <a href="#s-9-5" data-secref="9.5">Section 9.5</a>; this chapter deals with what the human sees and does.</p>
+
+<h3 id="s-11-2"><span class="num">11.2</span>Why the interface is part of safety</h3>
+
+<p>A system with correctly configured permissions, policies and approvals can still cause harm because of how its interface is built. An approval the physician gives without seeing the dose complies with the policy in form, but the physician has not checked what they authorised. An answer without sources is either rechecked in full, and then the assistant does not reduce the physician's work, or taken on faith, and then a model error becomes a clinical error. The interface determines which decision a human is able to make, and it is therefore designed and tested as part of the safety loop alongside policies and access checks.</p>
+
+<dl class="def">
+<dt>Automation bias</dt>
+<dd>The tendency of a person to accept a proposal from an automated system without sufficient verification and to miss what the system did not report. It shows up as two kinds of error: acting on a wrong prompt and failing to act where no prompt came.<a class="src" href="https://doi.org/10.1177/0018720810376055" target="_blank" rel="noreferrer">Parasuraman, Manzey, Human Factors, 2010</a></dd>
+</dl>
+
+<p>Trust calibration, the match between how much a person trusts a system and how reliable the system actually is in a given class of situations, fails in two symmetric ways.<a class="src" href="https://doi.org/10.1518/hfes.46.1.50_30392" target="_blank" rel="noreferrer">Lee, See, Human Factors, 2004</a> An over-trusting physician approves an order because the assistant is usually right and misses the case where the model did not see renal failure. An under-trusting physician rechecks every claim and over time stops using the assistant. Under-trust shows at once, over-trust only after an incident. Both failures are measured from users' decisions: trust is a person's attitude towards the system, while safety depends on how the person relies on the system in their decisions.</p>
+
+<p>For the physician to decide after checking, the interface shows three kinds of information. First, what the agent knows: sources with revision and section, and the results of tools. Second, what the agent did: a log of calls in which a read is distinguishable from a write. Third, what the agent wants to do: an action with exact arguments, an expiry and consequences. Confident wording of the answer is not part of this information and is no ground for a decision.</p>
+
+<h3 id="s-11-3"><span class="num">11.3</span>Transparency primitives</h3>
+
+<p>Transparency is provided by four primitives, and each is implemented by a separate mechanism. A source is shown with the document identifier, revision and section, and its link opens only after the current user's permissions are checked. The tool log lists calls with their arguments, status and duration and separates reads from writes. The context summary states what the model saw and what the budget pushed out; it is built from the record of context composition described in <a href="#s-4-8" data-secref="4.8">Section 4.8</a>. Uncertainty is expressed through evidence: the interface names the evidence a claim lacks.</p>
+
+<p>The model's confidence percentage is not used to express uncertainty. The confidence a language model reports about itself in words or numbers tends to be overstated,<a class="src" href="https://arxiv.org/abs/2306.13063" target="_blank" rel="noreferrer">Xiong et al., ICLR 2024</a> and a number does not tell the physician what to check. The phrase "no creatinine in the EHR for the last 72 hours" names a specific gap and a specific action, so instead of percentages Meridian's interface shows which evidence a claim lacks.</p>
+
+<dl class="def">
+<dt>Event stream</dt>
+<dd>An ordered sequence of typed messages from the agent runtime to the interface, in which every message carries a number within the run, a type and a payload. Answer text, tool calls, approval requests and completion travel as different types, so the interface builds different screen elements from them and, after a disconnect, continues the stream from the last acknowledged number.</dd>
+</dl>
+
+<p>The primitives are transmitted from the runtime to the interface. If the runtime hands the interface nothing but text, the tool log and the approval card can exist only as fragments of that text, and the interface has to recognise them from words. The naive and the considered variants below differ in the way of transmission.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Two ways to deliver the agent's answer to the interface">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_stream.py</span></figcaption>
+      <pre><code>from collections.abc import Iterator
+
+
+def agent_reply(wording: int) -&gt; Iterator[str]:
+    """The agent hands the interface nothing but text, cut into chunks."""
+    ask = ["Confirm the order for ceftriaxone 2 g IV.",
+           "If you agree, I will order ceftriaxone 2 g IV."][wording]
+    text = f"Per the sepsis protocol, antibiotic therapy is indicated. No allergies. {ask}"
+    for i in range(0, len(text), 12):
+        yield text[i:i + 12]
+
+
+def needs_approval(screen: str) -&gt; bool:
+    return "Confirm" in screen              # the interface guesses the intent from words
+
+
+if __name__ == "__main__":
+    first = "".join(agent_reply(0))
+    second = "".join(agent_reply(1))
+    assert needs_approval(first)
+    assert not needs_approval(second)       # same intent, other words: no button
+    assert "No allergies" in second         # a claim with no source and no trace of a call
+    print("the approval request got lost in the text of the answer")</code></pre>
+    </figure>
+    <p>The interface searches the text for the word "Confirm", and with a different wording of the same intent no button appears, because the approval request is not separated from the text of the answer. The claim "no allergies" is tied neither to a tool call nor to a source. A dropped connection in the middle of the answer leaves no way to continue, because the chunks are not numbered.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">event_stream.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
+
+
+class Token(BaseModel):
+    kind: Literal["token"] = "token"
+    text: str
+
+
+class ToolStart(BaseModel):
+    kind: Literal["tool_start"] = "tool_start"
+    call_id: str
+    tool: str
+    args: dict[str, str]
+
+
+class ToolResult(BaseModel):
+    kind: Literal["tool_result"] = "tool_result"
+    call_id: str
+    ok: bool
+    summary: str
+    sources: list[str] = Field(default_factory=list)
+
+
+class ApprovalRequest(BaseModel):
+    kind: Literal["approval_request"] = "approval_request"
+    request_id: str
+    tool: str
+    args: dict[str, str]
+    expires_at: float
+
+
+class Final(BaseModel):
+    kind: Literal["final"] = "final"
+    status: Literal["done", "waiting_for_approval", "failed"]
+
+
+type AnyPayload = Token | ToolStart | ToolResult | ApprovalRequest | Final
+
+
+class Event(BaseModel):
+    run_id: str
+    seq: int                                    # number within the run: 1, 2, 3, ...
+    payload: Annotated[AnyPayload, Field(discriminator="kind")]
+
+
+def to_sse(event: Event) -&gt; str:
+    return f"id: {event.seq}\nevent: {event.payload.kind}\ndata: {event.model_dump_json()}\n\n"
+
+
+def parse_sse(frame: str) -&gt; Event:
+    data = next(line.removeprefix("data: ") for line in frame.splitlines() if line.startswith("data: "))
+    return Event.model_validate_json(data)
+
+
+@dataclass
+class EventLog:
+    """The run's event log: the only source of what the interface shows."""
+    run_id: str
+    events: list[Event] = field(default_factory=list)
+
+    def emit(self, payload: AnyPayload) -&gt; Event:
+        event = Event(run_id=self.run_id, seq=len(self.events) + 1, payload=payload)
+        self.events.append(event)
+        return event
+
+    def resume(self, last_seq: int) -&gt; Iterator[str]:
+        """Everything after the last number the client acknowledged."""
+        for event in self.events[last_seq:]:
+            yield to_sse(event)
+
+
+@dataclass
+class Screen:
+    """The client: applies events strictly in order and remembers the last number."""
+    last_seq: int = 0
+    text: str = ""
+    tool_log: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
+    pending: dict[str, ApprovalRequest] = field(default_factory=dict)
+    status: str = "streaming"
+
+    def apply(self, event: Event) -&gt; None:
+        if event.seq &lt;= self.last_seq:
+            return                              # a repeat after reconnecting
+        if event.seq != self.last_seq + 1:
+            raise ValueError(f"gap: expected {self.last_seq + 1}, got {event.seq}")
+        match event.payload:
+            case Token(text=text):
+                self.text += text
+            case ToolStart(call_id=call_id, tool=tool):
+                self.tool_log.append(f"{call_id} {tool}: running")
+            case ToolResult(call_id=call_id, ok=ok, summary=summary, sources=sources):
+                self.tool_log.append(f"{call_id}: {'done' if ok else 'error'}, {summary}")
+                self.sources.extend(sources)
+            case ApprovalRequest() as request:
+                self.pending[request.request_id] = request
+            case Final(status=status):
+                self.status = status
+        self.last_seq = event.seq
+
+
+if __name__ == "__main__":
+    log = EventLog("run-12")
+    log.emit(Token(text="Per the sepsis protocol "))
+    log.emit(ToolStart(call_id="c1", tool="get_allergies", args={"patient": "P-12"}))
+    log.emit(ToolResult(call_id="c1", ok=True, summary="no allergies found",
+                        sources=["ehr:AllergyIntolerance?patient=P-12"]))
+    log.emit(Token(text="ceftriaxone is indicated."))
+    log.emit(ApprovalRequest(request_id="a1", tool="place_order",
+                             args={"drug": "ceftriaxone", "dose": "2 g", "route": "iv"}, expires_at=900.0))
+    log.emit(Final(status="waiting_for_approval"))
+
+    screen = Screen()
+    for frame in list(log.resume(0))[:3]:
+        screen.apply(parse_sse(frame))          # the connection dropped after the third event
+    for frame in log.resume(screen.last_seq - 1):
+        screen.apply(parse_sse(frame))          # the server resent the third one too: it is dropped
+    assert screen.text == "Per the sepsis protocol ceftriaxone is indicated."
+    assert len(screen.tool_log) == 2 and screen.sources == ["ehr:AllergyIntolerance?patient=P-12"]
+    assert list(screen.pending) == ["a1"] and screen.status == "waiting_for_approval"
+    try:
+        Screen().apply(parse_sse(to_sse(log.events[1])))
+        raise AssertionError("a missing first event must be noticed")
+    except ValueError:
+        pass
+    assert to_sse(log.events[4]).startswith("id: 5\nevent: approval_request\n")
+    print("the interface builds the screen from the event log and resumes the stream without loss")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="class ApprovalRequest(BaseModel):">line 30</span><p>An approval request travels as a separate event type. The interface builds a card with the arguments and the expiry from it, so whether the card appears does not depend on the wording of the model's answer.</p></div>
+        <div><span class="at" data-anchor="def to_sse(event: Event)">line 52</span><p>The frame follows the Server-Sent Events format: the <code>id</code> field carries the number, and after a disconnect the browser itself sends it back in the <code>Last-Event-ID</code> header. The same log can be served over a WebSocket; the frame format then changes, and the numbers keep their meaning.<a class="src" href="https://html.spec.whatwg.org/multipage/server-sent-events.html" target="_blank" rel="noreferrer">WHATWG HTML, Server-sent events</a></p></div>
+        <div><span class="at" data-anchor="seq=len(self.events) + 1">line 68</span><p>The runtime assigns the number when it writes the event to the log. The number fixes the order in which the client assembles the screen and the point from which the stream resumes.</p></div>
+        <div><span class="at" data-anchor="if event.seq &lt;= self.last_seq:">line 89</span><p>A repeat of an already applied event is dropped silently: on resumption the server may resend the last event if it is not sure the client received it. A gap, by contrast, is an error: a screen without the third event would show text without the tool's result.</p></div>
+        <div><span class="at" data-anchor="case ToolResult(">line 98</span><p>Sources arrive together with the result of the tool that returned them. The interface links a claim to a call and the call to a document, and the explanation of <a href="#s-11-7" data-secref="11.7">Section 11.7</a> uses that link.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns the recipient. The naive stream is meant to be read by a human, and the interface code has to parse text; in the considered one the event type determines the screen element regardless of the model's wording.</p>
+    <p>The second difference concerns verifiability. In the naive variant the phrase "no allergies" is indistinguishable from a guess by the model, while in the considered one it corresponds to a <code>tool_result</code> event with a call identifier and a source.</p>
+    <p>The third difference concerns behaviour under failure. Naive text is lost after a disconnect, while a numbered log allows continuing from the last acknowledged event, noticing a gap and never showing an event twice.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Common mistake</b>Deriving the tool log from the answer text by asking the model to write lines such as "[called tool X]". The model can write such a line without a call, and the log then reports a call that never happened. The runtime builds the log from the actual calls, and the model has no write access to it.</div>
+
+<h3 id="s-11-4"><span class="num">11.4</span>Approval UX</h3>
+
+<p>An approval records the answer to the question "who authorised this action", and the interface determines whether the approver saw what they authorised. In <a href="#s-9-5" data-secref="9.5">Section 9.5</a> the approval token is bound to the digest of the action's name and arguments and to an expiry. For the interface this means that the card shows the same arguments the digest is computed from and states nothing about the action beyond these arguments. A card reading "Order an antibiotic" without dose and route produces a token that authorises a specific dose the physician never saw.</p>
+
+<dl class="def">
+<dt>Pre-authorisation</dt>
+<dd>A permission granted in advance for a class of actions with explicit bounds, under which actions of that class execute without a human decision at the time of execution. It is granted by an accountable person or committee, has an expiry and is reviewed against decision metrics; actions within the class are still logged and visible to the user.</dd>
+</dl>
+
+<p>The granularity of approval is chosen from three levels. Per-action approval gives the most control and the most load: five orders mean five decisions. Per-plan approval shows the set of actions as a whole, and the physician accepts or edits it in one decision; this level suits sepsis orders, which make sense only together. A pre-authorised class removes the human decision at the time of execution: a draft chart note that the physician will sign later anyway needs no approval.</p>
+
+<p>A batch of actions must have two properties; otherwise approving the batch amounts to approving all its actions without checking them. The physician can untick part of the actions, and the token covers only the ticked ones. The batch is grouped by class of action: labs in one card and medications in another, because they are checked against different criteria. The expiry is short in acute scenarios, because the grounds of a proposal go stale quickly.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">approval_flow.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from dataclasses import dataclass, field, replace
+from typing import Literal
+
+SIGNING_KEY = b"demo-only"                      # in production the signing key is stored in KMS
+type Scope = Literal["action", "class", "plan"]
+
+
+@dataclass(frozen=True)
+class ProposedAction:
+    action_id: str
+    action_class: str                           # "order.medication", "order.lab", ...
+    tool: str
+    args: dict[str, str] = field(hash=False)
+
+    def digest(self) -&gt; str:
+        raw = json.dumps({"tool": self.tool, "args": self.args}, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class ApprovalRequest:
+    request_id: str
+    scope: Scope
+    actions: tuple[ProposedAction, ...]
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class Grant:
+    """The approval token: a signature over the digests of only the actions the clinician ticked."""
+    request_id: str
+    approver: str
+    digests: frozenset[str]
+    expires_at: float
+    signature: str
+
+
+def sign(request_id: str, approver: str, digests: frozenset[str], expires_at: float) -&gt; str:
+    message = "|".join([request_id, approver, *sorted(digests), repr(expires_at)]).encode()
+    return hmac.new(SIGNING_KEY, message, hashlib.sha256).hexdigest()
+
+
+@dataclass(frozen=True)
+class Gate:
+    """The enforcement point: an action passes by a pre-authorised class or by a token."""
+    preauthorized: frozenset[str] = frozenset()
+
+    def requests(self, plan: list[ProposedAction], scope: Scope, now: float,
+                 ttl: float) -&gt; list[ApprovalRequest]:
+        human = [a for a in plan if a.action_class not in self.preauthorized]
+        groups: dict[str, list[ProposedAction]] = {}
+        for a in human:
+            key = {"action": a.action_id, "class": a.action_class, "plan": "plan"}[scope]
+            groups.setdefault(key, []).append(a)
+        return [ApprovalRequest(f"req-{key}", scope, tuple(items), now + ttl)
+                for key, items in groups.items()]
+
+    def check(self, action: ProposedAction, grant: Grant | None, now: float) -&gt; str:
+        if action.action_class in self.preauthorized:
+            return "allowed:class"
+        if grant is None:
+            return "denied:no_grant"
+        expected = sign(grant.request_id, grant.approver, grant.digests, grant.expires_at)
+        if not hmac.compare_digest(expected, grant.signature):
+            return "denied:bad_signature"
+        if now &gt;= grant.expires_at:
+            return "denied:expired"
+        if action.digest() not in grant.digests:
+            return "denied:not_approved"
+        return "allowed:grant"
+
+
+def approve(request: ApprovalRequest, approver: str, selected: set[str]) -&gt; Grant:
+    """A batch may be approved in part: the token covers only the ticked actions."""
+    digests = frozenset(a.digest() for a in request.actions if a.action_id in selected)
+    return Grant(request.request_id, approver, digests, request.expires_at,
+                 sign(request.request_id, approver, digests, request.expires_at))
+
+
+if __name__ == "__main__":
+    abx = ProposedAction("a1", "order.medication", "place_order",
+                         {"drug": "ceftriaxone", "dose": "2 g", "route": "iv"})
+    lactate = ProposedAction("a2", "order.lab", "place_order", {"test": "lactate"})
+    culture = ProposedAction("a3", "order.lab", "place_order", {"test": "blood_culture", "sets": "2"})
+    note = ProposedAction("a4", "note.draft", "draft_note", {"template": "sepsis_initial"})
+    gate = Gate(preauthorized=frozenset({"note.draft"}))
+    plan = [abx, lactate, culture, note]
+
+    assert len(gate.requests(plan, "action", now=0.0, ttl=900.0)) == 3
+    assert len(gate.requests(plan, "plan", now=0.0, ttl=900.0)) == 1
+    meds, labs = gate.requests(plan, "class", now=0.0, ttl=900.0)
+    assert [a.action_id for a in labs.actions] == ["a2", "a3"]        # a batch of two lab tests
+
+    meds_grant = approve(meds, "dr-ivanova", {"a1"})
+    labs_grant = approve(labs, "dr-ivanova", {"a2"})                   # the clinician unticked the culture
+    assert gate.check(abx, meds_grant, now=120.0) == "allowed:grant"
+    assert gate.check(lactate, labs_grant, now=120.0) == "allowed:grant"
+    assert gate.check(culture, labs_grant, now=120.0) == "denied:not_approved"
+    assert gate.check(note, None, now=120.0) == "allowed:class"
+    double = replace(abx, args={**abx.args, "dose": "4 g"})             # the model changed the dose
+    assert gate.check(double, meds_grant, now=120.0) == "denied:not_approved"
+    assert gate.check(abx, meds_grant, now=900.0) == "denied:expired"
+    assert gate.check(abx, replace(meds_grant, approver="agent"), now=120.0) == "denied:bad_signature"
+    print("the approval is bound to the arguments, expires, and allows batches and partial selection")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="key = {">line 58</span><p>One function builds requests at all three granularities: the grouping key determines how many decisions the physician makes. Pre-authorised classes are cut off before grouping and never reach a request.</p></div>
+  <div><span class="at" data-anchor="if action.action_class in self.preauthorized:">line 64</span><p>Pre-authorisation is checked at the same enforcement point as the token. An action without a human decision is still recorded: the enforcement point states on which grounds it passed.</p></div>
+  <div><span class="at" data-anchor="if action.digest() not in grant.digests:">line 73</span><p>A model that changed the dose after approval is refused: the digest of the new arguments is not in the token. The interface then shows the physician a new card with the changed dose, so that the physician decides on the new arguments.</p></div>
+  <div><span class="at" data-anchor="digests = frozenset(a.digest()">line 80</span><p>The token contains the digests of the ticked actions only. The culture the physician unticked gets no permission, even though it stayed in the same batch.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Showing a model-written paraphrase of the action in the approval card instead of the call's arguments. The paraphrase "order the standard dose" and the argument <code>dose=4 g</code> diverge when the model got an argument wrong, which are the cases the approval exists for. The card is built from the arguments the token's digest is computed from.</div>
+
+<div class="note" data-level="2">After launch the busiest users may ask for an "Approve all" button. The safe replacement for such a button is the pre-authorisation of a class with the thresholds of <a href="#s-11-7" data-secref="11.7">Section 11.7</a>. A clinical committee decides on pre-authorisation from decision metrics; the interface does not widen permissions at a user's request.</div>
+
+<h3 id="s-11-5"><span class="num">11.5</span>Streaming events</h3>
+
+<p>The protocol of the <code>event_stream.py</code> listing has five event types. A <code>token</code> event carries a fragment of text, <code>tool_start</code> reports a call that has begun and lets the interface show the running call before the result arrives, and <code>tool_result</code> closes the call with a status, a summary and sources. An <code>approval_request</code> event carries everything the approval card needs, and <code>final</code> ends the stream with a status: done, waiting for approval or failed.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 410" role="img" aria-label="A sequence diagram with four participants: the clinician, the interface, the agent runtime and the tools with the EHR; the runtime sends the interface numbered token, tool_start and tool_result events, then an approval_request from which the interface shows the clinician a card while text keeps arriving; the clinician approves, the interface sends a separate request carrying the digest of the arguments, and the runtime calls the tool and reports the outcome with tool_start, tool_result and final events" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar11a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="40" y="14" width="120" height="34" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.6"/>
+  <text x="100" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">clinician</text>
+  <rect x="255" y="14" width="150" height="34" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.6"/>
+  <text x="330" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">interface</text>
+  <rect x="475" y="14" width="190" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="570" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">agent runtime</text>
+  <rect x="720" y="14" width="140" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="790" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">tools · EHR</text>
+  <line x1="100" y1="48" x2="100" y2="402" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="330" y1="48" x2="330" y2="402" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="570" y1="48" x2="570" y2="402" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="790" y1="48" x2="790" y2="402" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="Text and a tool call arrive as separate numbered events: the interface shows the answer and the tool log apart.">
+    <line x1="570" y1="80" x2="338" y2="80" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="73" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">1 · token “Per the protocol…”</text>
+    <line x1="570" y1="110" x2="338" y2="110" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="103" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">2 · tool_start get_allergies</text>
+    <line x1="570" y1="110" x2="782" y2="110" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="680" y="103" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">get_allergies(P-12)</text>
+    <line x1="790" y1="140" x2="578" y2="140" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="680" y="133" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">0 records</text>
+    <line x1="570" y1="140" x2="338" y2="140" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="133" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">3 · tool_result: no allergies</text>
+  </g>
+
+  <g data-step="2" data-caption="A proposed action arrives as an approval_request event: the interface draws a card from the arguments while text keeps arriving.">
+    <line x1="570" y1="176" x2="338" y2="176" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="169" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sF)">4 · approval_request a1, 15 min</text>
+    <line x1="330" y1="204" x2="108" y2="204" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="215" y="197" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">card: dose, route, expiry</text>
+    <line x1="570" y1="232" x2="338" y2="232" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="225" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">5 · token “…section 3.2”</text>
+  </g>
+
+  <g data-step="3" data-caption="The clinician approves the action mid-stream: the decision is sent as a separate request carrying the digest of the arguments and therefore refers to the exact arguments of the action.">
+    <line x1="100" y1="266" x2="322" y2="266" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="215" y="259" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">“Approve”</text>
+    <line x1="330" y1="294" x2="562" y2="294" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="287" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sF)">approve(a1, sha256(args))</text>
+  </g>
+
+  <g data-step="4" data-caption="The runtime verifies the token, calls the tool and reports the outcome with the same events, up to final.">
+    <line x1="570" y1="328" x2="338" y2="328" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">6 · tool_start place_order</text>
+    <line x1="570" y1="328" x2="782" y2="328" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="680" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">place_order + token</text>
+    <line x1="790" y1="358" x2="578" y2="358" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="680" y="351" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">order O-88</text>
+    <line x1="570" y1="358" x2="338" y2="358" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="351" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">7 · tool_result: O-88</text>
+    <line x1="570" y1="388" x2="338" y2="388" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11a)"/>
+    <text x="450" y="381" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">8 · final: done</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The interface builds the screen from an event log. The number, type and payload of each event let the interface build the text, the tool log and the approval card independently of one another, and the physician's decision is sent as a separate request bound to the arguments while the stream goes on.</figcaption>
+</figure>
+
+<p>The order of events is guaranteed only within one run. The number is assigned when the event is written to the run's log, so the events of parallel tool calls are numbered in the order of writing, and that order may differ from the order in which they started. The interface does not reorder events by time. A <code>tool_result</code> event arriving before its <code>tool_start</code> signals a defect in the runtime, and the client reports the defect and does not build the screen on an assumption about the order.</p>
+
+<p>Resuming the stream is possible because the log is kept longer than the connection. The client remembers the last applied number, reconnects with it after a disconnect, and the server returns the tail of the log. Generation is not repeated: the model has already answered, a second call would produce different text, and the physician would see an answer already on screen replaced by another.</p>
+
+<p>An approval in the middle of the stream is sent as a separate request from the interface to the runtime, and the stream does not stop for it. The decision arrives with the request identifier and the digest of the arguments; the runtime verifies the token as described in <a href="#s-9-5" data-secref="9.5">Section 9.5</a> and reports the outcome with the same <code>tool_start</code> and <code>tool_result</code> events.</p>
+
+<h3 id="s-11-6"><span class="num">11.6</span>Real-time voice</h3>
+
+<p>Voice intake works in turns: the caller speaks, the agent replies, and the delay between the end of a phrase and the first audio of the reply decides whether the exchange feels like a conversation. In recordings of conversations in ten languages the most frequent gap between a question and its answer lies between 0 and 200 ms, and the averages of the languages differ by no more than about 250 ms.<a class="src" href="https://doi.org/10.1073/pnas.0903616106" target="_blank" rel="noreferrer">Stivers et al., PNAS, 2009</a> Meridian's 800 ms budget is four times such a gap, so the delay of the reply is noticeable to the caller even when the budget is met, and the budget is split across the stages of the pipeline in advance.</p>
+
+<dl class="def">
+<dt>Barge-in</dt>
+<dd>The ability of a voice system to detect the user's speech during its own reply, stop playback and generation at once and return to listening. Barge-in cancels what has not happened yet and does not cancel what has already been committed in external systems.</dd>
+</dl>
+
+<p>A voice agent is built on one of two architectures. A cascaded pipeline chains three models: speech recognition (ASR) turns audio into text, a language model answers in text, and speech synthesis (TTS) voices the answer. A native audio model takes audio in and produces audio out with a single model and no intermediate text. The cascade is easier to debug and control, because every joint carries text that can be logged and filtered.<a class="src" href="https://developers.openai.com/api/docs/guides/voice-agents" target="_blank" rel="noreferrer">OpenAI, Voice agents</a> Vendors recommend the native model for low latency to the first audio and for natural turn-taking with barge-in,<a class="src" href="https://developers.openai.com/api/docs/guides/realtime" target="_blank" rel="noreferrer">OpenAI, Realtime API</a> but the text of the conversation is available only as a separate transcription.</p>
+
+<p>The turn budget is split across stages in advance; otherwise an overrun is visible only in total, and nobody knows which stage to speed up. For Meridian's cascade the split is 250 ms to detect the end of the phrase, 100 ms for the final recognition text, 300 ms to the language model's first phrase and 150 ms to the first audio of synthesis. The end-of-phrase threshold is the hardest to choose: with a short pause the patient's phrase is cut into parts, with a long one the wait uses up the budget. The language model fits into 300 ms only with streaming generation, where synthesis voices the first sentence while the next ones are being generated.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 350" role="img" aria-label="A state machine of a voice turn: the states listening, transcribing, thinking and speaking carry budgets of 250, 100, 300 and 150 milliseconds that add up to 800; the caller's speech during thinking or speaking moves the turn to interrupted, which stops the audio and the generation, awaits the outcome of an EHR write already started and returns the machine to listening; a native audio model merges the three stages in the dashed frame, and the scale at the bottom lays out the stage budgets from the caller's end of speech to the first audio of the reply" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar11b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="250" y="28" font-family="Inter,sans-serif" font-size="11" fill="var(--sB)">a native audio model merges these three stages</text>
+  <rect x="236" y="38" width="620" height="104" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+  <rect x="30" y="56" width="170" height="66" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="115" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Listening</text>
+  <text x="115" y="104" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">≤ 250 ms · end of turn</text>
+  <rect x="250" y="56" width="170" height="66" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="335" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Transcribing</text>
+  <text x="335" y="104" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">≤ 100 ms · final ASR</text>
+  <rect x="460" y="56" width="170" height="66" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="545" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Thinking</text>
+  <text x="545" y="104" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">≤ 300 ms · first phrase</text>
+  <rect x="670" y="56" width="170" height="66" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="755" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Speaking</text>
+  <text x="755" y="104" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">≤ 150 ms · first audio</text>
+
+  <line x1="200" y1="89" x2="242" y2="89" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11b)"/>
+  <line x1="420" y1="89" x2="452" y2="89" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11b)"/>
+  <line x1="630" y1="89" x2="662" y2="89" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11b)"/>
+
+  <rect x="460" y="180" width="380" height="58" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="650" y="204" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Interrupted</text>
+  <text x="650" y="224" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">audio stops ≤ 200 ms · generation cancelled</text>
+  <line x1="545" y1="122" x2="545" y2="172" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar11b)"/>
+  <line x1="755" y1="122" x2="755" y2="172" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar11b)"/>
+  <text x="650" y="162" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">caller's speech</text>
+
+  <rect x="250" y="180" width="170" height="58" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="335" y="204" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">EHR write</text>
+  <text x="335" y="224" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">started: await outcome</text>
+  <line x1="460" y1="209" x2="428" y2="209" stroke="var(--sC)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar11b)"/>
+
+  <path d="M650,238 V262 H115 V130" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar11b)"/>
+  <text x="182" y="255" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">listen again</text>
+
+  <text x="40" y="292" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">turn budget 800 ms: from the caller's end of speech to the first audio of the reply</text>
+  <rect x="40" y="300" width="248" height="22" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.6"/>
+  <rect x="290" y="300" width="98" height="22" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <rect x="390" y="300" width="298" height="22" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <rect x="690" y="300" width="150" height="22" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="164" y="315" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">VAD 250</text>
+  <text x="339" y="315" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">ASR 100</text>
+  <text x="539" y="315" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">LLM 300</text>
+  <text x="765" y="315" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">TTS 150</text>
+  <text x="40" y="340" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0</text>
+  <text x="289" y="340" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">250</text>
+  <text x="389" y="340" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">350</text>
+  <text x="689" y="340" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">650</text>
+  <text x="840" y="340" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">800 ms</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The 800 milliseconds are split across stages in advance, so after an overrun it is known which stage caused it. Barge-in in the Thinking and Speaking states stops the audio and the generation, and a write already started runs to its outcome, because a request already sent to the system of record may have been executed.</figcaption>
+</figure>
+
+<p>Barge-in adds a fifth state to the machine. From Thinking and Speaking the caller's speech moves the turn to Interrupted: playback stops within 200 ms, generation is cancelled, and the machine returns to listening. Cancelling a task in asynchronous code interrupts it at the nearest await point, and if that point is a request to a system of record, it is unknown whether the request was executed. The listing below separates cancellable speech from a non-cancellable write.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">voice_turn.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+
+BUDGET_MS = {"listening": 250.0, "transcribing": 100.0, "thinking": 300.0, "speaking": 150.0}
+TARGET_MS = 800.0                               # from the caller's end of speech to the first audio
+
+
+@dataclass
+class Clock:
+    ms: float = 0.0                             # virtual time: the test does not wait
+
+
+@dataclass(frozen=True)
+class TurnPlan:
+    costs: dict[str, float]                     # how long each stage would take
+    first: str
+    action: str | None = None
+    action_ms: float = 0.0
+    second: str = ""
+
+
+@dataclass
+class VoiceTurn:
+    clock: Clock
+    committed: list[str]                        # the effect ledger is kept longer than the turn
+    spent: dict[str, float] = field(default_factory=dict)
+    spoken: list[str] = field(default_factory=list)
+    state: str = "listening"
+    first_audio_ms: float | None = None
+
+    async def stage(self, name: str, cost: float) -&gt; None:
+        self.state = name
+        await asyncio.sleep(0)                  # the point where barge-in cancels the turn
+        self.clock.ms += cost
+        self.spent.setdefault(name, cost)
+
+    async def say(self, text: str, cost: float) -&gt; None:
+        await self.stage("speaking", cost)
+        if self.first_audio_ms is None:
+            self.first_audio_ms = self.clock.ms
+        self.spoken.append(text)
+
+    async def commit(self, action: str, cost: float) -&gt; None:
+        await asyncio.sleep(0)
+        self.clock.ms += cost
+        self.committed.append(action)
+
+    async def run(self, plan: TurnPlan) -&gt; None:
+        for name in ("listening", "transcribing", "thinking"):
+            await self.stage(name, plan.costs[name])
+        await self.say(plan.first, plan.costs["speaking"])
+        if plan.action is not None:
+            effect = asyncio.ensure_future(self.commit(plan.action, plan.action_ms))
+            try:
+                await asyncio.shield(effect)
+            except asyncio.CancelledError:
+                await effect                    # a started write runs to its outcome
+                raise
+            await self.say(plan.second, plan.costs["speaking"])
+        self.state = "done"
+
+    def breaches(self) -&gt; list[str]:
+        return [name for name, ms in self.spent.items() if ms &gt; BUDGET_MS[name]]
+
+
+async def converse(turn: VoiceTurn, plan: TurnPlan, barge_in_ms: float | None = None) -&gt; str:
+    task = asyncio.create_task(turn.run(plan))
+    while not task.done():
+        await asyncio.sleep(0)
+        if barge_in_ms is not None and turn.clock.ms &gt;= barge_in_ms and not task.cancelling():
+            task.cancel()                       # the caller spoke: speech and generation stop
+    try:
+        await task
+    except asyncio.CancelledError:
+        turn.state = "interrupted"
+    return turn.state
+
+
+async def main() -&gt; None:
+    fast = {"listening": 240.0, "transcribing": 90.0, "thinking": 280.0, "speaking": 140.0}
+    plan = TurnPlan(fast, "Booking a nurse callback.", "callback:P-12", 400.0,
+                    "Done: a nurse will call you back within two hours.")
+
+    calm = VoiceTurn(Clock(), [])
+    assert await converse(calm, plan) == "done"
+    assert calm.first_audio_ms == 750.0 and calm.breaches() == []
+
+    ledger: list[str] = []
+    early = VoiceTurn(Clock(), ledger)
+    assert await converse(early, plan, barge_in_ms=300.0) == "interrupted"
+    assert ledger == [] and early.spoken == []                  # interrupted before the write: no record
+
+    late = VoiceTurn(Clock(), ledger)
+    assert await converse(late, plan, barge_in_ms=750.0) == "interrupted"
+    assert ledger == ["callback:P-12"]                          # the write was under way: completed
+    assert late.spoken == ["Booking a nurse callback."]
+
+    slow = VoiceTurn(Clock(), [])
+    await converse(slow, TurnPlan({**fast, "thinking": 420.0}, "One moment, checking."))
+    assert slow.breaches() == ["thinking"] and (slow.first_audio_ms or 0.0) &gt; TARGET_MS
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+    print("the turn fits 800 ms; barge-in stops speech but not a write already started")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="BUDGET_MS = {">line 6</span><p>Stage budgets are stored next to the overall target and are checked separately, so an overrun is attributed to a stage. The 800 ms target is counted from the caller's end of speech. Counting from the moment recognition produced text would leave out the 350 ms for end-of-phrase detection and the final recognition text.</p></div>
+  <div><span class="at" data-anchor="async def stage(">line 33</span><p>Every stage contains an await point where the task can be cancelled. In a production pipeline this is the wait for the next recognition fragment, model token or synthesis buffer; the clock is virtual so that the test does not depend on machine load.</p></div>
+  <div><span class="at" data-anchor="await asyncio.shield(effect)">line 57</span><p>The write is created as a separate task and awaited through <code>shield</code>: the cancellation of the turn is not propagated to the write task. The reference to the task is kept in a variable, so it can still be awaited after the cancellation.</p></div>
+  <div><span class="at" data-anchor="await effect ">line 59</span><p>After the cancellation the turn waits for the write's outcome and only then finishes. The caller does not hear "done", but the effect ledger already holds the callback. The next turn reads the ledger, tells the caller about the booked callback and does not book a second one.</p></div>
+  <div><span class="at" data-anchor="barge_in_ms=300.0">line 92</span><p>Barge-in during thinking comes before the write has started, and nothing appears in the ledger. Cancellation before an action begins leaves no side effects; the case of a write already started is checked next.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Cancelling the whole turn, tool calls included, on the first sound on the line. A cough, a child's voice near the phone or the echo of the agent's own synthesis interrupts a write mid-request, and the system no longer knows whether the callback was created. The barge-in threshold is tuned on recordings of real calls, and started writes run to their outcome.</div>
+
+<h3 id="s-11-7"><span class="num">11.7</span>Explainability and trust calibration</h3>
+
+<p>An explanation answers the physician's question "why is the assistant proposing this" and can mislead the physician without containing a single factual error. The first way: the explanation is written after the decision and names plausible reasons that played no part in the choice. The second: it cites data obtained after the decision, for example a formulary lookup. One rule removes both: the explanation is built from the run's trace, that is, the record of model and tool calls and retrieved sources in the order they appeared (the trace is defined in <a href="#s-13-2" data-secref="13.2">Section 13.2</a>), and it contains nothing that was not in the trace before the moment of decision.</p>
+
+<p>Such an explanation is called trace-grounded. Every claim in it refers to trace elements that precede the decision: retrieved sources, tool calls with their results and applied rules. A claim without such a reference does not enter the explanation, and evidence the reader may not access is shown only as the fact that it exists, without content or title.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">explanation.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel
+
+
+class Span(BaseModel):
+    span_id: str
+    seq: int                                    # order in the run's trace
+    kind: Literal["retrieval", "tool", "policy"]
+    name: str
+    detail: str
+    user_may_open: bool = True
+
+
+class Claim(BaseModel):
+    text: str
+    evidence: list[str]                         # span ids from the trace
+
+
+class Explanation(BaseModel):
+    run_id: str
+    claims: list[Claim]
+    sources: list[str]
+    tools: list[str]
+    policies: list[str]
+    withheld: int                               # evidence the user may not open
+
+
+class Unsupported(ValueError):
+    pass
+
+
+def explain(run_id: str, trace: list[Span], decided_at: int, claims: list[Claim]) -&gt; Explanation:
+    """The explanation is assembled from the trace; a claim without evidence in it is rejected."""
+    by_id = {span.span_id: span for span in trace}
+    used: dict[str, Span] = {}
+    for claim in claims:
+        if not claim.evidence:
+            raise Unsupported(f"no evidence: {claim.text}")
+        for span_id in claim.evidence:
+            span = by_id.get(span_id)
+            if span is None:
+                raise Unsupported(f"{claim.text}: {span_id} is not in the trace")
+            if span.seq &gt;= decided_at:
+                raise Unsupported(f"{claim.text}: {span_id} appeared after the decision")
+            used[span_id] = span
+
+    def shown(kind: str) -&gt; list[str]:
+        return [f"{s.name}: {s.detail}" for s in used.values() if s.kind == kind and s.user_may_open]
+
+    return Explanation(run_id=run_id, claims=claims, sources=shown("retrieval"), tools=shown("tool"),
+                       policies=shown("policy"),
+                       withheld=sum(not s.user_may_open for s in used.values()))
+
+
+if __name__ == "__main__":
+    trace = [
+        Span(span_id="s1", seq=1, kind="retrieval", name="Protocol 'Sepsis in adults'",
+             detail="rev. 2026-03, section 3.2"),
+        Span(span_id="s2", seq=2, kind="tool", name="get_allergies", detail="no allergies found"),
+        Span(span_id="s3", seq=3, kind="retrieval", name="Psychiatric assessment", detail="2025-11",
+             user_may_open=False),
+        Span(span_id="s4", seq=4, kind="policy", name="order.medication",
+             detail="an order requires clinician approval"),
+        Span(span_id="s5", seq=6, kind="retrieval", name="Pharmacy formulary", detail="ceftriaxone"),
+    ]
+    claims = [
+        Claim(text="Antibiotic therapy within the first hour is indicated", evidence=["s1"]),
+        Claim(text="No allergy contraindications", evidence=["s2", "s3"]),
+        Claim(text="The order awaits your approval", evidence=["s4"]),
+    ]
+    exp = explain("run-12", trace, decided_at=5, claims=claims)
+    assert exp.sources == ["Protocol 'Sepsis in adults': rev. 2026-03, section 3.2"]
+    assert exp.tools == ["get_allergies: no allergies found"] and exp.withheld == 1
+    assert all(any(s.detail in line for s in trace) for line in exp.sources + exp.tools + exp.policies)
+
+    for bad in (Claim(text="The patient is not pregnant", evidence=[]),
+                Claim(text="Renal function is normal", evidence=["s9"]),
+                Claim(text="The drug is on the formulary", evidence=["s5"])):
+        try:
+            explain("run-12", trace, decided_at=5, claims=[bad])
+            raise AssertionError(f"let through: {bad.text}")
+        except Unsupported:
+            pass
+    print("the explanation contains only what is in the trace before the decision")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="evidence: list[str]">line 19</span><p>A claim refers to trace elements by identifier. The model writes the text of the claim, and the trace confirms the evidence.</p></div>
+  <div><span class="at" data-anchor="if span.seq &gt;= decided_at:">line 46</span><p>Evidence that appeared after the decision is rejected: it could confirm the decision in hindsight but could not have caused it.</p></div>
+  <div><span class="at" data-anchor="withheld=sum(">line 55</span><p>Evidence the reader may not open is counted but not named. The physician sees that the claim has grounds with restricted access, and the document's title stays undisclosed.</p></div>
+</div>
+</figure>
+
+<p>Trust calibration is measured from decisions, and three quantities are computed for every class of actions. The acceptance rate, the share accepted without changes, shows how often the proposal matches the physician's decision. The override rate, the share edited or rejected, shows the opposite and serves as the principal quality signal. Time to decision shows whether the physician reads the card: a median of one and a half seconds for an order with five arguments indicates that the physician does not read it.</p>
+
+<p>These quantities matter above all for decisions on pre-authorisation. A class in which physicians almost never correct the assistant becomes a candidate for dropping approval under four conditions at once: there are many decisions, the upper bound of the override rate is below the threshold, the decisions are not too fast, and no action was later reversed by another specialist. The rule only proposes, a clinical committee decides, and medication orders are excluded from pre-authorisation by policy in advance.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">trust_metrics.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import math
+import statistics
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(frozen=True)
+class Decision:
+    action_class: str
+    outcome: Literal["accepted", "modified", "rejected"]
+    shown_at: float
+    decided_at: float
+    reverted_later: bool = False                # a pharmacist or colleague later reversed the action
+
+
+@dataclass(frozen=True)
+class ClassStats:
+    action_class: str
+    n: int
+    acceptance: float
+    override: float
+    override_upper: float                       # upper bound of the 95 % Wilson interval
+    median_decision_s: float
+    reverted: int
+
+
+def wilson_upper(k: int, n: int, z: float = 1.96) -&gt; float:
+    p = k / n
+    centre = p + z * z / (2 * n)
+    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (centre + margin) / (1 + z * z / n)
+
+
+def by_class(decisions: list[Decision]) -&gt; dict[str, ClassStats]:
+    groups: dict[str, list[Decision]] = defaultdict(list)
+    for d in decisions:
+        groups[d.action_class].append(d)
+    out: dict[str, ClassStats] = {}
+    for name, ds in sorted(groups.items()):
+        accepted = sum(d.outcome == "accepted" for d in ds)
+        overridden = len(ds) - accepted
+        out[name] = ClassStats(name, len(ds), accepted / len(ds), overridden / len(ds),
+                               wilson_upper(overridden, len(ds)),
+                               statistics.median(d.decided_at - d.shown_at for d in ds),
+                               sum(d.reverted_later for d in ds))
+    return out
+
+
+@dataclass(frozen=True)
+class WideningRule:
+    min_decisions: int = 300
+    max_override_upper: float = 0.02
+    min_median_s: float = 4.0                   # faster than this: decisions are not read
+    never: frozenset[str] = frozenset({"order.medication"})
+
+    def propose(self, s: ClassStats) -&gt; tuple[bool, str]:
+        if s.action_class in self.never:
+            return False, "the class is excluded from pre-authorisation by policy"
+        if s.n &lt; self.min_decisions:
+            return False, f"too few decisions: {s.n}"
+        if s.median_decision_s &lt; self.min_median_s:
+            return False, "decisions too fast: a sign of fatigue, not of trust"
+        if s.override_upper &gt; self.max_override_upper:
+            return False, f"override upper bound {s.override_upper:.3f}"
+        if s.reverted:
+            return False, "some actions were reversed later"
+        return True, "refer pre-authorisation of the class to the clinical committee"
+
+
+def simulate(action_class: str, n: int, overrides: int, seconds: float) -&gt; list[Decision]:
+    return [Decision(action_class, "modified" if i &lt; overrides else "accepted", 60.0 * i, 60.0 * i + seconds)
+            for i in range(n)]
+
+
+if __name__ == "__main__":
+    log = (simulate("order.lab", 400, 1, 9.0) + simulate("order.nursing", 500, 0, 1.5)
+           + simulate("order.medication", 600, 2, 12.0) + simulate("order.imaging", 120, 0, 10.0)
+           + simulate("order.referral", 350, 12, 15.0))
+    stats = by_class(log)
+    rule = WideningRule()
+    assert round(stats["order.referral"].override, 3) == 0.034
+    assert stats["order.lab"].acceptance == 399 / 400 and stats["order.lab"].median_decision_s == 9.0
+    verdicts = {name: rule.propose(s)[0] for name, s in stats.items()}
+    assert verdicts == {"order.imaging": False, "order.lab": True, "order.nursing": False,
+                        "order.medication": False, "order.referral": False}
+    assert "fatigue" in rule.propose(stats["order.nursing"])[1]
+    print("pre-authorisation is proposed only for order.lab: the other classes failed the thresholds")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="reverted_later: bool">line 16</span><p>A later reversal by a pharmacist or colleague reveals errors the approving physician missed. Without this signal the metric measures only the physician's agreement with the assistant, and the correctness of the order is not checked by it.</p></div>
+  <div><span class="at" data-anchor="if s.median_decision_s &lt; self.min_median_s:">line 64</span><p>The speed of decisions is checked before the override rate: with decisions taking a second and a half, the absence of overrides is explained by the cards not being read and says nothing about the quality of the proposals.</p></div>
+  <div><span class="at" data-anchor="if s.override_upper &gt; self.max_override_upper:">line 66</span><p>The threshold is compared with the upper bound of the confidence interval. The observed share is unsuitable for this: zero overrides in thirty decisions is compatible with a true override rate of about eleven per cent.</p></div>
+</div>
+</figure>
+
+<h3 id="s-11-8" data-level="2"><span class="num">11.8</span>On Google Cloud: the Live API and streaming</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Gemini Live API</span>
+  <span class="tag">ADK</span>
+  <span class="tag">Cloud Run</span>
+</div>
+
+<p data-level="2">The Gemini Live API is available in Gemini Enterprise Agent Platform (formerly Vertex AI) and in the Gemini API. According to the Agent Platform documentation as of September 2026, the Live API works over a stateful, persistent WebSocket connection: as input it accepts audio as 16-bit PCM at 16 kHz, video frames at one frame per second and text, and it replies with audio at 24 kHz and text.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api" target="_blank" rel="noreferrer">Google Cloud, Gemini Live API</a> The model detects the end of speech itself with a configurable silence duration. On barge-in the server cancels generation, tells the client about the interruption and discards pending function calls, sending the client their identifiers.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api/configure-language-voice" target="_blank" rel="noreferrer">Google Cloud, Configure language and voice</a> The three stages in the dashed frame of the voice-turn state machine merge into one, and the 800 ms are split between waiting for the end of the phrase, the network and the model's time to first audio.</p>
+
+<p data-level="2">The Gemini API documentation, where the Live API has preview status, gives a default silence duration of about 800 ms and recommends values from 500 to 800 ms: with a shorter threshold a phrase is split into fragments, and the quality of recognition and of the response drops.<a class="src" href="https://ai.google.dev/gemini-api/docs/live-api/capabilities" target="_blank" rel="noreferrer">ai.google.dev, Live API capabilities</a> The default takes up Meridian's whole turn budget, and the recommended range leaves no more than 300 ms for the model and the network, so the threshold is tuned on recordings of Meridian's calls. For client applications that connect to the Gemini API directly the documentation recommends ephemeral tokens instead of API keys;<a class="src" href="https://ai.google.dev/gemini-api/docs/live-api" target="_blank" rel="noreferrer">ai.google.dev, Live API</a> in the Agent Platform WebSocket guide a server-side proxy handles authentication.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api/get-started-websocket" target="_blank" rel="noreferrer">Google Cloud, Live API using WebSockets</a></p>
+
+<p data-level="2">A discarded function call does not cancel a request the application has already sent to the EHR, so tools with side effects execute on the application side with an idempotency key and an effect ledger. The case-file constraint still holds: the caller's voice is itself health data, and processing audio outside the perimeter requires a decision by the customer.</p>
+
+<p data-level="2">The physician's text assistant is built on the Agent Development Kit. ADK distinguishes token streaming in SSE mode for chat from a bidirectional mode with experimental status, in which <code>run_live</code> and a <code>LiveRequestQueue</code> exchange audio and events with the model, including the interruption flag.<a class="src" href="https://adk.dev/live/" target="_blank" rel="noreferrer">adk.dev, Live</a> A tool can declare that it requires confirmation: ADK then emits an event with an <code>adk_request_confirmation</code> function call to the client, and the client answers with a function response carrying the same call identifier and the confirmation flag.<a class="src" href="https://adk.dev/tools-custom/confirmation/" target="_blank" rel="noreferrer">adk.dev, Tool confirmation</a> The approval card connects to this mechanism: the confirmation event is converted into the <code>approval_request</code> of <a href="#s-11-5" data-secref="11.5">Section 11.5</a>, and the interface's response passes the check of a token bound to the arguments.</p>
+
+<p data-level="2">Tool confirmation in ADK has experimental status and, according to the documentation, is not supported by the <code>DatabaseSessionService</code> and <code>VertexAiSessionService</code> session services. When the runtime runs as a Cloud Run service, the event log is stored outside its process, so that any instance returns the same tail on resumption: an idle Cloud Run instance can be shut down at any time, and data written to its file system does not persist after it stops.<a class="src" href="https://docs.cloud.google.com/run/docs/container-contract" target="_blank" rel="noreferrer">Google Cloud, Cloud Run container contract</a></p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>The main decision for the voice channel concerns the architecture: a cascade or a native audio model. Native voice models with bidirectional streaming are offered by other vendors too, for example OpenAI's Realtime API,<a class="src" href="https://developers.openai.com/api/docs/guides/realtime" target="_blank" rel="noreferrer">OpenAI, Realtime API</a> and a cascade can be assembled on any platform, including one with recognition inside the perimeter. For Meridian the architecture is determined by whether audio may be sent outside the perimeter: if not, a cascade with local recognition is used, and the 800 ms are shared by three models and a network boundary. The event protocol and binding approvals to arguments do not depend on this choice.</div>
+
+<h3 id="s-11-9" data-level="3"><span class="num">11.9</span>In depth: barge-in and side effects, unfaithful explanations, approval fatigue</h3>
+
+<h4 data-level="3">Barge-in in the middle of an action with a side effect</h4>
+
+<p data-level="3">The <code>voice_turn.py</code> listing distinguishes barge-in before a write starts from barge-in during it, but production has a third case: the request was sent and its outcome is unknown, because the connection to the system of record dropped together with the cancellation. Cancellation semantics consist of three rules. A tool without a side effect and a tool whose request has not been sent yet are cancelled at once. A sent request runs to its outcome, and when the outcome is unknown it is retried with the same idempotency key, as in <a href="#s-6-8" data-secref="6.8">Section 6.8</a>. To the words "no, wait" the agent reports what has already been done: "the callback is booked for 14:00, shall I cancel it?". The answer "cancelling" would be wrong, because the write has already been executed, so the cancellation becomes a new action with its own approval.</p>
+
+<h4 data-level="3">Unfaithful explanations</h4>
+
+<p data-level="3">A model asked to explain a decision it has already made may produce a rationalisation: text consistent with the decision but not necessarily with what led to it. Experiments with chains of reasoning show that answers are influenced by features the explanation never mentions, for example an order of options in the prompt's examples under which the correct option is always (A).<a class="src" href="https://arxiv.org/abs/2305.04388" target="_blank" rel="noreferrer">Turpin et al., NeurIPS 2023</a> A trace-grounded explanation does not retell the model's reasoning. It names evidence that existed before the decision, and the physician checks that evidence. The risk that evidence was picked for the explanation while the decision was made for another reason remains; it is checked by comparing the proposal with the proposal obtained without that evidence in the context, and the construction of evaluations is covered in <a href="#ch-12" data-secref="12">Chapter 12</a>.</p>
+
+<h4 data-level="3">Approval fatigue</h4>
+
+<p data-level="3">Approval fatigue shows in three metrics. The approval share rises, the median time to decision drops below the time needed to read the arguments and stops depending on the complexity of the card, and the override rate falls because the cards are no longer read. Control cards with a deliberately wrong argument are acceptable in a hospital only if they are guaranteed never to execute and are endorsed by the clinical committee. Control cards carry the risk of executing a wrong order, so the principal measure is reducing the number of cards: pre-authorising the classes that pass the thresholds of the <code>trust_metrics.py</code> listing frees attention for the rest. Widening proceeds in steps, from one department to the network, and narrowing back happens automatically as soon as a class stops passing the thresholds.</p>
+
+<h4 data-level="3">Accessibility and language switching in voice</h4>
+
+<p data-level="3">The hotline is called by people who speak slowly with long pauses, by people with hearing and speech impairments, and by people who switch from Russian to English to name a drug the way it is written in their discharge summary. With long pauses a fixed end-of-phrase threshold fires in the middle of a phrase, so the threshold adapts to the caller after false triggers. When the language switches, recognition configured for one language makes errors, so recognition is configured for both languages and a drug vocabulary, and drug names are confirmed by read-back before any write. The read-back is needed with a native audio model that switches languages by itself too; according to the documentation, the native audio models of the Gemini Live API work this way.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/live-api/configure-language-voice" target="_blank" rel="noreferrer">Google Cloud, Configure language and voice</a> For people who cannot speak, a text channel receives the same event stream and the same approvals.</p>
+
+<h4 data-level="3">Sources the user may not open</h4>
+
+<p data-level="3">With the order of <a href="#s-5-7" data-secref="5.7">Section 5.7</a>, the asker's permissions enter the query before ranking, and a document they may not access never reaches the context. The conflict between transparency and ACLs arises when the answer is read by someone other than the person it was assembled for: a resident opens the attending physician's run at a shift handover, or permissions narrowed between the answer and the viewing. The interface then shows the fact of the evidence without content or title, "grounds: 1 document with restricted access", because a title is data too: "psychiatric assessment" reveals more than the ACL allows. Permissions are checked again when the link is opened, and the context summary is filtered by the reader's permissions, otherwise its list of blocks would reveal the same titles.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why must the interface not detect an approval request from the text of the model's answer?</summary>
+<div class="ans"><p>The model phrases the same intent in different words, and an interface looking for a word misses the request under another wording. An approval request travels as a separate event type with arguments and an expiry, and the wording of the answer has no influence on whether the card appears.</p></div>
+</details>
+<details>
+<summary>The caller interrupted the agent after the request to book a callback had been sent. What does the system do?</summary>
+<div class="ans"><p>It stops the audio and the generation but waits for the write's outcome, and if the outcome is unknown it retries the request with the same idempotency key. The next turn receives the effect-ledger entry, and the agent tells the caller that the callback is already booked and how to cancel it.</p></div>
+</details>
+<details>
+<summary>The nursing orders class has five hundred decisions and not a single override. Why does the rule of <code>trust_metrics.py</code> not propose pre-authorisation?</summary>
+<div class="ans"><p>The median time to decision is a second and a half, less than it takes to read the arguments. With such decisions the absence of overrides indicates approval fatigue rather than a reliable assistant, and the override rate stops being a signal.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>The interface is part of the safety system: it shows what the agent knows, what it did and what it wants to do, and thereby determines which decision a human can make.</li>
+<li>The interface builds the screen from a numbered log of typed events: text, tool log, sources and approval cards are built separately, and the stream resumes from the last acknowledged number.</li>
+<li>An approval is granted per action, per plan or per class, covers only the shown and ticked arguments and expires; pre-authorisation widens only on the thresholds of decision metrics.</li>
+<li>The 800 ms budget of a voice turn is split across stages in advance; barge-in cancels audio and generation, and a write already started runs to its outcome. Explanations are built only from the trace up to the moment of decision.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-9" data-secref="9">Chapter 9: interrupts and approval tokens</a>
+<a href="#ch-10" data-secref="10">Chapter 10: trust boundaries and policies</a>
+<a href="#ch-15" data-secref="15">Chapter 15: Meridian's incidents in production</a>
+</p>
+</div>
+</section>

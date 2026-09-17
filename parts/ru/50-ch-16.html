@@ -1,0 +1,888 @@
+<!-- ────────────────────────── ГЛАВА 16 ────────────────────────── -->
+<section class="chapter" id="ch-16">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава шестнадцатая</p>
+    <span class="strata" role="img" aria-label="Слои F и G: люди и процесс, продукт и обратная связь">
+      <i></i><i></i><i></i><i></i><i></i><i data-s="F"></i><i data-s="G"></i>
+    </span>
+  </div>
+  <h2 id="s-16"><span class="num">16</span>От полевых паттернов к модулям и бизнес-ценности</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>отличать полевой паттерн от совпадения кода и применять к нему правило трёх;</li>
+<li>выделять модуль, в котором различия заказчиков выражены типизированной конфигурацией и проверены тестами совместимости;</li>
+<li>писать feature request с затронутыми заказчиками, измеренной стоимостью обхода и доказательствами;</li>
+<li>считать бизнес-кейс от базовой линии и контрфактуала диапазоном сценариев;</li>
+<li>привязывать каждый платёж SOW к исполнимому критерию приёмки.</li>
+</ul>
+</div>
+
+<h3 id="s-16-1"><span class="num">16.1</span>Задача: модуль из трёх engagements</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-6" data-secref="G.6">Досье CF6 · Helix Manufacturing</a></span>
+  <span class="tag">четвёртый заказчик</span>
+  <span class="tag">14 заводов</span>
+  <span class="tag">3 без сети</span>
+  <span class="tag">SOW</span>
+  <span>производство</span>
+</div>
+
+<p>Одна команда FDE завершила три engagement: ассистента контакт-центра Nordbank (<a href="#ch-6" data-secref="6">глава 6</a>), ассистента операторов и триаж инцидентов Orion (<a href="#ch-4" data-secref="4">главы 4</a> и <a href="#ch-8" data-secref="8">8</a>), ассистента для жителей Northgate (<a href="#ch-10" data-secref="10">глава 10</a>). Отрасли и регуляторика у трёх систем разные, а скелет один: ассистент отвечает только по источникам заказчика со ссылками на них, а действие с побочным эффектом исполняет после одобрения человеком. Каждый раз этот скелет писали заново, копируя части предыдущего репозитория.</p>
+
+<p>Четвёртым заказчиком стала Helix Manufacturing. Ассистент техников из <a href="#ch-14" data-secref="14">главы 14</a> объясняет дефект по журналу обслуживания; в новом engagement он получает действие заказа запчасти, которое одобряет инженер площадки, в том числе на трёх заводах без сети. Staff FDE, назначенный на Helix, должен извлечь из трёх репозиториев модуль «обоснованный ассистент с одобрениями», написать команде продукта feature request о том, чего не хватило платформе, спроектировать развёртывание модуля у четырёх заказчиков и подготовить для Helix бизнес-кейс и SOW. Числа в главе вымышлены, как и сами заказчики, и отраслевой статистикой не являются.</p>
+
+<h3 id="s-16-2"><span class="num">16.2</span>Почему ценность Staff растёт нелинейно</h3>
+
+<p>Вклад FDE измеряют тем, что работает в production у заказчика, а вклад Staff FDE ещё и тем, насколько дешевле становится следующее engagement. Скелет ассистента в Nordbank занял 34 инженерные недели, в Orion, собранном из копии, 26, в Northgate 22. Копирование сократило трудоёмкость на 8 и затем ещё на 4 недели, но часть недель в каждом engagement уходила на повторное исправление дефектов, уже исправленных в предыдущей копии. Цель для Helix составляет девять недель на подключение модуля и ноль недель на повторное исправление уже исправленных дефектов.</p>
+
+<dl class="def">
+<dt>Переиспользуемый модуль <span class="en">(reusable module)</span></dt>
+<dd>Код, решающий повторяющуюся задачу нескольких заказчиков одним ядром, в котором различия заказчиков вынесены в проверяемую конфигурацию. У модуля есть владелец, версия, контракт, проверяемый на конфигурации каждого заказчика, и путь обновления; изменённая копия в чужом репозитории модулем не является.</dd>
+</dl>
+
+<p>Код engagement без владельца становится обязательством после ухода инженера, как показывает <a href="#s-1-6" data-secref="1.6">раздел 1.6</a>, а копии умножают это обязательство на число заказчиков: исправление уязвимости вносится N раз в N разошедшихся репозиториев. В модуле исправление вносится один раз и передаётся всем заказчикам со следующим выпуском. Листинги ниже показывают эту разницу на одном дефекте.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Копии и модуль">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_copy.py</span></figcaption>
+      <pre><code># Три копии одного ассистента после трёх engagements; файлы склеены для показа.
+
+# nordbank/assistant.py
+NORDBANK_PROMPT = "Вы помощник оператора Nordbank. Отвечайте только по базе знаний банка."
+NORDBANK_MIN_SCORE = 0.62
+
+
+def nordbank_prompt(question: str, passages: list[tuple[str, float]]) -&gt; str | None:
+    cited = [text for text, score in passages if score &gt;= NORDBANK_MIN_SCORE]
+    return f"{NORDBANK_PROMPT}\n{cited}\n{question}" if cited else None
+
+
+def nordbank_execute(action: str, target: str, approved: set[tuple[str, str]]) -&gt; bool:
+    return any(name == action for name, _ in approved)
+
+
+# orion/assistant.py: копия nordbank с другими именами и порогом
+ORION_PROMPT = "Вы помощник оператора Orion Telecom. Отвечайте только по базе знаний."
+ORION_MIN_SCORE = 0.55
+
+
+def orion_prompt(question: str, passages: list[tuple[str, float]]) -&gt; str | None:
+    cited = [text for text, score in passages if score &gt;= ORION_MIN_SCORE]
+    return f"{ORION_PROMPT}\n{cited}\n{question}" if cited else None
+
+
+def orion_execute(action: str, target: str, approved: set[tuple[str, str]]) -&gt; bool:
+    return any(name == action for name, _ in approved)
+
+
+# northgate/assistant.py: копия orion; дефект одобрения нашёл аудит города
+NORTHGATE_PROMPT = "Вы помощник жителя Northgate. Отвечайте только по документам города."
+NORTHGATE_MIN_SCORE = 0.70
+
+
+def northgate_prompt(question: str, passages: list[tuple[str, float]]) -&gt; str | None:
+    cited = [text for text, score in passages if score &gt;= NORTHGATE_MIN_SCORE]
+    return f"{NORTHGATE_PROMPT}\n{cited}\n{question}" if cited else None
+
+
+def northgate_execute(action: str, target: str, approved: set[tuple[str, str]]) -&gt; bool:
+    return (action, target) in approved             # исправлено только здесь
+
+
+if __name__ == "__main__":
+    approved = {("submit", "req-17")}               # человек одобрил заявку req-17
+    assert not northgate_execute("submit", "req-99", approved)
+    assert nordbank_execute("submit", "req-99", approved)       # исправление не перенесено
+    assert orion_execute("submit", "req-99", approved)
+    passages = [("регламент 4.2", 0.60)]
+    assert orion_prompt("срок?", passages) is not None
+    assert nordbank_prompt("срок?", passages) is None           # тот же поиск, другой порог в коде
+    print("исправление есть в одной копии из трёх")</code></pre>
+    </figure>
+    <p>Имя заказчика, системный промпт и порог релевантности вписаны константами в три копии одного решения. Дефект, при котором одобрение заявки req-17 разрешает исполнить req-99, исправлен только в Northgate. В Nordbank и Orion он остаётся, и общего теста, который бы это показал, у копий нет.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">client_module.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+MODULE_VERSION = "2.4.0"
+SUPPORTED_SCHEMAS = frozenset({3, 4})         # схема 2 снята с поддержки в версии 2.0.0
+
+
+class ApprovalPolicy(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    approver_role: str = Field(min_length=3)
+    ttl_s: int = Field(default=900, ge=60, le=86_400)
+
+
+class ClientConfig(BaseModel):
+    """Всё, чем заказчики отличаются. Ядро модуля не содержит имён заказчиков."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    schema_version: int
+    client: str = Field(pattern=r"^[a-z][a-z0-9-]{2,30}$")
+    prompt_id: str                             # версия промпта в реестре инструкций
+    min_score: float = Field(ge=0.3, le=0.95)
+    public_users: bool = False
+    require_citations: bool = True
+    offline: bool = False
+    model_host: Literal["cloud", "on_site"] = "cloud"
+    actions: dict[str, ApprovalPolicy] = Field(default_factory=dict)
+
+    @property
+    def namespace(self) -&gt; str:
+        return f"{self.client}/"
+
+    @model_validator(mode="after")
+    def allowed_combinations(self) -&gt; ClientConfig:
+        if self.schema_version not in SUPPORTED_SCHEMAS:
+            raise ValueError(f"схема {self.schema_version} не поддерживается модулем {MODULE_VERSION}")
+        if self.public_users and not self.require_citations:
+            raise ValueError("публичный сервис отвечает только со ссылками на источники")
+        if self.offline and self.model_host != "on_site":
+            raise ValueError("изолированной площадке нужна модель на площадке")
+        return self
+
+
+@dataclass(frozen=True)
+class Passage:
+    doc_id: str                                # "helix/wo-118": арендатор в идентификаторе
+    text: str
+    score: float
+
+
+@dataclass(frozen=True)
+class GroundedAssistant:
+    config: ClientConfig
+
+    def prompt(self, question: str, passages: list[Passage]) -&gt; str | None:
+        own = [p for p in passages if p.doc_id.startswith(self.config.namespace)]
+        cited = sorted((p for p in own if p.score &gt;= self.config.min_score), key=lambda p: -p.score)
+        if self.config.require_citations and not cited:
+            return None
+        sources = "\n".join(f"[{p.doc_id}] {p.text}" for p in cited)
+        return f"@{self.config.prompt_id}\n{sources}\n{question}"
+
+    def may_execute(self, action: str, target: str,
+                    approvals: dict[tuple[str, str], float], now: float) -&gt; bool:
+        policy = self.config.actions.get(action)
+        granted_at = approvals.get((action, target))
+        return policy is not None and granted_at is not None and now - granted_at &lt;= policy.ttl_s
+
+
+def compatibility_test(config: ClientConfig) -&gt; list[str]:
+    """Один контракт для всех; прогоняется на каждой конфигурации при каждом релизе."""
+    bot, ns = GroundedAssistant(config), config.namespace
+    failures: list[str] = []
+    leaked = bot.prompt("вопрос", [Passage("other/doc-1", "чужой документ", 0.99)]) or ""
+    if "other/" in leaked:
+        failures.append("документ другого заказчика попал в промпт")
+    ranked = bot.prompt("вопрос", [Passage(ns + "a", "слабый", config.min_score),
+                                   Passage(ns + "b", "сильный", 0.99)]) or ""
+    if not ranked or ranked.index(f"[{ns}b]") &gt; ranked.index(f"[{ns}a]"):
+        failures.append("источники не упорядочены по релевантности")
+    for action, policy in config.actions.items():
+        if bot.may_execute(action, "t-2", {(action, "t-1"): 0.0}, now=1.0):
+            failures.append(f"{action}: одобрение не привязано к цели")
+        if bot.may_execute(action, "t-1", {(action, "t-1"): 0.0}, now=policy.ttl_s + 1.0):
+            failures.append(f"{action}: принято просроченное одобрение")
+    if bot.may_execute("undeclared", "t-1", {("undeclared", "t-1"): 0.0}, now=1.0):
+        failures.append("исполнено действие, которого нет в конфигурации")
+    return failures
+
+
+if __name__ == "__main__":
+    configs = [
+        ClientConfig(schema_version=4, client="nordbank", prompt_id="nb-contact@7", min_score=0.62,
+                     actions={"create_dispute": ApprovalPolicy(approver_role="operator")}),
+        ClientConfig(schema_version=3, client="orion", prompt_id="or-assist@12", min_score=0.55,
+                     actions={"publish_status": ApprovalPolicy(approver_role="duty_engineer", ttl_s=300)}),
+        ClientConfig(schema_version=4, client="northgate", prompt_id="ng-citizen@5", min_score=0.70,
+                     public_users=True, actions={"submit_request": ApprovalPolicy(approver_role="resident")}),
+        ClientConfig(schema_version=4, client="helix", prompt_id="hx-maint@1", min_score=0.60,
+                     offline=True, model_host="on_site",
+                     actions={"order_part": ApprovalPolicy(approver_role="site_engineer", ttl_s=3600)}),
+    ]
+    assert {c.client: compatibility_test(c) for c in configs} == {c.client: [] for c in configs}
+    base = {"schema_version": 4, "client": "helix", "prompt_id": "hx-maint@1", "min_score": 0.6}
+    for bad in ({"public_users": True, "require_citations": False}, {"offline": True},
+                {"schema_version": 2}, {"approve_by_name": True}):
+        try:
+            ClientConfig.model_validate(base | bad)
+            raise AssertionError(f"недопустимая конфигурация принята: {bad}")
+        except ValidationError:
+            pass
+    print("модуль", MODULE_VERSION, "совместим с", len(configs), "конфигурациями заказчиков")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="Всё, чем заказчики отличаются">строка 19</span><p>Класс конфигурации содержит все различия заказчиков, которые выражены в коде модуля. Запрет лишних полей отвергает при загрузке конфигурацию с флагом <code>approve_by_name</code>, которого нет в схеме; без запрета флаг был бы отброшен без сообщения об ошибке.</p></div>
+        <div><span class="at" data-anchor="def allowed_combinations">строка 36</span><p>Валидатор отвергает сочетания, опасные при корректных полях: публичный сервис без ссылок на источники, изолированную площадку с облачной моделью.</p></div>
+        <div><span class="at" data-anchor="startswith(self.config.namespace)">строка 58</span><p>Изоляция арендаторов проверяется в ядре по пространству имён документа, поэтому документы ошибочно подключённого чужого индекса не попадают в промпт.</p></div>
+        <div><span class="at" data-anchor="def compatibility_test">строка 72</span><p>Один контракт исполняется на актуальной конфигурации каждого заказчика при каждом выпуске. Выпуск, не прошедший контракт хотя бы на одной конфигурации, не передаётся ни одному заказчику.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Различия заказчиков в копиях рассеяны по коду, а в модуле собраны в одном типизированном классе и проверяются при загрузке.</p>
+    <p>Исправление в копии остаётся в копии, а исправление в ядре становится поведением всех заказчиков с ближайшим выпуском.</p>
+    <p>У копий нет общего контракта, и расхождение обнаруживается при аудите или инциденте; контракт модуля исполняется до выпуска.</p>
+  </div>
+</div>
+
+<h3 id="s-16-3"><span class="num">16.3</span>Добыча паттернов</h3>
+
+<p>Паттерны добывают из записей трёх engagement: журналов решений, которые описаны в <a href="#s-1-8" data-secref="1.8">разделе 1.8</a>, истории коммитов, трасс и прогонов оценки. Журнал читают первым: код показывает форму решения, а ограничение, которое определило эту форму, записано в журнале. Совпадение кода само по себе паттерном не является: одинаковую функцию в двух репозиториях мог по привычке написать один инженер, и тогда за ней нет ни общей задачи, ни общего ограничения.</p>
+
+<dl class="def">
+<dt>Полевой паттерн <span class="en">(field pattern)</span></dt>
+<dd>Тройка из проблемы пользователя, ограничения среды и формы решения, которая независимо повторилась в нескольких engagement и подтверждена ссылками на записи.</dd>
+<dt>Реестр паттернов <span class="en">(pattern registry)</span></dt>
+<dd>Журнал кандидатов в паттерны с вхождениями по engagement, ссылками на доказательства и часами на обходы. Реестр показывает, какой кандидат готов стать модулем и какого признака не хватает остальным.</dd>
+</dl>
+
+<p>Порог задаёт правило трёх, которое Мартин Фаулер приводит со ссылкой на Дона Робертса: два похожих фрагмента кода ещё не требуют рефакторинга, а при третьем повторении общий код выделяется.<a class="src" href="https://en.wikipedia.org/wiki/Rule_of_three_(computer_programming)" target="_blank" rel="noreferrer">Fowler и др., Refactoring, 1999: правило трёх</a> Для полевых паттернов правило применяется к каждому признаку отдельно, а два вхождения переводят кандидата только в наблюдение. Одобрение действия проходит порог по всем признакам: пользователь просит исполнить действие, заказчик требует решения человека, а решение каждый раз состоит из прерывания, привязки одобрения к аргументам и записи в журнал.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Кандидат</th><th>Где встретился</th><th>Порог</th><th>Решение</th></tr></thead>
+<tbody>
+<tr><td>Ответ только по источникам со ссылками</td><td>CF1, CF4, CF5</td><td>3 из 3</td><td>ядро модуля</td></tr>
+<tr><td>Одобрение, привязанное к аргументам</td><td>CF1, CF4, CF5</td><td>3 из 3; обход 356 ч</td><td>ядро модуля и feature request</td></tr>
+<tr><td>Данные только в регионе</td><td>CF1, CF5; у CF4 без ссылки</td><td>2 из 3</td><td>наблюдение, проверка в Helix</td></tr>
+<tr><td>Адаптер SOAP к mainframe</td><td>CF1</td><td>1 из 3</td><td>остаётся у Nordbank</td></tr>
+<tr><td>Перерасчёт затрат по бизнес-единицам</td><td>CF4</td><td>1 из 3</td><td>остаётся у Orion</td></tr>
+</tbody></table></div>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">pattern_registry.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+EVIDENCE_KINDS = ("decision:", "commit:", "trace:", "eval:")
+
+
+class Kind(StrEnum):
+    PROBLEM = "проблема"          # повторяющаяся задача пользователя
+    CONSTRAINT = "ограничение"    # повторяющееся ограничение среды
+    SOLUTION = "решение"          # повторяющаяся форма решения
+
+
+@dataclass(frozen=True)
+class Occurrence:
+    engagement: str               # код досье: "CF1"
+    kind: Kind
+    evidence: str                 # запись журнала, коммит, трасса или прогон оценки
+    workaround_hours: int = 0     # часы на обход ограничения продукта, по журналу времени
+
+
+@dataclass
+class Pattern:
+    id: str
+    title: str
+    occurrences: list[Occurrence] = field(default_factory=list)
+
+    def engagements(self, kind: Kind) -&gt; set[str]:
+        return {o.engagement for o in self.occurrences if o.kind == kind}
+
+    def promotion_blockers(self, threshold: int = 3) -&gt; list[str]:
+        """Пустой список означает, что паттерн готов стать модулем."""
+        blockers = [f"{kind}: {len(self.engagements(kind))} из {threshold}"
+                    for kind in Kind if len(self.engagements(kind)) &lt; threshold]
+        unverifiable = [o.engagement for o in self.occurrences
+                        if not o.evidence.startswith(EVIDENCE_KINDS)]
+        if unverifiable:
+            blockers.append(f"вхождения без проверяемой ссылки: {sorted(set(unverifiable))}")
+        return blockers
+
+
+@dataclass
+class PatternRegistry:
+    patterns: dict[str, Pattern] = field(default_factory=dict)
+
+    def record(self, pattern_id: str, title: str, occurrence: Occurrence) -&gt; None:
+        pattern = self.patterns.setdefault(pattern_id, Pattern(pattern_id, title))
+        if occurrence not in pattern.occurrences:          # повторный разбор не удваивает счёт
+            pattern.occurrences.append(occurrence)
+
+    def promotable(self) -&gt; list[str]:
+        return sorted(pid for pid, p in self.patterns.items() if not p.promotion_blockers())
+
+    def workaround_hours(self, pattern_id: str) -&gt; dict[str, int]:
+        hours: defaultdict[str, int] = defaultdict(int)
+        for o in self.patterns[pattern_id].occurrences:
+            hours[o.engagement] += o.workaround_hours
+        return dict(hours)
+
+
+if __name__ == "__main__":
+    reg = PatternRegistry()
+    approval, residency = "одобрение, привязанное к аргументам", "данные только в регионе"
+    for cf, action, hours in (("CF1", "create_dispute", 140), ("CF4", "publish_status", 96),
+                              ("CF5", "submit_request", 120)):
+        reg.record("approval", approval, Occurrence(cf, Kind.PROBLEM, f"decision:{cf}-{action}"))
+        reg.record("approval", approval, Occurrence(cf, Kind.CONSTRAINT, f"eval:{cf}-approvals"))
+        reg.record("approval", approval, Occurrence(cf, Kind.SOLUTION, f"commit:{cf}-{action}", hours))
+    reg.record("approval", approval, Occurrence("CF1", Kind.PROBLEM, "decision:CF1-create_dispute"))
+    for cf in ("CF1", "CF5"):
+        reg.record("residency", residency, Occurrence(cf, Kind.CONSTRAINT, f"decision:{cf}-dpo"))
+        reg.record("residency", residency, Occurrence(cf, Kind.SOLUTION, f"commit:{cf}-region"))
+    reg.record("residency", residency, Occurrence("CF4", Kind.PROBLEM, "по словам команды"))
+
+    assert len(reg.patterns["approval"].occurrences) == 9 and reg.promotable() == ["approval"]
+    assert reg.workaround_hours("approval") == {"CF1": 140, "CF4": 96, "CF5": 120}
+    blockers = reg.patterns["residency"].promotion_blockers()
+    assert "проблема: 1 из 3" in blockers and "ограничение: 2 из 3" in blockers
+    assert any("CF4" in b for b in blockers)
+    print("к модулю готов:", reg.promotable(), "· residency ждёт:", blockers)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="for kind in Kind if">строка 36</span><p>Порог проверяется по каждому признаку отдельно, и список блокеров называет недостающий признак вместе с числом вхождений.</p></div>
+  <div><span class="at" data-anchor="startswith(EVIDENCE_KINDS)">строка 38</span><p>Вхождение без ссылки на запись блокирует повышение. Слова «так было и у нас» указывают, где искать запись, и доказательством не считаются.</p></div>
+  <div><span class="at" data-anchor="hours[o.engagement] +=">строка 59</span><p>Часы суммируются по engagement, потому что заявке команде продукта нужна стоимость обхода у каждого затронутого заказчика.</p></div>
+</div>
+</figure>
+
+<p>Реестр ведут с первой недели engagement, а часы на обходы записывают в момент работы. Вхождение, восстановленное по памяти в последнюю неделю, не проходит проверку ссылок. Запись о кандидате, оставшемся у одного заказчика, объясняет следующей команде, почему его не переносят в модуль.</p>
+
+<h3 id="s-16-4"><span class="num">16.4</span>Модуль и multi-client deployment</h3>
+
+<p>Для каждого различия заказчиков, найденного при добыче паттернов, принимается одно из трёх решений. Различие, выразимое значением параметра, переносится в конфигурацию: порог релевантности, роль одобряющего, срок жизни одобрения, место исполнения модели. Различие, требующее другого кода у одного заказчика, реализуется в репозитории этого заказчика расширением за интерфейсом модуля, без форка ядра. Различие, которого не выразить без новой возможности платформы, оформляется feature request.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 380" role="img" aria-label="Поток от полевой работы к продукту: репозитории трёх engagement передают записи в реестр паттернов, кандидат, прошедший правило трёх, становится модулем с ядром и конфигурацией для каждого из четырёх заказчиков, модуль передаётся команде продукта, а пунктирные рёбра показывают feature requests из реестра и обновления, которые достигают заказчиков через их конфигурации и тесты совместимости" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar16a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <path d="M321,157 V36 H799 V149" fill="none" stroke="var(--sG)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar16a)"/>
+  <text x="560" y="27" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">feature request: заказчики, часы обхода, трассы</text>
+
+  <text x="100" y="97" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">репозитории engagement</text>
+  <rect x="20" y="108" width="160" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Nordbank · CF1</text>
+  <text x="100" y="146" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">журнал · трассы</text>
+  <rect x="20" y="174" width="160" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="195" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Orion · CF4</text>
+  <text x="100" y="212" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">коммиты · оценки</text>
+  <rect x="20" y="240" width="160" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="261" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Northgate · CF5</text>
+  <text x="100" y="278" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">аудит · трассы</text>
+  <path d="M180,133 H208 V265 H180" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  <line x1="180" y1="199" x2="228" y2="199" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar16a)"/>
+
+  <rect x="236" y="157" width="170" height="84" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="321" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">реестр паттернов</text>
+  <text x="321" y="203" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">вхождения · ссылки</text>
+  <text x="321" y="220" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">правило трёх</text>
+  <line x1="406" y1="199" x2="448" y2="199" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar16a)"/>
+  <text x="427" y="190" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">≥ 3</text>
+
+  <rect x="456" y="56" width="222" height="286" rx="8" fill="none" stroke="var(--sG)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="472" y="70" width="190" height="52" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="567" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">ядро модуля v2.4</text>
+  <text x="567" y="110" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ответ · одобрение · журнал</text>
+  <text x="567" y="142" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">конфигурация на заказчика</text>
+
+  <rect x="472" y="152" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="169" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Nordbank</text>
+  <text x="486" y="184" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">approver=operator</text>
+  <rect x="638" y="166" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <rect x="472" y="198" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="215" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Orion</text>
+  <text x="486" y="230" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ttl_s=300</text>
+  <rect x="638" y="212" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <rect x="472" y="244" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="261" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Northgate</text>
+  <text x="486" y="276" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">public_users=true</text>
+  <rect x="638" y="258" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <rect x="472" y="290" width="190" height="40" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="486" y="307" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">Helix</text>
+  <text x="486" y="322" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">offline=true</text>
+  <rect x="638" y="304" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+
+  <line x1="678" y1="199" x2="728" y2="199" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar16a)"/>
+  <rect x="736" y="157" width="126" height="84" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="799" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">команда</text>
+  <text x="799" y="201" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">продукта</text>
+  <text x="799" y="220" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">платформа</text>
+
+  <path d="M799,241 V300 H686" fill="none" stroke="var(--sG)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar16a)"/>
+  <text x="788" y="270" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">обновления</text>
+  <text x="788" y="287" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">v2.4 → v2.5</text>
+
+  <rect x="236" y="356" width="12" height="12" rx="2" fill="var(--sD)" opacity="0.85"/>
+  <text x="256" y="366" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">тест совместимости: каждая конфигурация проходит контракт модуля на каждом выпуске</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Паттерн становится модулем, когда различия между заказчиками выражаются типизированной конфигурацией, которую проверяет тест совместимости. Каждое различие получает одно из трёх решений: параметр переносится в конфигурацию, различие в коде остаётся расширением в репозитории engagement, недостающая возможность платформы передаётся команде продукта заявкой.</figcaption>
+</figure>
+
+<p>Конфигурация в листинге <code>client_module.py</code> из <a href="#s-16-2" data-secref="16.2">раздела 16.2</a> типизирована и проверяется при загрузке, поэтому ошибка в ней обнаруживается до первого вызова в production. Проверка типов отвергает опечатки и лишние поля, валидатор отвергает опасные сочетания, а тест совместимости исполняет один контракт на конфигурации каждого заказчика. Сам выпуск ядра проходит ворота <a href="#s-12-8" data-secref="12.8">раздела 12.8</a> на оценочных наборах всех заказчиков сразу.</p>
+
+<p>Версии модуля нумеруются по семантическому версионированию: старший номер растёт при несовместимом изменении, средний при совместимом добавлении возможности, младший при исправлении.<a class="src" href="https://semver.org/" target="_blank" rel="noreferrer">Semantic Versioning 2.0.0</a> Несовместимым считается и изменение схемы конфигурации, после которого прежде допустимая конфигурация перестаёт загружаться. Поэтому модуль некоторое время принимает две версии схемы, конфигурации заказчиков мигрируют по одной с прогоном теста, и только затем старая схема снимается.</p>
+
+<p>При multi-client deployment каждый заказчик разворачивает модуль в своём периметре. Общими остаются код ядра, контракт и процесс выпуска; данные, индексы, ключи, журналы и одобрения хранятся в периметре заказчика. Там, где один экземпляр обслуживает нескольких арендаторов, как платформа Orion из <a href="#s-13-5" data-secref="13.5">раздела 13.5</a>, пространство имён выводится из идентичности вызывающего и проверяется ядром при каждом обращении к источникам.</p>
+
+<div class="note" data-level="2">Конфигурация заказчика хранится в репозитории модуля рядом с его тестом совместимости, чтобы CI проверял актуальную версию конфигурации. Секреты и адреса систем в неё не входят и подставляются при развёртывании в периметре заказчика.</div>
+
+<div class="warn"><b>Типичная ошибка</b>Сделать «временный» форк ядра ради срочного требования одного заказчика. Форк не получает исправлений модуля, его тест перестают запускать после первого конфликта, и через два выпуска возврат на общую версию стоит дороже исходной доработки. Срочное требование реализуется расширением или новым параметром, для которого в контракт добавлен тест.</div>
+
+<h3 id="s-16-5"><span class="num">16.5</span>Feature request с доказательствами</h3>
+
+<p>Прерывание одобрения в платформе агентов содержит имя действия, но не содержит его аргументов и срока, и в каждом из трёх engagement для этого написана обёртка. Обёртка вошла в модуль и обеспечивает привязку одобрения только агентам, которые подключили модуль. Для всех агентов такую привязку может гарантировать только платформа, поэтому возможность должна быть реализована в ней. Заявка об этой возможности конкурирует в очереди продукта с заявками других команд и, как сказано в <a href="#s-1-6" data-secref="1.6">разделе 1.6</a>, принимается на основании доказательств.</p>
+
+<p>Доказательная заявка описывает проблему как наблюдаемое поведение платформы и отдельно предлагает минимальный интерфейс. Она перечисляет затронутых заказчиков со стоимостью обхода в часах из журнала времени и ссылается на трассы и прогоны оценки. Раздел о последствиях отказа называет стоимость: около ста двадцати часов на обёртку в каждом новом engagement. Заявка, отклонённая с записанной причиной, закрывает вопрос: команда знает, что обёртка остаётся в модуле.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">feature_request.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Evidence:
+    engagement: str                   # код досье затронутого заказчика
+    workaround_hours: int             # измерено по журналу времени
+    links: tuple[str, ...]            # трассы, прогоны оценки, записи журнала решений
+
+
+@dataclass(frozen=True)
+class FeatureRequest:
+    title: str
+    problem: str
+    proposed_interface: str
+    if_not_built: str
+    evidence: tuple[Evidence, ...] = ()
+
+    def refusals(self) -&gt; list[str]:
+        found: list[str] = []
+        if not self.evidence:
+            found.append("не названы затронутые заказчики")
+        found += [f"{e.engagement}: стоимость обхода не измерена"
+                  for e in self.evidence if e.workaround_hours &lt;= 0]
+        found += [f"{e.engagement}: нет ссылок на трассы или оценки"
+                  for e in self.evidence if not e.links]
+        return found
+
+    def render(self, hourly_cost: int) -&gt; str:
+        if problems := self.refusals():
+            raise ValueError("заявка отклонена: " + "; ".join(problems))
+        hours = sum(e.workaround_hours for e in self.evidence)
+        rows = [f"- {e.engagement}: {e.workaround_hours} ч; {', '.join(e.links)}"
+                for e in sorted(self.evidence, key=lambda e: e.engagement)]
+        return "\n".join([
+            f"# {self.title}",
+            f"Проблема: {self.problem}",
+            f"Затронуто заказчиков: {len(self.evidence)}",
+            f"Стоимость обхода: {hours} ч, {hours * hourly_cost} EUR",
+            "Доказательства:", *rows,
+            f"Предлагаемый интерфейс: {self.proposed_interface}",
+            f"Если не строить: {self.if_not_built}",
+        ])
+
+
+if __name__ == "__main__":
+    request = FeatureRequest(
+        title="Одобрение, привязанное к аргументам, как примитив платформы",
+        problem="прерывание одобрения содержит имя действия, но не его аргументы и срок",
+        proposed_interface="interrupt(action, args_hash, approver_role, ttl_s) -&gt; ApprovalToken",
+        if_not_built="каждое engagement пишет свою обёртку; дефект обёртки исправляется N раз",
+        evidence=(Evidence("CF4", 96, ("trace:or-0412", "eval:or-approvals@3")),
+                  Evidence("CF1", 140, ("decision:D-31", "eval:nb-approvals@5")),
+                  Evidence("CF5", 120, ("trace:ng-0907", "decision:D-12"))),
+    )
+    text = request.render(hourly_cost=95)
+    assert "Стоимость обхода: 356 ч, 33820 EUR" in text
+    assert text.index("- CF1") &lt; text.index("- CF4") &lt; text.index("- CF5")
+    for broken, reason in ((FeatureRequest("x", "y", "z", "w"), "не названы"),
+                           (FeatureRequest("x", "y", "z", "w", (Evidence("CF1", 0, ("trace:1",)),)),
+                            "не измерена")):
+        try:
+            broken.render(hourly_cost=95)
+            raise AssertionError("заявка без доказательств принята")
+        except ValueError as err:
+            assert reason in str(err)
+    print(text.splitlines()[0], "· затронуто 3 заказчика, 356 ч обхода")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="workaround_hours: int">строка 9</span><p>Стоимость хранится в часах из журнала времени и переводится в деньги только при рендеринге: часы проверяемы по записям, а ставки у поставщика и продукта разные.</p></div>
+  <div><span class="at" data-anchor="if problems := self.refusals():">строка 32</span><p>Отказ перечисляет все недостатки сразу, чтобы автор исправил заявку за один круг переписки.</p></div>
+</div>
+</figure>
+
+<h3 id="s-16-6"><span class="num">16.6</span>Бизнес-кейс и ROI</h3>
+
+<p>Гипотеза ROI из <a href="#s-2-7" data-secref="2.7">раздела 2.7</a> отвечала на вопрос scoping, стоит ли начинать. Бизнес-кейс отвечает на вопросы финансового директора Helix: сколько вложить, когда вложение вернётся и насколько это достоверно. Начинается он с базовой линии, измеренной в discovery: диагностика дефекта занимает в среднем 38 минут по 212 нарядам, диагностик около девяти тысяч в месяц, час техника стоит 58 EUR. Экономия считается от контрфактуала: независимо от проекта Helix внедряет новый поиск по каталогу, который сократит время диагностики на 4 %, и этот эффект ассистенту не приписывается.</p>
+
+<dl class="def">
+<dt>Срок окупаемости <span class="en">(payback period)</span></dt>
+<dd>Номер периода, в котором накопленный денежный поток проекта вместе со стартовым вложением впервые становится неотрицательным. Стоимость денег во времени этот показатель не учитывает.</dd>
+<dt>Чистая приведённая стоимость, NPV <span class="en">(net present value)</span></dt>
+<dd>Сумма денежных потоков проекта, каждый из которых разделён на (1 + r)<sup>t</sup>, где r обозначает ставку дисконтирования за период, а t номер периода. Ставку задаёт финансовая служба заказчика.</dd>
+</dl>
+
+<p>Каждое допущение имеет диапазон, поэтому кейс считается в трёх сценариях, различающихся долей снятого времени, скоростью охвата и стоимостью эксплуатации. Анализ чувствительности отдельно масштабирует охват, самое неопределённое из допущений. Деньги считаются в <code>Decimal</code>: кейс сверяют бухгалтеры, и расхождение в центах с их расчётом заставит перепроверять остальные числа.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">business_case.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from decimal import ROUND_HALF_UP, Decimal
+
+CENT = Decimal("0.01")
+
+
+def ramp(values: str) -&gt; tuple[Decimal, ...]:
+    return tuple(Decimal(v) for v in values.split())
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """Измерено в discovery до любых изменений; размер выборки входит в базу."""
+    sample_orders: int = 212
+    diagnoses_per_month: int = 9_000
+    minutes_per_diagnosis: Decimal = Decimal(38)
+    loaded_cost_per_hour: Decimal = Decimal(58)
+    counterfactual_drift: Decimal = Decimal("0.04")    # улучшение, которое случится и без системы
+
+
+@dataclass(frozen=True)
+class Scenario:
+    name: str
+    time_reduction: Decimal           # доля времени диагностики, которую снимает ассистент
+    adoption: tuple[Decimal, ...]     # охват по месяцам; последнее значение держится дальше
+    run_cost_month: Decimal
+    build_cost: Decimal = Decimal(370_000)
+
+
+def cash_flows(base: Baseline, s: Scenario, horizon: int = 24) -&gt; list[Decimal]:
+    if base.sample_orders &lt; 200:
+        raise ValueError("базовая линия не измерена: бизнес-кейс не считается")
+    counterfactual = base.minutes_per_diagnosis * (1 - base.counterfactual_drift)
+    flows = [-s.build_cost]
+    for month in range(1, horizon + 1):
+        adoption = s.adoption[min(month, len(s.adoption)) - 1]
+        saved_hours = base.diagnoses_per_month * counterfactual * s.time_reduction * adoption / 60
+        flows.append(saved_hours * base.loaded_cost_per_hour - s.run_cost_month)
+    return flows
+
+
+def payback_month(flows: list[Decimal]) -&gt; int | None:
+    total = Decimal(0)
+    for month, flow in enumerate(flows):
+        total += flow
+        if month and total &gt;= 0:
+            return month
+    return None
+
+
+def npv(flows: list[Decimal], monthly_rate: Decimal = Decimal("0.008")) -&gt; Decimal:
+    value = sum((f / (1 + monthly_rate) ** m for m, f in enumerate(flows)), Decimal(0))
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def adoption_sensitivity(base: Baseline, s: Scenario) -&gt; dict[str, tuple[Decimal, int | None]]:
+    out: dict[str, tuple[Decimal, int | None]] = {}
+    for factor in ("0.5", "0.75", "1"):
+        scaled = replace(s, adoption=tuple(a * Decimal(factor) for a in s.adoption))
+        flows = cash_flows(base, scaled)
+        out[factor] = (npv(flows), payback_month(flows))
+    return out
+
+
+SCENARIOS = (
+    Scenario("низкий", Decimal("0.15"), ramp("0.1 0.3 0.5 0.6"), Decimal(22_000)),
+    Scenario("ожидаемый", Decimal("0.25"), ramp("0.2 0.5 0.75 0.9"), Decimal(21_000)),
+    Scenario("высокий", Decimal("0.35"), ramp("0.3 0.6 0.9 1"), Decimal(19_000)),
+)
+
+if __name__ == "__main__":
+    base = Baseline()
+    low, expected, high = (cash_flows(base, s) for s in SCENARIOS)
+    assert [payback_month(f) for f in (low, expected, high)] == [None, 10, 6]
+    assert npv(expected) == Decimal("628845.79") and npv(low) &lt; 0 &lt; npv(high)
+    assert expected[12] == Decimal("50409.60")          # месяц на полном охвате, до цента
+    by_adoption = adoption_sensitivity(base, SCENARIOS[1])
+    assert by_adoption["0.75"] == (Decimal("264905.88"), 14)
+    assert by_adoption["0.5"][0] &lt; 0 and by_adoption["0.5"][1] is None
+    try:
+        cash_flows(replace(base, sample_orders=30), SCENARIOS[1])
+        raise AssertionError("бизнес-кейс без измеренной базы посчитан")
+    except ValueError:
+        pass
+    print("окупаемость: низкий нет, ожидаемый 10, высокий 6 мес.; NPV при охвате 50 %:", by_adoption["0.5"][0])</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="counterfactual_drift: Decimal">строка 20</span><p>Контрфактуальное улучшение вычитается до расчёта экономии, иначе эффект нового поиска по каталогу запишется ассистенту.</p></div>
+  <div><span class="at" data-anchor="base.sample_orders">строка 33</span><p>Кейс не считается на выборке меньше двухсот нарядов: среднее по трём десяткам нарядов колеблется сильнее ожидаемого эффекта.</p></div>
+  <div><span class="at" data-anchor="a * Decimal(factor)">строка 61</span><p>Чувствительность масштабирует всю кривую охвата: медленный рост охвата откладывает выгоду, а дисконтирование уменьшает приведённую стоимость отложенной выгоды.</p></div>
+</div>
+</figure>
+
+<p>В ожидаемом сценарии вложение 370 000 EUR окупается на десятом месяце, а NPV за 24 месяца при ставке 0,8 % в месяц, около 10 % годовых, составляет примерно 629 000 EUR. В высоком сценарии окупаемость наступает на шестом месяце, в низком за два года не наступает. Чувствительность называет решающее допущение: при охвате в три четверти от плана окупаемость уходит на четырнадцатый месяц, при половинном NPV отрицательна. Следовательно, окупаемость в первую очередь зависит от того, будут ли техники пользоваться ассистентом.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Показывать правлению только ожидаемый сценарий. Единственное число правление принимает за обещание, и при первом отклонении от него обсуждение переходит к поиску виновного. Диапазон с названной решающей переменной позволяет обсуждать, какое допущение не подтвердилось и как управлять этой переменной.</div>
+
+<h3 id="s-16-7"><span class="num">16.7</span>SOW, приёмка и выход</h3>
+
+<dl class="def">
+<dt>Описание объёма работ, SOW <span class="en">(statement of work)</span></dt>
+<dd>Приложение к договору, которое фиксирует объём работ engagement, результаты, сроки, порядок приёмки и оплаты.</dd>
+<dt>Критерий приёмки <span class="en">(acceptance criterion)</span></dt>
+<dd>Условие, привязанное к пункту SOW и исполнимое на измеренных данных: метрика, источник измерения, порог и окно наблюдения. Результат исполнения не зависит от того, какая из сторон его запускает.</dd>
+</dl>
+
+<p>Модель оплаты выбирается по тому, насколько известен объём работ. Модель «время и материалы» (time and materials) оплачивает затраченное время и подходит discovery, где объём неизвестен по определению. Фиксированный объём (fixed scope) подходит фазе с описанным результатом, например пилоту. Оплата по результату (outcome-based) связывает часть гонорара с бизнес-метрикой и уместна, только если метрика измеряется независимо и поставщик влияет на её значение; поэтому у Helix она покрывает лишь часть платежа за production.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 312" role="img" aria-label="Временная шкала коммерческих фаз engagement Helix: discovery, пилот, production и передача разделены четырьмя воротами; перед каждыми воротами стоит тест приёмки с пунктом SOW и порогом, из теста стрелка ведёт к платежу с долей гонорара, а нижняя строка называет модель оплаты каждой фазы" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar16b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="124" y="68" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">фаза</text>
+  <text x="124" y="108" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">ворота</text>
+  <text x="124" y="161" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">тест приёмки</text>
+  <text x="124" y="227" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">платёж</text>
+  <text x="124" y="258" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">модель оплаты</text>
+
+  <rect x="144" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="230" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">discovery</text>
+  <text x="230" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">недели 1–2</text>
+  <rect x="324" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="410" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">пилот на двух заводах</text>
+  <text x="410" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">недели 3–6</text>
+  <rect x="504" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="590" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">production</text>
+  <text x="590" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">недели 7–9</text>
+  <rect x="684" y="40" width="172" height="48" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="770" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">передача</text>
+  <text x="770" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">недели 10–12</text>
+
+  <line x1="320" y1="113" x2="320" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="500" y1="113" x2="500" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="680" y1="113" x2="680" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="860" y1="113" x2="860" y2="264" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <circle cx="320" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="320" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">1</text>
+  <circle cx="500" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="500" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">2</text>
+  <circle cx="680" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="680" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">3</text>
+  <circle cx="860" cy="104" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="860" y="108" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">4</text>
+
+  <rect x="148" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="160" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 2.1</text>
+  <text x="160" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">база ≥ 200 нарядов</text>
+  <text x="160" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">с отметками времени</text>
+  <rect x="328" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="340" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 3.2</text>
+  <text x="340" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">обоснованность ≥ 0,90</text>
+  <text x="340" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">и привязка одобрений</text>
+  <rect x="508" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="520" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 4.1</text>
+  <text x="520" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">p95 ≤ 2 с · ≥ 99,5 %</text>
+  <text x="520" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">14 дней подряд</text>
+  <rect x="688" y="124" width="164" height="66" rx="4" fill="none" stroke="var(--sD)" stroke-width="1.6"/>
+  <text x="700" y="141" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">SOW 5.3</text>
+  <text x="700" y="160" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">два релиза без FDE</text>
+  <text x="700" y="177" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">и учения по runbook</text>
+
+  <line x1="164" y1="190" x2="164" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <line x1="344" y1="190" x2="344" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <line x1="524" y1="190" x2="524" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <line x1="704" y1="190" x2="704" y2="211" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar16b)"/>
+  <rect x="150" y="216" width="30" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="188" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">15 %</text>
+  <rect x="330" y="216" width="60" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="398" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">30 %</text>
+  <rect x="510" y="216" width="70" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="588" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">35 %</text>
+  <rect x="690" y="216" width="40" height="14" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="738" y="227" font-family="Inter,sans-serif" font-size="11" fill="currentColor">20 %</text>
+
+  <text x="230" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">время и материалы</text>
+  <text x="410" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">фиксированный объём</text>
+  <text x="590" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">фиксированный + результат</text>
+  <text x="770" y="258" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">фиксированный объём</text>
+
+  <text x="440" y="294" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Непройденный тест называет свой пункт SOW и задерживает платёж по нему; критерий задним числом не пересматривается.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Платёж выставляется по тесту, который может запустить любая из сторон: ворота фазы пройдены, когда критерии её пункта SOW выполнены на измеренных метриках, и счёт выставляется только по прошедшему тесту. Модель оплаты выбирается для каждой фазы по тому, насколько известен её объём работ.</figcaption>
+</figure>
+
+<p>Критерий приёмки пишется так, чтобы любая сторона, исполнив его, получила тот же результат. Формулировка «ассистент работает стабильно» не содержит метрики, порога и окна наблюдения и поэтому критерием не является; формулировка «доступность не ниже 99,5 % по данным мониторинга Helix за 14 дней подряд» содержит все три элемента. Метрики берутся из трасс и прогонов оценки <a href="#ch-12" data-secref="12">глав 12</a> и <a href="#ch-13" data-secref="13">13</a>, а SOW называет систему, чьи данные считаются источником истины. Тогда приёмка сводится к отчёту по данным этой системы.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">acceptance_criteria.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import operator
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+
+OPS: dict[str, Callable[[float, float], bool]] = {"&gt;=": operator.ge, "&lt;=": operator.le}
+
+
+@dataclass(frozen=True)
+class Criterion:
+    clause: str                   # пункт SOW: "4.1"
+    metric: str                   # имя метрики в отчёте измерений
+    op: str
+    threshold: float
+    window_days: int = 0          # сколько дней подряд метрика должна быть измерена
+
+    def __post_init__(self) -&gt; None:
+        if self.op not in OPS or not re.fullmatch(r"\d+\.\d+", self.clause):
+            raise ValueError(f"критерий {self.clause}/{self.metric} нельзя исполнить")
+
+    def failure(self, measured: Mapping[str, tuple[float, int]]) -&gt; str | None:
+        if self.metric not in measured:
+            return f"SOW {self.clause}: {self.metric} не измерена"
+        value, days = measured[self.metric]
+        if days &lt; self.window_days:
+            return f"SOW {self.clause}: {self.metric} измерена {days} дн. из {self.window_days}"
+        if not OPS[self.op](value, self.threshold):
+            return f"SOW {self.clause}: {self.metric} = {value}, требуется {self.op} {self.threshold}"
+        return None
+
+
+def acceptance_report(criteria: list[Criterion], payments: Mapping[str, int],
+                      measured: Mapping[str, tuple[float, int]]) -&gt; dict[str, list[str]]:
+    """Для каждого платёжного пункта SOW: пустой список означает, что счёт можно выставить."""
+    untested = sorted(set(payments) - {c.clause for c in criteria})
+    if untested:
+        raise ValueError(f"платёж без исполнимого теста: SOW {untested}")
+    report: dict[str, list[str]] = {clause: [] for clause in payments}
+    for c in criteria:
+        if (problem := c.failure(measured)) and c.clause in report:
+            report[c.clause].append(problem)
+    return report
+
+
+if __name__ == "__main__":
+    payments = {"2.1": 15, "3.2": 30, "4.1": 35, "5.3": 20}          # доля гонорара, %
+    criteria = [
+        Criterion("2.1", "baseline_orders", "&gt;=", 200),
+        Criterion("3.2", "groundedness", "&gt;=", 0.90),
+        Criterion("3.2", "approval_bound_to_args", "&gt;=", 1.0),
+        Criterion("4.1", "p95_first_token_s", "&lt;=", 2.0, window_days=14),
+        Criterion("4.1", "availability", "&gt;=", 0.995, window_days=14),
+        Criterion("5.3", "releases_without_fde", "&gt;=", 2),
+        Criterion("5.3", "runbook_drills_passed", "&gt;=", 1),
+    ]
+    measured = {"baseline_orders": (212, 10), "groundedness": (0.93, 1),
+                "approval_bound_to_args": (1.0, 1), "p95_first_token_s": (1.7, 14),
+                "availability": (0.993, 14)}
+    report = acceptance_report(criteria, payments, measured)
+    assert [c for c, failed in report.items() if not failed] == ["2.1", "3.2"]
+    assert report["4.1"] == ["SOW 4.1: availability = 0.993, требуется &gt;= 0.995"]
+    assert report["5.3"] == ["SOW 5.3: releases_without_fde не измерена",
+                             "SOW 5.3: runbook_drills_passed не измерена"]
+    for bad in (lambda: Criterion("4.1", "quality", "satisfactory", 0.0),
+                lambda: acceptance_report(criteria[:1], payments, measured)):
+        try:
+            bad()
+            raise AssertionError("неисполнимый критерий или платёж без теста принят")
+        except ValueError:
+            pass
+    print("к оплате: SOW 2.1, 3.2; не приняты:", sorted(c for c, f in report.items() if f))</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def __post_init__">строка 19</span><p>Неисполнимый критерий отвергается при составлении SOW: при приёмке критерий задним числом уже не пересматривается.</p></div>
+  <div><span class="at" data-anchor="untested = sorted(set(payments)">строка 37</span><p>Платёжный пункт без критерия прерывает построение отчёта: без этой проверки у пункта был бы пустой список нарушений, и счёт по нему считался бы разрешённым.</p></div>
+</div>
+</figure>
+
+<p>Выход описывается по модели, выбранной в первую неделю (<a href="#s-1-9" data-secref="1.9">раздел 1.9</a>), и действиями заказчика без инженеров поставщика: выпустить версию конфигурации, провести учения по runbook, разобрать трассу инцидента. Вместе с кодом передаются оценочные наборы, тест совместимости, журнал решений и feature requests, в которых заказчик назван затронутым. Пункт 5.3 требует двух выпусков без FDE, поскольку передачу подтверждают действия, которые команда заказчика выполнила самостоятельно.</p>
+
+<p>Отдельный пункт SOW определяет права на код. Концептуально различают код, созданный для заказчика в рамках engagement, например адаптер к MES Helix, и модуль, существовавший до engagement: первый нередко передаётся заказчику, второй обычно остаётся у поставщика с правом пользования для заказчика. Смешение их в одном репозитории делает любое такое условие неисполнимым. Сказанное описывает инженерную сторону вопроса и не является юридической консультацией: условия определяют договор и юристы сторон.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Привязывать платёж к дате или к «завершению пилота», которое стороны понимают по-разному. Выставленный счёт становится предметом спора, который разрешается переговорами, поскольку договор не называет данных, подтверждающих выполнение. Платёж привязывается к пункту SOW с исполнимым критерием и выставляется по отчёту этого критерия.</div>
+
+<h3 id="s-16-8"><span class="num">16.8</span>Текст для нетехнических читателей и change management</h3>
+
+<p>Бизнес-кейс и SOW читают директор по производству, финансовый директор и отдел закупок, и для них пишется меморандум по форме <a href="#s-2-8" data-secref="2.8">раздела 2.8</a>, который начинается с запрашиваемого решения. Меморандум Helix просит утвердить четырёхнедельный пилот на двух заводах, называет условие остановки (меньше 60 % смен с ассистентом к концу пятой недели engagement), три варианта с ценой из сценариев бизнес-кейса и срок решения. Технические величины переведены в последствия: вместо «p95 задержки» написано «быстрее двух секунд в 19 случаях из 20».</p>
+
+<p>Поскольку исход определяется охватом, change management включается в объём поставки. Метрики охвата вычисляются из тех же трасс: доля смен с обращением к ассистенту и доля отклонённых объяснений. На каждом заводе назначается чемпион из инженеров площадки, которого обучают первым и который записывает возражения техников в реестр паттернов. Обучение идёт на нарядах своего завода, потому что техники доверяют ответам, которые относятся к станкам их завода.</p>
+
+<p>Доверенный советник (trusted advisor), по формуле Мейстера, Грина и Галфорда, заслуживает доверия достоверностью, надёжностью и близостью, а теряет его ориентацией на себя.<a class="src" href="https://trustedadvisor.com/why-trust-matters/understanding-trust/understanding-the-trust-equation" target="_blank" rel="noreferrer">Maister, Green, Galford, The Trusted Advisor, 2000</a> Инженера, продвигающего модуль, заказчик подозревает в ориентации на себя, и это подозрение уменьшают рекомендации против собственной выгоды, например сценарий без окупаемости в бизнес-кейсе. Переговоры об объёме ведутся так же, как отказ от роли интегратора в <a href="#s-1-7" data-secref="1.7">разделе 1.7</a>: новое требование обсуждается вместе с изменением ворот, платежей и критериев приёмки, которое оно вызывает.</p>
+
+<h3 id="s-16-9" data-level="3"><span class="num">16.9</span>Вглубь: преждевременная абстракция, дрейф конфигураций, ROI без базы</h3>
+
+<h4 data-level="3">Преждевременная абстракция из двух заказчиков</h4>
+
+<p data-level="3">После Nordbank и Orion модуль из двух вхождений закрепил бы в ядре случайное совпадение: оба одобряющих были сотрудниками с корпоративной идентичностью, а в Northgate заявку одобряет житель с учётной записью городского портала. Сэнди Мец оценивает цену такой ошибки так: дублирование обходится гораздо дешевле неверной абстракции.<a class="src" href="https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction" target="_blank" rel="noreferrer">Metz, The Wrong Abstraction, 2016</a> Поэтому после двух вхождений абстрагируется только контракт, тест общего поведения на обоих репозиториях, а ядро выделяется после третьего.</p>
+
+<h4 data-level="3">Дрейф конфигураций и тест совместимости</h4>
+
+<p data-level="3">Конфигурации дрейфуют так же, как код. Допустим, Orion поднимает срок жизни одобрения до восьми часов ради ночных смен, Nordbank снижает порог релевантности после жалоб операторов, и обе правки проходят ревью у заказчика. Выход значения за границы обнаруживает валидатор, изменение поведения ядра на новых значениях обнаруживает контракт на актуальной конфигурации. Правку в среде заказчика в обход репозитория обнаруживает только сверка развёрнутой конфигурации с репозиторием, и поэтому сверка входит в процедуру выпуска.</p>
+
+<h4 data-level="3">ROI без измеренной базы</h4>
+
+<p data-level="3">База, восстановленная задним числом по воспоминаниям, как правило, завышена в пользу проекта, поэтому <code>business_case.py</code> отказывается считать кейс на малой выборке. Обоснованную оценку дают три способа: измерить базу на заводах, куда ассистент ещё не пришёл, и подключать их ступенчато, как в <a href="#s-2-7" data-secref="2.7">разделе 2.7</a>; сравнить смены с ассистентом и без него в одни недели; заменить утверждение об экономии измеримыми утверждениями об охвате и указать, что денежный эффект не доказан. Ошибки таких сравнений разобраны в <a href="#s-2-10" data-secref="2.10">разделе 2.10</a>. Подбор базы под желаемый результат кейса недопустим.</p>
+
+<h4 data-level="3">Права на код engagement</h4>
+
+<p data-level="3">Код engagement и код модуля разграничиваются по происхождению. Адаптер к MES Helix относится к результатам работ, ядро, существовавшее до Helix, к собственным наработкам поставщика, а улучшение ядра, сделанное во время работ у Helix, относится к промежуточной категории, по которой возникают споры. Любое договорное решение исполнимо, только если три вида разделены физически, а изменения ядра выходят в выпусках с записью о происхождении. Права на каждый вид определяют договор и юристы сторон; раздел не является юридической консультацией.</p>
+
+<h4 data-level="3">Feature request против собственного модуля</h4>
+
+<p data-level="3">Принятая заявка об одобрении как примитиве платформы сделает ненужной часть модуля, и у автора модуля появляется мотив ослабить заявку. Третья лояльность из <a href="#s-1-6" data-secref="1.6">раздела 1.6</a> разрешает этот конфликт: заявка подаётся с полными доказательствами. Модуль проектируется с расчётом на замену платформенной возможностью: политика одобрения описана в конфигурации декларативно, и ядро переключится на платформенный примитив в совместимом выпуске. Совместимость выпуска означает, что конфигурации заказчиков при этом переходе загружаются без изменений.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему одинаковый код в двух репозиториях не является полевым паттерном?</summary>
+<div class="ans"><p>Совпадение может объясняться привычкой одного инженера, а паттерн требует повторения проблемы, ограничения и формы решения у разных заказчиков, подтверждённого записями. Кроме того, два вхождения переводят кандидата только в наблюдение.</p></div>
+</details>
+<details>
+<summary>Почему экономия в бизнес-кейсе считается от контрфактуала, а не от базовой линии?</summary>
+<div class="ans"><p>Контрфактуал учитывает изменения, которые произошли бы и без проекта. Расчёт от базы приписал бы ассистенту Helix эффект нового поиска по каталогу.</p></div>
+</details>
+<details>
+<summary>Что должно произойти, чтобы Helix получил счёт по пункту SOW 4.1?</summary>
+<div class="ans"><p>Оба критерия пункта должны пройти на данных названной в SOW системы мониторинга за 14 дней подряд: p95 не выше двух секунд и доступность не ниже 99,5 %. Основанием для счёта служит отчёт без нарушений по обоим критериям.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Вклад Staff FDE измеряется также снижением стоимости следующих engagement, которое обеспечивают модуль, доказательная заявка и повторяемая коммерческая модель. Исправление в модуле доходит до всех заказчиков одним выпуском, а в копиях кода вносится отдельно в каждый репозиторий.</li>
+<li>Паттерн требует трёх вхождений проблемы, ограничения и решения со ссылками на записи и становится модулем, когда различия заказчиков выражены конфигурацией с тестами совместимости.</li>
+<li>Feature request принимается по затронутым заказчикам, измеренной стоимости обхода и доказательствам; бизнес-кейс считается от контрфактуала диапазоном сценариев.</li>
+<li>Каждый платёж SOW привязан к исполнимому критерию приёмки, выход описан действиями заказчика, а код engagement и модуль разделены физически.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-1" data-secref="1">Глава 1: три лояльности и модели выхода</a>
+<a href="#ch-2" data-secref="2">Глава 2: базовая линия и гипотеза ROI</a>
+<a href="#ch-17" data-secref="17">Глава 17: совокупная стоимость владения</a>
+</p>
+</div>
+</section>

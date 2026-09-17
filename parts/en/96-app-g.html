@@ -1,0 +1,26 @@
+<section class="chapter" id="app-g">
+<div class="chead">
+  <div class="row"><p class="eyebrow">Appendix G</p></div>
+  <h2 id="s-g"><span class="num">G</span>Case Files</h2>
+</div>
+
+<p>The appendix describes the six fictional customers of the book. Every dossier lists the systems of record, the constraints, the regulation and the stakeholders the chapters refer to. The numbers in the dossiers describe only these customers and are not industry statistics. Resemblances to real organisations are coincidental.</p>
+
+<h3 id="s-g-1"><span class="num">G.1</span>CF1 · Nordbank Regional</h3>
+<p>A regional retail bank: two million customers, four hundred contact-centre agents in four queues (cards, card blocks, mortgages, business customers). Systems of record: core banking on a mainframe (DB2, MQ queues, a 2009 SOAP layer), a CRM with a REST API, a knowledge base, call transcripts, customer documents, KYC documents among them, in a store with ACLs. Constraints: data stays in-region; approval passes through the chief information security officer and the model risk management function; some data is refreshed only by nightly batch jobs. Regulation: GDPR, PSD2, DORA, the EBA outsourcing guidelines. Stakeholders: the chief technology officer as sponsor, the chief information security officer, the head of the contact centre, the compliance function and its officers.</p>
+
+<h3 id="s-g-2"><span class="num">G.2</span>CF2 · Meridian Health Network</h3>
+<p>A network of twelve hospitals with nine thousand clinicians. Systems: an EHR with a FHIR interface, about two hundred thousand clinical guidelines, standing orders and protocols accumulated over fifteen years, radiology reports, nursing notes, a nurse hotline; health data is kept on-prem. Constraints: PHI never leaves the perimeter, and only de-identified content is sent to the cloud; access rights to documents are granted per department; in voice intake no more than 800 ms pass from the end of the caller's phrase to the first audio of the reply. Regulation: the health-data law, medical-software guidance, clinical safety rules. Stakeholders: the chief medical information officer, the heads of department, a security engineer.</p>
+
+<h3 id="s-g-3"><span class="num">G.3</span>CF3 · Transkontinent Logistics</h3>
+<p>Forty thousand shipments a day, eighteen countries, four hundred regional warehouses. Systems: SAP ERP, a WMS, telematics streams, the APIs of seventeen carriers, a customs system, customs PDFs in the languages of six countries of dispatch. Constraints: a cost ceiling of two cents per document, a 95th percentile of latency below eight seconds, multilingual and scanned documents. Regulation: customs and trade law, GDPR for drivers' data. Stakeholders: the chief financial officer, the chief operating officer, the dispatch room, the managers of the regional warehouses.</p>
+
+<h3 id="s-g-4"><span class="num">G.4</span>CF4 · Orion Telecom</h3>
+<p>Thirty million subscribers, five business units: the consumer market, enterprise customers, home internet and TV, wholesale services for other operators, network operations. Systems: BSS/OSS, a CRM, billing, CDR records, network alarms from the equipment of three vendors, contact-centre chats and calls. Constraints: a shared multi-tenant agent platform, chargeback to the business units by actual consumption, real-time incident triage, data residency. Regulation: the requirements of the telecom regulator, lawful-intercept boundaries, GDPR. Stakeholders: the platform owner, the heads of the business units, network operations.</p>
+
+<h3 id="s-g-5"><span class="num">G.5</span>CF5 · City of Northgate</h3>
+<p>A municipality of 1.2 million residents. Systems: a benefits case system, a document archive, the public website, a procurement portal. Constraints: public users, residents' data stays in the EU region, accessibility of the interface, requests under the freedom-of-information law, procurement rules. Regulation: the EU AI Act, under which a system that evaluates eligibility for essential public assistance benefits is high-risk under point 5(a) of Annex III (<a href="#s-10-10" data-secref="10.10">Section 10.10</a>), a freedom-of-information law, an accessibility law. Stakeholders: the city's chief information officer, the benefits service and its caseworkers, the data protection officer.</p>
+
+<h3 id="s-g-6"><span class="num">G.6</span>CF6 · Helix Manufacturing</h3>
+<p>Fourteen plants that build hydraulic assemblies; three of the plants are air-gapped. Systems: camera streams from the lines, maintenance logs, a parts catalogue, the history of work orders, an MES. Constraints: the eleven connected plants are served by a central fleet of models in the cloud; at the air-gapped plants open-weights models run on the plants' own GPUs, and model packages and results are carried on physical media. Regulation: export control on the products of the air-gapped plants, OT security standards. Stakeholders: the production director, the chief financial officer, the head of OT security, the site engineers.</p>
+</section>

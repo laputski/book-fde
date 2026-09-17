@@ -1,0 +1,53 @@
+# Deploy the book to GitHub Pages (fde.ragworld.org).
+# Runs on pushes to main and when called from other workflows (the weekly sync).
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the site
+        run: |
+          ./build.sh
+          mkdir -p dist
+          cp fde-advanced.html dist/index.html
+
+      - name: Enable Pages if not enabled yet
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Bind the fde.ragworld.org domain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/pages" \
+            -f cname=fde.ragworld.org || echo "the domain will bind once the DNS record exists"
+        continue-on-error: true

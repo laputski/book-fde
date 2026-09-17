@@ -1,0 +1,1017 @@
+<!-- ────────────────────────── CHAPTER 18 ────────────────────────── -->
+<section class="chapter" id="ch-18">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter eighteen</p>
+    <span class="strata" role="img" aria-label="Layers F and G: people and process, product and feedback">
+      <i></i><i></i><i></i><i></i><i></i><i data-s="F"></i><i data-s="G"></i>
+    </span>
+  </div>
+  <h2 id="s-18"><span class="num">18</span>Leading Forward Deployed Engineering</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>express squad standards as executable checks and compare engagements on a shared benchmark;</li>
+<li>design a hiring process in which every stage measures one signal against an anchored rubric, and calibrate interviewers by their offsets;</li>
+<li>plan staffing under constraints on skills, utilisation, reserved pattern time and key-person risk;</li>
+<li>agree qualification criteria with Sales and decline scope typical of a systems integrator before the contract is signed;</li>
+<li>rank roadmap input by explicit weights and present it to executives on one page.</li>
+</ul>
+</div>
+
+<h3 id="s-18-1"><span class="num">18.1</span>The task: a regional squad</h3>
+
+<div class="rec">
+  <span class="name"><a href="#app-g" data-secref="G">Case files CF1–CF6 · a regional squad</a></span>
+  <span class="tag">6 engineers</span>
+  <span class="tag">8 customers</span>
+  <span class="tag">2 open positions</span>
+  <span>quarterly plan</span>
+</div>
+
+<p>A regional squad of six engineers serves eight customers. Six of them are described in the case files of Appendix G: <a href="#s-g-1" data-secref="G.1">Nordbank</a> and <a href="#s-g-4" data-secref="G.4">Orion</a> are in the run phase, <a href="#s-g-2" data-secref="G.2">Meridian</a> is in its pilot, <a href="#s-g-3" data-secref="G.3">Transkontinent</a> and <a href="#s-g-6" data-secref="G.6">Helix</a> are in build, and <a href="#s-g-5" data-secref="G.5">Northgate</a> is in handover. The remaining two are in presales and appear in the plan as P1 and P2. The customers and all the numbers of this chapter are fictional and describe only these cases. Other chapters describe the engagements of the same customers at other moments, so the phases in the squad plan refer to the start of this chapter's quarter and may differ from the phases described in other chapters.</p>
+
+<p>For the next quarter the squad lead has four tasks. The first is to make code standards and benchmarks mandatory for every engagement repository, so that an automated check detects the violations. The second is to design the hiring process for two open positions. The third is to assign engineers to customers with regard to phases and skills. The fourth is to hand the product team a quarterly roadmap input assembled from the pattern registry of <a href="#s-16-3" data-secref="16.3">Section 16.3</a>.</p>
+
+<h3 id="s-18-2"><span class="num">18.2</span>Why the squad lead builds a system of procedures</h3>
+
+<p>If every engagement that falls into a crisis is brought out of it by the same most experienced engineer, the squad meets its commitments until two crises coincide in time. This way of working does not scale: it consumes the attention of one person, which can be neither increased nor handed over, and it leaves no procedure that another engineer could repeat. Andrew Grove wrote a manager's output as an equation: it equals the output of the manager's organisation plus the output of the neighbouring organisations under the manager's influence.<a class="src" href="https://www.penguinrandomhouse.ca/books/72467/high-output-management-by-andrew-s-grove/excerpt" target="_blank" rel="noreferrer">Grove, High Output Management, 1983</a> The output of a squad lead is therefore measured by the customer systems that the squad has brought into production and keeps running there.</p>
+
+<dl class="def">
+<dt>FDE squad</dt>
+<dd>A standing group of engineers under one lead that runs several engagements at once and is accountable for their results in production and for the patterns and modules extracted from them. The squad keeps its membership after any single engagement ends.</dd>
+</dl>
+
+<p>In this chapter the machine is the set of procedures and executable artefacts through which the squad produces results regardless of which engineer is working on a given task. The chapter takes its parts in order: standards and benchmarks, hiring, staffing, the partnership with Sales, learning and mentoring, and the path into the roadmap. The parts for which this is possible are expressed as executable artefacts, that is, listings that check a rule against the squad's data. A rule written only in a document is followed as long as the people applying it remember it; an executable artefact keeps working after a change of lead.</p>
+
+<h3 id="s-18-3"><span class="num">18.3</span>Standards and benchmarks</h3>
+
+<p>The squad's standard for an AI system consists of four requirements. Every engagement repository has an evaluation set with the release gate of <a href="#s-12-8" data-secref="12.8">Section 12.8</a>, tracing of model calls as described in <a href="#ch-13" data-secref="13">Chapter 13</a>, versioned prompts as in <a href="#s-4-7" data-secref="4.7">Section 4.7</a>, and a release bundle manifest from <a href="#s-15-5" data-secref="15.5">Section 15.5</a>. Each requirement was introduced after an incident in one of the engagements, and each is the first that teams break when they are late for a deadline. The standard therefore specifies who detects a violation and at what moment.</p>
+
+<dl class="def">
+<dt>Executable standard</dt>
+<dd>A rule of engineering practice expressed as a check that takes a description of a repository and returns violations named by rule. The check runs in the CI of every engagement repository, so a violation is detected when someone tries to merge the change that introduces it.</dd>
+</dl>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to define squad standards">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="16">
+      <figcaption><span class="file">naive_standards.py</span></figcaption>
+      <pre><code>STANDARDS = """Squad standards, revision 3 (wiki)
+1. An engagement repository has an evaluation set and a release gate.
+2. Every model call lands in a trace.
+3. Prompts are versioned in the repository.
+4. A release is described by a release bundle manifest."""
+
+
+def check(repo: dict[str, str], team_confirmed: bool) -&gt; bool:
+    """The wiki check: the team confirmed that it has read the standards."""
+    return team_confirmed and "standard" in repo.get("README.md", "").lower()
+
+
+if __name__ == "__main__":
+    repo = {
+        "README.md": "We follow the squad standards, see the wiki.",
+        "app.py": 'PROMPT = "You are a bank assistant. Answer briefly."',
+    }
+    assert check(repo, team_confirmed=True)                     # the "check" passes
+    assert not any(path.startswith("evals/") for path in repo)  # 1: no evaluations
+    assert "config/observability.json" not in repo              # 2: no tracing
+    assert "PROMPT = " in repo["app.py"]                        # 3: prompt hard-coded
+    assert "release/manifest.json" not in repo                  # 4: no manifest
+    print("all 4 wiki rules broken, the check passes")</code></pre>
+    </figure>
+    <p>The standard is written in a wiki, and the "check" confirms only that the team has read it. The repository in the listing breaks all four rules: there are no evaluations, no tracing, a hard-coded prompt and no manifest. The check passes anyway, and the lead learns about the violation from an incident.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="24">
+      <figcaption><span class="file">standards_check.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import json
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+
+type Repo = dict[str, str]              # file path -&gt; content
+type Rule = Callable[[Repo], list[str]]
+
+RULES: dict[str, Rule] = {}
+PINNED_MODEL = re.compile(r"[a-z0-9-]+@\d{8}")          # dated version, not an alias
+SHA256 = re.compile(r"[0-9a-f]{64}")
+INLINE_PROMPT = re.compile(r"^\s*\w*PROMPT\w*\s*=\s*[rf]?[\"']", re.M)
+
+
+def rule(name: str) -&gt; Callable[[Rule], Rule]:
+    def register(fn: Rule) -&gt; Rule:
+        RULES[name] = fn
+        return fn
+    return register
+
+
+def load(repo: Repo, path: str) -&gt; dict:
+    return json.loads(repo[path]) if path in repo else {}
+
+
+@rule("evals")
+def evals_gate(repo: Repo) -&gt; list[str]:
+    found: list[str] = []
+    if not any(p.startswith("evals/") and p.endswith(".jsonl") for p in repo):
+        found.append("no evaluation set evals/*.jsonl")
+    if not load(repo, "evals/gate.json").get("thresholds"):
+        found.append("release gate without thresholds in evals/gate.json")
+    return found
+
+
+@rule("tracing")
+def tracing(repo: Repo) -&gt; list[str]:
+    cfg = load(repo, "config/observability.json").get("tracing", {})
+    if not cfg.get("exporter"):
+        return ["tracing not configured: no exporter"]
+    return [] if 0 &lt; cfg.get("sample_rate", 0) &lt;= 1 else ["sample_rate outside (0, 1]"]
+
+
+@rule("prompts")
+def versioned_prompts(repo: Repo) -&gt; list[str]:
+    found = [f"{p}: prompt hard-coded" for p, text in sorted(repo.items())
+             if p.endswith(".py") and INLINE_PROMPT.search(text)]
+    found += [f"{p}: no version: line" for p, text in sorted(repo.items())
+              if p.startswith("prompts/") and not text.startswith("version:")]
+    return found
+
+
+@rule("release")
+def release_bundle(repo: Repo) -&gt; list[str]:
+    if "release/manifest.json" not in repo:
+        return ["no manifest release/manifest.json"]
+    m = load(repo, "release/manifest.json")
+    found = [] if PINNED_MODEL.fullmatch(m.get("model", "")) else ["model not pinned to a version"]
+    found += [f"{key} is not a content hash" for key in ("prompt_sha256", "config_sha256")
+              if not SHA256.fullmatch(m.get(key, ""))]
+    return found
+
+
+def check(repo: Repo) -&gt; dict[str, list[str]]:
+    """Report: rule -&gt; violations; a rule without violations is left out."""
+    return {name: found for name, fn in RULES.items() if (found := fn(repo))}
+
+
+if __name__ == "__main__":
+    naive = {"README.md": "We follow the squad standards, see the wiki.",
+             "app.py": 'PROMPT = "You are a bank assistant. Answer briefly."'}
+    assert sorted(check(naive)) == ["evals", "prompts", "release", "tracing"]
+
+    good = {
+        "app.py": 'prompt = registry.load("prompts/answer.md")',
+        "prompts/answer.md": "version: 7\nAnswer only from the sources.",
+        "evals/cases.jsonl": '{"q": "card limit", "expected": "doc-12"}',
+        "evals/gate.json": json.dumps({"thresholds": {"groundedness": 0.9}}),
+        "config/observability.json": json.dumps(
+            {"tracing": {"exporter": "otlp", "sample_rate": 0.2}}),
+        "release/manifest.json": json.dumps({"model": "model-pro@20260301",
+                                             "prompt_sha256": "a" * 64, "config_sha256": "b" * 64}),
+    }
+    assert check(good) == {}
+    drifted = good | {"release/manifest.json": json.dumps(
+        {"model": "model-pro-latest", "prompt_sha256": "a" * 64, "config_sha256": "main"})}
+    assert check(drifted) == {"release": ["model not pinned to a version",
+                                          "config_sha256 is not a content hash"]}
+    squad = {"CF1": good, "CF4": drifted, "CF6": naive}
+    failing = {cf: sorted(check(repo)) for cf, repo in squad.items() if check(repo)}
+    assert failing == {"CF4": ["release"], "CF6": ["evals", "prompts", "release", "tracing"]}
+    print(f"{len(RULES)} executable rules; violations: {failing}")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="PINNED_MODEL = re.compile">line 12</span><p>The release bundle rule checks that a manifest exists and that the names written in it are immutable: the model is pinned to a dated version, and the prompt and the configuration are pinned to content hashes. A model alias or a branch name points to different content over time, so a rollback from such a manifest restores a different system.</p></div>
+        <div><span class="at" data-anchor="def rule(name: str)">line 17</span><p>A rule is registered by a decorator, and the report names the broken rule. A new squad rule is a single function and takes effect in every repository at the next run of the check.</p></div>
+        <div><span class="at" data-anchor="if (found := fn(repo))">line 68</span><p>Only broken rules enter the report: an empty dictionary means compliance, and a non-empty one stops the merge in CI.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference is what gets checked. The naive check relies on the team's confirmation; the executable check analyses the files of the repository on every change.</p>
+    <p>The second difference is the shape of the result. The naive check answers yes or no; the considered one names the rule and the violation, and the engineer fixes it without a round of messages with the lead.</p>
+    <p>The third difference is scale. One function checks eight repositories in the same way, and the squad report is assembled from the repository reports.</p>
+  </div>
+</div>
+
+<p>A standard checks that the mechanisms exist. The quality of the systems in different engagements is compared by a benchmark, a shared task set that runs on every customer's configuration at every release of the shared module from <a href="#s-16-4" data-secref="16.4">Section 16.4</a>. The customers' evaluation sets remain the gates of their own releases. The benchmark, taken apart in <a href="#s-18-8" data-secref="18.8">Section 18.8</a>, determines whether a module release has worsened quality, latency or cost for any customer.</p>
+
+<div class="warn"><b>Common mistake</b>Switching a new standard on with merge blocking in every repository at once. Older engagements receive dozens of violations on release day, the team disables the check, and nobody switches it on again. A check is introduced in report mode, violations are closed on a dated plan, and only then does it start to block merges.</div>
+
+<h3 id="s-18-4"><span class="num">18.4</span>The hiring process</h3>
+
+<p>The hiring loop, the sequence of stages from the initial screen to the committee's decision, is designed from signals: first it is determined what a candidate must show, then each signal is assigned a stage that measures it. An FDE must show four signals, that is, observable abilities on which the decision is based: building working systems, operating them after release, making well-founded decisions about scope and priorities when working with the customer, and explaining those decisions to different audiences. Each signal gets exactly one stage. The screen checks only the minimum requirements of the role and assigns no rubric scores.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 360" role="img" aria-label="A hiring pipeline of five stages from left to right: screen, practical coding, customer scenario, project deep dive and collaboration; under each scored stage sits one signal, the four signals converge into an anchored rubric, the rubric passes the scores to the hiring decision committee, the committee issues a decision, and the results of calibration by interviewer offsets return to the rubric" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar18a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="26" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">STAGE</text>
+  <rect x="20" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="96" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Screen</text>
+  <text x="96" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">role requirements</text>
+  <rect x="192" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="268" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Practical coding</text>
+  <text x="268" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">an engagement task</text>
+  <rect x="364" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="440" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Customer scenario</text>
+  <text x="440" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">a scope conflict</text>
+  <rect x="536" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="612" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Project deep dive</text>
+  <text x="612" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">life after release</text>
+  <rect x="708" y="40" width="152" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="784" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Collaboration</text>
+  <text x="784" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">explaining decisions</text>
+  <line x1="172" y1="68" x2="190" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <line x1="344" y1="68" x2="362" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <line x1="516" y1="68" x2="534" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <line x1="688" y1="68" x2="706" y2="68" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+
+  <text x="20" y="118" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">SIGNAL</text>
+  <line x1="96" y1="96" x2="96" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="268" y1="96" x2="268" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="440" y1="96" x2="440" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="612" y1="96" x2="612" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="784" y1="96" x2="784" y2="126" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <rect x="20" y="128" width="152" height="36" rx="18" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="96" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">gate without a score</text>
+  <rect x="192" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="268" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">building</text>
+  <rect x="364" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">customer judgement</text>
+  <rect x="536" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="612" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">operating</text>
+  <rect x="708" y="128" width="152" height="36" rx="18" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="784" y="150" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">communication</text>
+
+  <text x="96" y="210" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">not part</text>
+  <text x="96" y="225" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">of the rubric</text>
+  <line x1="268" y1="164" x2="268" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="440" y1="164" x2="440" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="612" y1="164" x2="612" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <line x1="784" y1="164" x2="784" y2="194" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar18a)"/>
+  <rect x="192" y="196" width="668" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="526" y="216" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">anchored rubric: scores 1–4 on four signals</text>
+  <text x="526" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">score = anchor + observation · interview_rubric.py</text>
+
+  <line x1="526" y1="244" x2="526" y2="282" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <rect x="376" y="284" width="300" height="56" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="526" y="308" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Hiring decision committee</text>
+  <text x="526" y="326" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">decision · level</text>
+  <line x1="376" y1="312" x2="306" y2="312" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18a)"/>
+  <rect x="104" y="294" width="200" height="36" rx="18" fill="none" stroke="var(--sF)" stroke-width="1.6"/>
+  <text x="204" y="316" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">hire · re-measure · reject</text>
+  <path d="M676,312 H830 V252" fill="none" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar18a)"/>
+  <text x="690" y="332" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">calibration by offsets</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Each scored stage measures one signal: a second stage on the same signal doubles that signal's weight in the decision and consumes the candidate's time, and it leaves another signal unmeasured. The committee decides from the rubric with recorded observations; if the decision on a signal depends on an interviewer's offset, the signal is measured again, and calibration refines the anchors of the rubric.</figcaption>
+</figure>
+
+<p>A score is given against an anchored rubric: each value on the scale from 1 to 4 corresponds to a description of observable behaviour, the interviewer chooses the description that matches the observation, and the number follows from the chosen description. Smith and Kendall proposed a method for constructing unambiguous anchors for rating scales: a scale value is described by expected behaviour, so that different raters read it in the same way.<a class="src" href="https://doi.org/10.1037/h0047060" target="_blank" rel="noreferrer">Smith, Kendall, 1963</a> In the revised meta-analysis by Sackett and colleagues, structured interviews ranked first in validity among personnel selection procedures.<a class="src" href="https://experts.umn.edu/en/publications/revisiting-meta-analytic-estimates-of-validity-in-personnel-selec/" target="_blank" rel="noreferrer">Sackett et al., 2022</a> A score without a recorded observation is not accepted, because the committee cannot verify that it matches an anchor.</p>
+
+<dl class="def">
+<dt>Interviewer calibration</dt>
+<dd>The regular comparison of the scores that different interviewers give to the same candidates or to recordings of the same exercises. An interviewer's offset is the mean deviation of his or her scores from those of the rest of the panel on shared cases; an offset whose absolute value is at or above the threshold means that a score depends on who gave it.</dd>
+<dt>Levelling</dt>
+<dd>The decision about the job level at which a candidate is hired. It is made from the profile of signals, that is, from the score of each signal separately, since the same average score corresponds to different profiles. The level sets expectations, the pay band and which engagements the engineer leads alone.</dd>
+</dl>
+
+<figure class="code" data-fold="26">
+<figcaption><span class="file">interview_rubric.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from enum import StrEnum
+from statistics import fmean
+
+BAR = 2.5                                # lower bound for every signal
+DRIFT = 0.5                              # offset beyond which calibration is due
+
+
+class Signal(StrEnum):
+    BUILDING = "building"
+    OPERATING = "operating"
+    JUDGEMENT = "customer judgement"
+    COMMUNICATION = "communication"
+
+
+ANCHORS: dict[Signal, tuple[str, str, str, str]] = {   # anchors for scores 1, 2, 3, 4
+    Signal.BUILDING: ("does not work", "works on the example, edges unchecked",
+                      "edges and errors handled, tested", "3 plus quality measured"),
+    Signal.OPERATING: ("unaware of life after release", "describes an incident, not its cause",
+                       "finds the cause from traces", "3 plus changes the process"),
+    Signal.JUDGEMENT: ("accepts any scope", "sees the conflict, offers no choice",
+                       "turns the conflict into a priced choice", "3 plus narrows scope, keeps trust"),
+    Signal.COMMUNICATION: ("the listener is lost", "clear to engineers, not to managers",
+                           "clear to both, conclusion first", "3 plus depth set by the listener"),
+}
+STAGES = {"practical": Signal.BUILDING, "scenario": Signal.JUDGEMENT,
+          "deep_dive": Signal.OPERATING, "collaboration": Signal.COMMUNICATION}
+
+
+@dataclass(frozen=True)
+class Score:
+    candidate: str
+    interviewer: str
+    signal: Signal
+    value: int
+    evidence: str                        # the observation the anchor is tied to
+
+    def __post_init__(self) -&gt; None:
+        if not 1 &lt;= self.value &lt;= len(ANCHORS[self.signal]):
+            raise ValueError(f"score {self.value} outside the 1–4 scale")
+        if not self.evidence.strip():
+            raise ValueError("a score without an observation is not accepted")
+
+
+def offsets(scores: list[Score]) -&gt; dict[str, float]:
+    """Mean deviation of an interviewer from the rest of the panel on shared candidates."""
+    items: defaultdict[tuple[str, Signal], dict[str, int]] = defaultdict(dict)
+    for s in scores:
+        items[(s.candidate, s.signal)][s.interviewer] = s.value
+    deltas: defaultdict[str, list[float]] = defaultdict(list)
+    for marks in items.values():
+        for who, value in marks.items():
+            others = [v for w, v in marks.items() if w != who]
+            if others:                   # scored by one person: nobody to compare with
+                deltas[who].append(value - fmean(others))
+    return {who: round(fmean(d), 2) for who, d in sorted(deltas.items())}
+
+
+def profile(scores: list[Score], candidate: str,
+            shift: dict[str, float] | None = None) -&gt; dict[Signal, float]:
+    shift = shift or {}
+    per_signal: defaultdict[Signal, list[float]] = defaultdict(list)
+    for s in scores:
+        if s.candidate == candidate:
+            per_signal[s.signal].append(s.value - shift.get(s.interviewer, 0.0))
+    return {sig: round(fmean(v), 2) for sig, v in per_signal.items()}
+
+
+def decide(scores: list[Score], candidate: str, drift: dict[str, float]) -&gt; str:
+    raw = profile(scores, candidate)
+    if missing := [str(sig) for sig in Signal if sig not in raw]:
+        return "no decision: not measured " + ", ".join(missing)
+    adjusted = profile(scores, candidate, drift)
+    if unstable := [str(sig) for sig in Signal if (raw[sig] &gt;= BAR) != (adjusted[sig] &gt;= BAR)]:
+        return "re-measure: " + ", ".join(unstable)
+    return "hire" if min(raw.values()) &gt;= BAR else "no hire"
+
+
+if __name__ == "__main__":
+    assert len(set(STAGES.values())) == len(STAGES) == len(Signal)   # stage = one signal
+    panel = ["Anna", "Boris", "Vera", "Gleb"]
+    calibration = [Score(rec, who, Signal.BUILDING, v, "exercise recording")
+                   for rec, values in (("rec-1", (2, 3, 2, 2)), ("rec-2", (3, 4, 3, 3)),
+                                       ("rec-3", (1, 2, 1, 1)))
+                   for who, v in zip(panel, values, strict=True)]
+    offs = offsets(calibration)
+    assert offs == {"Anna": -0.33, "Boris": 1.0, "Vera": -0.33, "Gleb": -0.33}
+    drift = {who: o for who, o in offs.items() if abs(o) &gt;= DRIFT}
+    assert drift == {"Boris": 1.0}
+
+    loop = [Score("C-41", "Boris", Signal.BUILDING, 3, "edge test present, no metric"),
+            Score("C-41", "Gleb", Signal.OPERATING, 3, "found the cause from a trace"),
+            Score("C-41", "Vera", Signal.JUDGEMENT, 4, "offered a priced choice"),
+            Score("C-41", "Anna", Signal.COMMUNICATION, 3, "conclusion in the first sentence"),
+            Score("C-42", "Anna", Signal.BUILDING, 3, "edges handled"),
+            Score("C-42", "Vera", Signal.JUDGEMENT, 3, "named the price of the scope"),
+            Score("C-42", "Anna", Signal.COMMUNICATION, 3, "clear to both")]
+    assert decide(loop, "C-41", drift) == "re-measure: building"
+    assert decide(loop, "C-42", drift) == "no decision: not measured operating"
+    loop.append(Score("C-42", "Gleb", Signal.OPERATING, 2, "incident without a cause"))
+    assert decide(loop, "C-42", drift) == "no hire"
+    for bad in ((5, "observation"), (3, " ")):
+        try:
+            Score("C-43", "Anna", Signal.BUILDING, *bad)
+            raise AssertionError("an invalid score was accepted")
+        except ValueError:
+            pass
+    print("panel offsets:", offs, "· C-41:", decide(loop, "C-41", drift))</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="!= (adjusted[sig]">line 77</span><p>The offset correction is used only to test whether the decision is stable. If the raw and the adjusted score of a signal fall on different sides of the bar, the function returns an instruction to re-measure the signal, and the corrected score does not enter the decision.</p></div>
+  <div><span class="at" data-anchor="len(set(STAGES.values()))">line 83</span><p>The assertion checks the rule of the diagram: four scored stages measure four different signals. A second stage on the same signal would double its weight and leave another signal unmeasured.</p></div>
+  <div><span class="at" data-anchor="abs(o)">line 91</span><p>With four interviewers, a lenient interviewer shifts each colleague's offset by a third of his own, hence the −0.33 for everyone else. The threshold of 0.5 sits above that shift.</p></div>
+</div>
+</figure>
+
+<div class="note" data-level="2">Candidate scores and recordings of calibration exercises are personal data. The employer's policy sets how long they are kept and who may access them, and an exercise is recorded only with the participant's consent.</div>
+
+<p>The level is set after the hiring decision, from the same profile. A typical mistake at this step is under-levelling people from customer-facing roles: a former presales engineer scores 3 on building and 4 on customer judgement, and a level derived from a single coding exercise falls below the work that person will do from the first week. A levelling rule written as minimum scores for each signal prevents this mistake, because the level is derived from all four scores.</p>
+
+<h3 id="s-18-5"><span class="num">18.5</span>Staffing and utilisation</h3>
+
+<p>A staffing plan, the assignment of engineers to customers for the quarter, relates three axes: engineers, customers and the engagement phase. The phase sets the load in FTE, full-time equivalents of one engineer: build requires 1.0 FTE, a pilot 0.8, run and handover 0.4 each, presales 0.2. Two engineers are assigned to each customer, and every required skill must be held by both, otherwise the departure of one person stops the engagement.</p>
+
+<dl class="def">
+<dt>Utilisation</dt>
+<dd>The share of an engineer's working time assigned to customer engagements. The remaining time is allocated to pattern extraction, module development, hiring and learning.</dd>
+</dl>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="A quarterly staffing matrix: six engineers in rows and eight customers in columns with the engagement phase in the header, each cell holding the share of an engineer's time at that customer, exactly two engineers per customer, and on the right a column reserving at least twenty per cent for patterns and modules and a utilisation column with a cap of eighty per cent" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar18b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="28" y="38" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ENGINEER</text>
+  <text x="28" y="54" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">% of time</text>
+  <text x="144" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF1</text>
+  <text x="144" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">run</text>
+  <text x="216" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF2</text>
+  <text x="216" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">pilot</text>
+  <text x="288" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF3</text>
+  <text x="288" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">build</text>
+  <text x="360" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF4</text>
+  <text x="360" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">run</text>
+  <text x="432" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF5</text>
+  <text x="432" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">handover</text>
+  <text x="504" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CF6</text>
+  <text x="504" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">build</text>
+  <text x="576" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">P1</text>
+  <text x="576" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">presales</text>
+  <text x="648" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">P2</text>
+  <text x="648" y="54" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">presales</text>
+  <text x="731" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sG)">patterns</text>
+  <text x="731" y="54" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">≥ 20</text>
+  <text x="822" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">utilisation</text>
+  <text x="822" y="54" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">cap 80</text>
+
+  <line x1="20" y1="64" x2="866" y2="64" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="20" y1="104" x2="866" y2="104" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="144" x2="866" y2="144" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="184" x2="866" y2="184" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="224" x2="866" y2="224" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="264" x2="866" y2="264" stroke="var(--line)" stroke-width="1"/>
+  <line x1="20" y1="304" x2="866" y2="304" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="688" y1="56" x2="688" y2="344" stroke="var(--line)" stroke-width="1"/>
+  <line x1="772" y1="56" x2="772" y2="344" stroke="var(--line)" stroke-width="1"/>
+  <line x1="820" y1="70" x2="820" y2="300" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="3 3"/>
+
+  <text x="28" y="89" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Anna</text>
+  <rect x="112" y="70" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="144" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="256" y="70" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="288" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="616" y="70" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="648" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="700" y="70" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="89" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="780" y="79" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="79" width="40" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="89" font-family="Inter,sans-serif" font-size="11" fill="currentColor">80</text>
+
+  <text x="28" y="129" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Boris</text>
+  <rect x="184" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="216" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">40</text>
+  <rect x="400" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="432" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="544" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="576" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="616" y="110" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="648" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="700" y="110" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="129" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="780" y="119" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="119" width="40" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="129" font-family="Inter,sans-serif" font-size="11" fill="currentColor">80</text>
+
+  <text x="28" y="169" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Vera</text>
+  <rect x="184" y="150" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="216" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">40</text>
+  <rect x="400" y="150" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="432" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="544" y="150" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="576" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">10</text>
+  <rect x="700" y="150" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="169" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="159" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="159" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="169" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="209" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Gleb</text>
+  <rect x="112" y="190" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="144" y="209" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="472" y="190" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="504" y="209" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="700" y="190" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="209" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="199" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="199" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="209" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="249" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Dina</text>
+  <rect x="256" y="230" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="288" y="249" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="328" y="230" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="360" y="249" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="700" y="230" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="249" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="239" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="239" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="249" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="289" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Egor</text>
+  <rect x="328" y="270" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="360" y="289" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">20</text>
+  <rect x="472" y="270" width="64" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="504" y="289" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">50</text>
+  <rect x="700" y="270" width="62" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="731" y="289" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">30</text>
+  <rect x="780" y="279" width="50" height="10" rx="2" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="780" y="279" width="35" height="10" rx="2" fill="var(--sF)" opacity="0.85"/>
+  <text x="838" y="289" font-family="Inter,sans-serif" font-size="11" fill="currentColor">70</text>
+
+  <text x="28" y="329" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">demand, FTE</text>
+  <text x="144" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0.4</text>
+  <text x="216" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0.8</text>
+  <text x="288" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">1.0</text>
+  <text x="360" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0.4</text>
+  <text x="432" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0.4</text>
+  <text x="504" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">1.0</text>
+  <text x="576" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0.2</text>
+  <text x="648" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">0.2</text>
+  <text x="731" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--sG)">1.6</text>
+  <text x="822" y="329" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">4.4</text>
+
+  <text x="20" y="380" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Two engineers per customer. Dashed cells: presales; vertical dashes: the cap of 80.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> At 100 per cent utilisation the plan leaves no time for patterns and modules, and the squad stops producing them. The pattern reserve is therefore a separate column of the plan with a minimum of 20 per cent: without an explicit minimum this time is spent first, because pattern work has no external customer.</figcaption>
+</figure>
+
+<p>The listing searches for an assignment by backtracking, starting with the phases of the highest load and with the least loaded engineers. The first run ends in a refusal: the edge skill, that is, deploying models on the GPUs at the factory sites, is needed by Helix and held only by Gleb. The lead closes this gap with a learning plan from <a href="#s-18-7" data-secref="18.7">Section 18.7</a>: Egor works in a pair with Gleb and acquires the edge skill, after which an assignment is found with no engineer above 80% utilisation.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">staffing_model.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from fractions import Fraction
+from itertools import combinations
+
+MAX_UTIL = Fraction("0.8")               # the rest: patterns and modules
+TEAM = 2                                 # two per customer: the second removes key-person risk
+
+
+class Phase(StrEnum):
+    PRESALES = "presales"
+    BUILD = "build"
+    PILOT = "pilot"
+    RUN = "run"
+    HANDOVER = "handover"
+
+
+LOAD = {Phase.PRESALES: Fraction("0.2"), Phase.BUILD: Fraction("1.0"), Phase.PILOT: Fraction("0.8"),
+        Phase.RUN: Fraction("0.4"), Phase.HANDOVER: Fraction("0.4")}   # FTE per customer
+
+
+@dataclass(frozen=True)
+class Engineer:
+    name: str
+    skills: frozenset[str]
+
+
+@dataclass(frozen=True)
+class Customer:
+    code: str
+    phase: Phase
+    skills: frozenset[str]
+
+
+class Infeasible(Exception):
+    """The plan is impossible; the message names the reason."""
+
+
+def covered(team: tuple[Engineer, ...], customer: Customer) -&gt; bool:
+    """No single point of failure: every skill is held by at least two."""
+    return all(sum(skill in e.skills for e in team) &gt;= 2 for skill in customer.skills)
+
+
+def gaps(engineers: list[Engineer], customers: list[Customer]) -&gt; list[str]:
+    return [f"{c.code}: {skill} held by {n} of the 2 needed" for c in customers
+            for skill in sorted(c.skills) if (n := sum(skill in e.skills for e in engineers)) &lt; 2]
+
+
+def plan(engineers: list[Engineer], customers: list[Customer],
+         max_util: Fraction = MAX_UTIL) -&gt; dict[str, tuple[str, ...]]:
+    if found := gaps(engineers, customers):
+        raise Infeasible("; ".join(found))
+    demand, capacity = sum(LOAD[c.phase] for c in customers), max_util * len(engineers)
+    if demand &gt; capacity:
+        raise Infeasible(f"demand of {float(demand)} FTE exceeds capacity of {float(capacity)} FTE")
+    order = sorted(customers, key=lambda c: (-LOAD[c.phase], c.code))
+    load = {e.name: Fraction(0) for e in engineers}
+    chosen: dict[str, tuple[str, ...]] = {}
+
+    def place(i: int) -&gt; bool:
+        if i == len(order):
+            return True
+        c = order[i]
+        share = LOAD[c.phase] / TEAM
+        for team in combinations(sorted(engineers, key=lambda e: (load[e.name], e.name)), TEAM):
+            if not covered(team, c) or any(load[e.name] + share &gt; max_util for e in team):
+                continue
+            for e in team:
+                load[e.name] += share
+            chosen[c.code] = tuple(sorted(e.name for e in team))
+            if place(i + 1):
+                return True
+            for e in team:
+                load[e.name] -= share
+            del chosen[c.code]
+        return False
+
+    if not place(0):
+        raise Infeasible("no assignment satisfies the constraints")
+    return dict(sorted(chosen.items()))
+
+
+def utilisation(engineers: list[Engineer], customers: list[Customer],
+                assignment: dict[str, tuple[str, ...]]) -&gt; dict[str, Fraction]:
+    phase = {c.code: c.phase for c in customers}
+    util = {e.name: Fraction(0) for e in engineers}
+    for code, team in assignment.items():
+        for name in team:
+            util[name] += LOAD[phase[code]] / len(team)
+    return util
+
+
+if __name__ == "__main__":
+    def skills(*names: str) -&gt; frozenset[str]:
+        return frozenset(names)
+
+    squad = [Engineer("Anna", skills("agents", "mcp", "evals")),
+             Engineer("Boris", skills("rag", "evals", "security", "voice", "agents")),
+             Engineer("Vera", skills("agents", "voice", "security", "rag")),
+             Engineer("Gleb", skills("rag", "edge", "mcp", "evals")),
+             Engineer("Dina", skills("evals", "observability", "agents", "mcp", "rag")),
+             Engineer("Egor", skills("mcp", "observability", "rag", "security"))]
+    customers = [Customer("CF1", Phase.RUN, skills("mcp", "evals")),
+                 Customer("CF2", Phase.PILOT, skills("voice", "rag")),
+                 Customer("CF3", Phase.BUILD, skills("agents", "mcp")),
+                 Customer("CF4", Phase.RUN, skills("observability", "rag")),
+                 Customer("CF5", Phase.HANDOVER, skills("security", "agents")),
+                 Customer("CF6", Phase.BUILD, skills("edge", "rag")),
+                 Customer("P1", Phase.PRESALES, skills("agents")),
+                 Customer("P2", Phase.PRESALES, skills("evals"))]
+    try:
+        plan(squad, customers)
+        raise AssertionError("a plan with a single holder of edge was accepted")
+    except Infeasible as err:
+        assert str(err) == "CF6: edge held by 1 of the 2 needed"
+    squad[5] = replace(squad[5], skills=squad[5].skills | {"edge"})   # learning plan: pair with Gleb
+    assignment = plan(squad, customers)
+    util = utilisation(squad, customers, assignment)
+    assert max(util.values()) &lt;= MAX_UTIL and sum(util.values()) == Fraction("4.4")
+    assert {"Gleb", "Egor"} &lt;= set(assignment["CF6"])
+    try:
+        plan(squad, customers, max_util=Fraction("0.7"))
+        raise AssertionError("demand above capacity was accepted")
+    except Infeasible as err:
+        assert str(err).startswith("demand of 4.4 FTE")
+    print(assignment, {n: f"{float(u):.0%}" for n, u in util.items()})</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if found := gaps(engineers, customers):">line 53</span><p>The skill check runs before the search and names the customer and the skill. From the message "CF6: edge held by 1 of the 2 needed" the lead draws up a learning plan; the generic message "no assignment" does not name the cause.</p></div>
+  <div><span class="at" data-anchor="if demand">line 56</span><p>A demand of 4.4 FTE does not exceed the capacity of 4.8 FTE under a cap of 0.8 for six engineers and exceeds the capacity of 4.2 FTE under a cap of 0.7. The pattern reserve enters the plan as a constraint, and the search rejects every assignment that violates it.</p></div>
+</div>
+</figure>
+
+<h3 id="s-18-6"><span class="num">18.6</span>Partnering with Sales</h3>
+
+<p>Many engagement problems arise from terms agreed at the sale. The squad lead agrees with Sales on qualification criteria that are checked before a contract is signed, and on what happens to a deal that fails a criterion. The consequence for each criterion is recorded in the table: a deal without a task owner does not become an engagement, work outside the AI product goes to an integrator, and the other unmet criteria change the phases and gates in the SOW, the statement of work of <a href="#s-16-7" data-secref="16.7">Section 16.7</a>.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Criterion</th><th>Check before signature</th><th>If not met</th></tr></thead>
+<tbody>
+<tr><td>Task owner</td><td>a named individual at the customer</td><td>the engagement does not start</td></tr>
+<tr><td>Success metric</td><td>the baseline is measurable, <a href="#s-2-7" data-secref="2.7">Section 2.7</a></td><td>discovery as a separate phase</td></tr>
+<tr><td>Data access</td><td>granted within the pilot timeline</td><td>the pilot gate moves in the SOW</td></tr>
+<tr><td>AI product</td><td>the task concerns the model, tools or evaluation</td><td>the work goes to an integrator</td></tr>
+</tbody></table></div>
+
+<p>A presales engineer joins the deal from the first technical meeting. The contribution is an estimate of scope and risks that Sales can show the customer, together with the right to state that the promised scope cannot be built in twelve weeks. Scope typical of a systems integrator is declined on the criteria of <a href="#s-1-7" data-secref="1.7">Section 1.7</a> before the commercial proposal, because after the contract is signed a refusal costs more.</p>
+
+<div class="warn"><b>Common mistake</b>Measuring FDE involvement in presales by the number of deals closed. Such a metric rewards agreeing to any scope, and the squad has to fulfil promises made by other people. The metric for presales is the share of deals that reached production by the promised date.</div>
+
+<h3 id="s-18-7"><span class="num">18.7</span>Closing skill gaps</h3>
+
+<p>A skill gap is detected in the staffing plan before it leads to an incident: this is how the edge gap at Helix was detected in <a href="#s-18-5" data-secref="18.5">Section 18.5</a>. A squad working with agentic systems checks its skill coverage in four areas: the MCP protocol of <a href="#ch-6" data-secref="6">Chapter 6</a>, tool calling from <a href="#s-3-5" data-secref="3.5">Section 3.5</a>, the choice and behaviour of foundation models from <a href="#ch-3" data-secref="3">Chapter 3</a>, and evaluation from <a href="#ch-12" data-secref="12">Chapter 12</a>. A learning plan is tied to engagement tasks, so that a new skill is applied at work from the start of the learning.</p>
+
+<p>A learning plan contains a goal expressed as an artefact, for example running the CF4 release gate independently by the end of the quarter, a mentor from the squad and time allocated in the staffing plan. The main way to transfer a skill is to work in a pair with an engineer who has it, on the tasks of an active customer. At the end the engineer gives an internal talk, from which the other engineers of the squad learn the solutions that were applied.</p>
+
+<h3 id="s-18-8"><span class="num">18.8</span>Roadmap input and executive briefs</h3>
+
+<p>Field insight, that is, observations about recurring customer problems recorded in engagement logs, passes through a loop of five nodes: engagements in the field, the pattern registry, the roadmap review, a product release and the adoption of the release in customer configurations. Decisions about the product are made by the product team; the squad lead is responsible for the measurements on the edges of the loop. Two of the measurements are expressed in code: checking a release on every customer's configuration and ranking the roadmap input.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 330" role="img" aria-label="A loop of five nodes: engagements in the field pass entries to the pattern registry, the registry passes candidates to the roadmap review, the review leads to a product release, the release leads to adoption in the field, and adoption returns to the field; each edge is labelled with its measurement, from occurrences with links to workaround hours after the release" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar18c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="110" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">The field: engagements</text>
+  <text x="110" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">8 customers · logs</text>
+  <rect x="350" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="440" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Pattern registry</text>
+  <text x="440" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Section 16.3</text>
+  <rect x="680" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="770" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Roadmap review</text>
+  <text x="770" y="84" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">a one-page brief</text>
+  <rect x="680" y="240" width="180" height="60" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="770" y="265" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Product release</text>
+  <text x="770" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">module · platform</text>
+  <rect x="350" y="240" width="180" height="60" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="440" y="265" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Field adoption</text>
+  <text x="440" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">customer configurations</text>
+
+  <line x1="200" y1="70" x2="342" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="275" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">occurrences with links</text>
+  <text x="275" y="107" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">and workaround hours</text>
+  <line x1="530" y1="70" x2="672" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="605" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">weighted points:</text>
+  <text x="605" y="107" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">customers, risk, hours</text>
+  <line x1="770" y1="100" x2="770" y2="232" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="756" y="164" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">accepted for the quarter</text>
+  <text x="756" y="179" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">or declined with a reason</text>
+  <line x1="680" y1="270" x2="538" y2="270" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="605" y="292" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">share of customers</text>
+  <text x="605" y="307" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">on the new version</text>
+  <path d="M350,270 H110 V108" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar18c)"/>
+  <text x="230" y="292" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">workaround hours after release</text>
+  <text x="230" y="307" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">fall to zero</text>
+
+  <text x="440" y="175" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">cycle: one quarter</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Field insight produces a measurable result only after it returns to the customers as a product release: on the last edge of the loop the workaround hours at the affected customers fall to zero. The other edges measure the intermediate transitions: occurrences with links, ranking points, the review decision and the share of customers on the new version.</figcaption>
+</figure>
+
+<p>A release of the shared module is checked on each customer's configuration before it reaches that customer. The benchmark runs one task set on every engagement's configuration before and after the release and flags a regression separately for quality, latency and cost. A regression at a customer stops the upgrade of that customer's configuration; the other customers receive the release.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">benchmark_suite.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import math
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+
+MAX_QUALITY_DROP = 0.02                  # absolute share of tasks
+MAX_GROWTH = 0.10                        # relative growth of p95 and cost
+
+
+@dataclass(frozen=True)
+class Task:
+    id: str
+    steps: int                           # reasoning steps the task requires
+    needs_citation: bool
+
+
+@dataclass(frozen=True)
+class Config:
+    engagement: str
+    model: str
+    reach: int                           # up to how many steps the model copes
+    top_k: int
+    eur_per_1k_tokens: float
+
+
+@dataclass(frozen=True)
+class Run:
+    correct: bool
+    latency_ms: int
+    tokens: int
+
+
+@dataclass(frozen=True)
+class Row:
+    engagement: str
+    quality: float
+    p95_ms: int
+    cost_eur: float
+    regressions: tuple[str, ...] = ()
+
+
+def fake_system(cfg: Config, task: Task) -&gt; Run:
+    """A deterministic stand-in for an engagement system: mechanism instead of chance."""
+    grounded = cfg.top_k &gt;= 3 or not task.needs_citation
+    tokens = 500 + 300 * cfg.top_k + 150 * task.steps
+    latency = 200 + 60 * cfg.top_k + (350 if cfg.model == "model-pro" else 120) * task.steps
+    return Run(task.steps &lt;= cfg.reach and grounded, latency, tokens)
+
+
+def p95(values: list[int]) -&gt; int:
+    ordered = sorted(values)
+    return ordered[math.ceil(0.95 * len(ordered)) - 1]     # nearest-rank method
+
+
+def benchmark(tasks: list[Task], configs: list[Config], system: Callable[[Config, Task], Run],
+              baseline: dict[str, Row] | None = None) -&gt; list[Row]:
+    rows = []
+    for cfg in configs:
+        runs = [system(cfg, t) for t in tasks]
+        row = Row(cfg.engagement, round(sum(r.correct for r in runs) / len(runs), 3),
+                  p95([r.latency_ms for r in runs]),
+                  round(sum(r.tokens for r in runs) / 1000 * cfg.eur_per_1k_tokens, 2))
+        old = (baseline or {}).get(cfg.engagement)
+        if old is not None:
+            checks = ((old.quality - row.quality &gt; MAX_QUALITY_DROP,
+                       f"quality {old.quality:.2f} → {row.quality:.2f}"),
+                      (row.p95_ms &gt; old.p95_ms * (1 + MAX_GROWTH),
+                       f"p95 {old.p95_ms} → {row.p95_ms} ms"),
+                      (row.cost_eur &gt; old.cost_eur * (1 + MAX_GROWTH),
+                       f"cost {old.cost_eur} → {row.cost_eur} EUR"))
+            row = replace(row, regressions=tuple(text for failed, text in checks if failed))
+        rows.append(row)
+    return rows
+
+
+if __name__ == "__main__":
+    tasks = [Task(f"t{i:02d}", steps=1 + i % 4, needs_citation=i % 2 == 0) for i in range(40)]
+    v24 = [Config("CF1", "model-pro", reach=4, top_k=5, eur_per_1k_tokens=0.012),
+           Config("CF4", "model-flash", reach=3, top_k=3, eur_per_1k_tokens=0.003),
+           Config("CF5", "model-pro", reach=4, top_k=4, eur_per_1k_tokens=0.012)]
+    baseline = {row.engagement: row for row in benchmark(tasks, v24, fake_system)}
+    assert baseline["CF1"].quality == 1.0 and baseline["CF4"].quality == 0.75
+
+    # module v2.5 lowers the default top_k to 2; CF1 pinned its own value
+    v25 = [c if c.engagement == "CF1" else replace(c, top_k=2) for c in v24]
+    report = {row.engagement: row for row in benchmark(tasks, v25, fake_system, baseline)}
+    assert report["CF1"].regressions == ()
+    assert report["CF4"].regressions == ("quality 0.75 → 0.25",)
+    assert report["CF5"].regressions == ("quality 1.00 → 0.50",)
+    assert report["CF4"].cost_eur &lt; baseline["CF4"].cost_eur          # cheaper, but worse
+    print("module v2.5:", {e: list(r.regressions) or "no regressions" for e, r in report.items()})</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="MAX_QUALITY_DROP,">line 66</span><p>A regression is measured against the baseline of the same configuration, because the baseline quality differs between customers: for CF4 on a light model it is 0.75, for CF1 it is 1.00.</p></div>
+  <div><span class="at" data-anchor="replace(c, top_k=2)">line 86</span><p>Release v2.5 changes a default. CF1 pinned its own value and kept its quality; CF4 and CF5 inherited the new one and lost the tasks that require citations, while the cost at CF4 decreased.</p></div>
+</div>
+</figure>
+
+<p>The pattern registry accumulates candidates faster than the product team can implement them, so once a quarter the squad hands over a ranked input. The ranking uses three quantities with explicit weights: the number of customers affected, the revenue at risk, meaning the renewals and expansions that depend on a solution, and the cost of workarounds in hours. The weights are set by a management decision and printed in the brief, so the product team can dispute the ranking rule and recompute the order with other weights.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">roadmap_input.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+POINTS_PER_CUSTOMER = 30                 # breadth of a problem outweighs one large customer
+EUR_PER_POINT = 10_000                   # revenue at risk: renewals and expansions
+HOURS_PER_POINT = 20                     # workaround from the time log
+TOP = 3                                  # the brief carries the top three
+
+
+@dataclass(frozen=True)
+class Entry:
+    id: str
+    title: str
+    customers: frozenset[str]
+    revenue_at_risk_eur: int
+    workaround_hours: int
+    evidence: tuple[str, ...]            # links to pattern-registry records
+
+    def points(self) -&gt; int:
+        return (POINTS_PER_CUSTOMER * len(self.customers)
+                + self.revenue_at_risk_eur // EUR_PER_POINT
+                + self.workaround_hours // HOURS_PER_POINT)
+
+
+def rank(entries: list[Entry]) -&gt; tuple[list[Entry], list[str]]:
+    ranked = [e for e in entries if e.evidence]
+    skipped = [f"{e.id}: no evidence" for e in entries if not e.evidence]
+    ranked.sort(key=lambda e: (-e.points(), -len(e.customers), e.id))   # tie-breaker
+    return ranked, skipped
+
+
+def eur(amount: int) -&gt; str:
+    return f"{amount:,}".replace(",", " ")
+
+
+def brief(entries: list[Entry], quarter: str) -&gt; str:
+    ranked, skipped = rank(entries)
+    lines = [f"Roadmap input from the regional squad, {quarter}",
+             f"Decision: take {', '.join(e.id for e in ranked[:TOP])} into the quarter",
+             f"Rule: {POINTS_PER_CUSTOMER} points per customer, 1 per {eur(EUR_PER_POINT)} EUR "
+             f"at risk, 1 per {HOURS_PER_POINT} h of workaround; on a tie, more customers first", ""]
+    for n, e in enumerate(ranked[:TOP], 1):
+        lines += [f"{n}. {e.title} [{e.id}], {e.points()} points",
+                  f"   {', '.join(sorted(e.customers))}; {eur(e.revenue_at_risk_eur)} EUR; "
+                  f"{e.workaround_hours} h; {', '.join(e.evidence)}"]
+    lines += ["", "Below the line: " + ", ".join(f"{e.id} ({e.points()})" for e in ranked[TOP:]),
+              "Not ranked: " + ("; ".join(skipped) or "none")]
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    registry = [
+        Entry("approval", "Approval bound to arguments", frozenset({"CF1", "CF4", "CF5"}),
+              420_000, 356, ("pattern:approval", "fr:approval-primitive")),
+        Entry("residency", "Data stays in the region", frozenset({"CF1", "CF5"}),
+              600_000, 180, ("pattern:residency",)),
+        Entry("offline-eval", "Evaluation at an air-gapped site", frozenset({"CF6"}),
+              870_000, 240, ("pattern:offline-eval",)),
+        Entry("voice-barge-in", "Barge-in on the voice channel", frozenset({"CF2"}),
+              150_000, 90, ("trace:mh-0311",)),
+        Entry("sap-adapter", "SAP adapter", frozenset({"CF3"}), 300_000, 400, ()),
+    ]
+    ranked, skipped = rank(registry)
+    assert [e.points() for e in ranked] == [149, 129, 129, 49]
+    assert [e.id for e in ranked[:TOP]] == ["approval", "residency", "offline-eval"]
+    assert skipped == ["sap-adapter: no evidence"]
+    text = brief(registry, "Q4 2026")
+    assert text.splitlines()[1] == "Decision: take approval, residency, offline-eval into the quarter"
+    assert len(text.splitlines()) &lt;= 40                                 # one page
+    print(text.splitlines()[1], "·", len(text.splitlines()), "lines in the brief")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if not e.evidence">line 28</span><p>An entry without evidence is not ranked and is printed in the brief on the "Not ranked" line: an SAP adapter with 400 workaround hours gets no place in the list until the registry holds supporting entries.</p></div>
+  <div><span class="at" data-anchor="-len(e.customers), e.id">line 29</span><p>The tie-breaker is written in code. The entries residency and offline-eval both score 129, and residency, which affects two customers, is placed above offline-eval, which affects one. Without an explicit rule the order of equal entries would follow their order in the input list.</p></div>
+</div>
+</figure>
+
+<p>For the company's top executives the same input is set out on one page in the memo form of <a href="#s-2-8" data-secref="2.8">Section 2.8</a>. The first line contains the requested decision, followed by the ranking rule, three items with customers and amounts, and the list of items below the line. Technical detail is translated into consequences: which renewals are at risk and how many hours the squad will stop spending on workarounds after the release.</p>
+
+<h3 id="s-18-9"><span class="num">18.9</span>Mentoring and co-building</h3>
+
+<p>An engagement is considered successfully completed when the customer's team operates and develops the system without the squad's involvement. Co-building, joint development, means that the customer's engineers write the system's code together with the FDEs from the first week of the engagement. The lead includes this in the plan: a pair of an FDE and a customer engineer for every component, and a dated handover plan under which ownership of the components moves across one at a time.</p>
+
+<p>The independence of the customer's team is determined from three quantities. The first two are shares: the share of changes merged by customer engineers without FDE edits, and the share of incidents closed by the customer's on-call staff on their own. The third quantity is the time to the first release that the customer took through the release gate on its own. When both shares rise steadily and the customer's own release has already taken place, the FDEs leave the engagement under the exit model of <a href="#s-1-9" data-secref="1.9">Section 1.9</a>.</p>
+
+<div class="note" data-level="2">The same scheme applies to new engineers in the squad. For the first weeks a newcomer works in a pair on an engagement in the run phase: traces, release gates and a decision log already exist there, so a newcomer's mistake is detected before release.</div>
+
+<h3 id="s-18-10" data-level="3"><span class="num">18.10</span>In depth: calibration drift, utilisation versus patterns, burnout</h3>
+
+<h4 data-level="3">Interviewer calibration drift</h4>
+
+<p data-level="3">The consistency of scores reached by calibration when a process is launched decreases over time: an interviewer who has held thirty sessions in a quarter may start scoring candidates relative to recent candidates, and the anchors of the rubric stop determining the score. Such drift shows up as an offset that grows from quarter to quarter, so the squad runs a calibration session on exercise recordings every quarter and keeps the history of offsets. If an offset persists after a session, the interviewer goes through the anchors again, and a second scorer is temporarily assigned to that interviewer's stages.</p>
+
+<h4 data-level="3">Utilisation versus time for patterns</h4>
+
+<p data-level="3">Kingman's formula approximates the mean waiting time in a single-server queue as the product of three factors: the utilisation factor ρ/(1 − ρ), where ρ is the server's utilisation, a factor for the variability of arrivals and service times, and the mean service time.<a class="src" href="https://en.wikipedia.org/wiki/Kingman%27s_formula" target="_blank" rel="noreferrer">Kingman, 1961</a> With the last two factors unchanged, raising utilisation from 80% to 90% more than doubles the waiting time, and going from 90% to 95% roughly doubles it again. A squad engineer can be treated as such a server for urgent customer requests: at high load every incident displaces planned work, and pattern work is the first to be postponed. For this reason <code>staffing_model.py</code> sets the reserve as the constraint <code>MAX_UTIL</code>, which the assignment search does not violate.</p>
+
+<h4 data-level="3">Scope sold by Sales and the presales FDE</h4>
+
+<p data-level="3">Even with shared criteria, a deal is sometimes signed with scope that the presales FDE did not estimate or estimated differently, because the deal has to be closed before the end of the sales quarter. For this case the squad applies a procedure: in the first week the gap between the scope sold and the presales estimate is recorded in the engagement's decision log of <a href="#s-1-8" data-secref="1.8">Section 1.8</a>. When a later delay is reviewed, this entry identifies its cause as the gap in scope; without the entry the delay is attributed to the squad's engineers.</p>
+
+<h4 data-level="3">Consulting skills that code exercises do not test</h4>
+
+<p data-level="3">A coding exercise measures building and contains no situations in which an engineer discusses priorities with a sponsor or reports a missed deadline. These skills are measured by the customer scenario stage, and its materials are prepared in advance: the scope conflict is written in advance, the observable signs of each level are described in advance, and the customer role is played by a trained colleague following a script. Without a script written in advance the score depends on how the interviewer improvises the customer's role, and different candidates solve different problems.</p>
+
+<h4 data-level="3">Loyalty drift and burnout</h4>
+
+<p data-level="3">An engineer who has worked inside a customer's organisation for six months may gradually adopt its priorities as their own, agreeing to scope they would have declined in the first week and defending the customer's decisions to the product team. Such drift violates the third loyalty of <a href="#s-1-6" data-secref="1.6">Section 1.6</a>, the loyalty to facts: a conflict between the customer and the product is settled by the customer's preference without a measurement. The drift is detected in the decision log: refusals in it become rarer and exceptions more frequent. The second risk is burnout, which the World Health Organization describes in the International Classification of Diseases, 11th revision (ICD-11), as an occupational phenomenon with three dimensions: exhaustion, increased mental distance from one's job or negativism and cynicism related to it, and reduced professional efficacy.<a class="src" href="https://www.who.int/news/item/28-05-2019-burn-out-an-occupational-phenomenon-international-classification-of-diseases" target="_blank" rel="noreferrer">WHO, ICD-11, 2019</a> The lead reduces both risks by rotating engineers at phase boundaries, by regular one-to-one meetings and by a reserve of time that is not spent on incidents.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why should two stages of a hiring process not measure the same signal?</summary>
+<div class="ans"><p>A second stage on the same signal doubles that signal's weight in the decision and consumes the candidate's time, and with the number of stages unchanged another signal stays unmeasured.</p></div>
+</details>
+<details>
+<summary>What does an interviewer offset of +1.0 mean, and what does the committee do with a decision that depends on it?</summary>
+<div class="ans"><p>The interviewer scores, on average, one point more than the rest of the panel on shared cases. If the score of a candidate's signal falls on different sides of the bar before and after the correction for this offset, the committee orders the signal to be measured again, and the interviewer goes through calibration against the anchors again. The corrected score does not enter the decision, because an average offset does not show how the interviewer scored this particular candidate.</p></div>
+</details>
+<details>
+<summary>What does a squad lose with a staffing plan at 100 per cent utilisation compared with a plan at 80 per cent, if demand is covered in both cases?</summary>
+<div class="ans"><p>Near full load every urgent request displaces planned work, and the first to be postponed is work on patterns and modules, which has no external customer. The squad keeps delivering the current engagements but stops producing the modules that reduce the cost of the next engagements.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>A lead's output is measured by customer systems in production; squad standards are executable checks, and a shared benchmark detects regressions of the shared module at every customer.</li>
+<li>The hiring process is built from four signals: each stage measures one signal against an anchored rubric, and calibration by offsets shows where a score depends on the interviewer.</li>
+<li>The staffing plan accounts for phases, skills, a pair of engineers per customer and the pattern reserve; at 100 per cent utilisation no time is left for patterns, and the squad stops producing modules.</li>
+<li>Roadmap input is ranked by explicit weights with a tie-breaker; its result is measured after the product release by the workaround hours at the affected customers.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-12" data-secref="12">Chapter 12: the release gate in every repository</a>
+<a href="#ch-16" data-secref="16">Chapter 16: the pattern registry and the module</a>
+<a href="#ch-17" data-secref="17">Chapter 17: architecture decisions and their review</a>
+</p>
+</div>
+</section>

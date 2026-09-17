@@ -1,0 +1,11 @@
+# Кэши инструментов
+.mypy_cache/
+.ruff_cache/
+__pycache__/
+.pytest_cache/
+.check_examples.lock/
+.DS_Store
+.idea
+# Локальная часть книги: не публикуется
+private/
+fde-advanced.private.html

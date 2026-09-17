@@ -1,0 +1,1020 @@
+
+</main>
+</div>
+
+<div class="dlg" id="search" role="dialog" aria-modal="true" aria-label="Поиск по учебнику" data-en-aria-label="Search the book">
+  <div class="box">
+    <input id="q" type="search" placeholder="Искать раздел, термин или диаграмму…" data-en-placeholder="Find a section, term, or diagram…" autocomplete="off" spellcheck="false">
+    <div class="res" id="res"></div>
+    <div class="foot"><span data-en="↑ ↓ select">↑ ↓ выбор</span><span data-en="Enter go">Enter перейти</span><span data-en="Esc close">Esc закрыть</span></div>
+  </div>
+</div>
+
+<div class="dlg print" id="printdlg" role="dialog" aria-modal="true" aria-label="Параметры печати" data-en-aria-label="Print options">
+  <div class="box">
+    <h3 data-en="Print and save as PDF">Печать и сохранение в PDF</h3>
+    <p class="sub" data-en="Choose what to print and at which level of detail.">Выберите, что печатать и насколько подробно.</p>
+    <fieldset>
+      <legend data-en="What to print">Что печатать</legend>
+      <label class="opt"><input type="radio" name="scope" value="all" checked>
+        <span class="what" data-en="The whole book">Всю книгу</span><span class="which" data-fill="all"></span></label>
+      <label class="opt"><input type="radio" name="scope" value="part">
+        <span class="what" data-en="The current part">Текущую часть</span><span class="which" data-fill="part"></span></label>
+      <label class="opt"><input type="radio" name="scope" value="chapter">
+        <span class="what" data-en="The current chapter">Текущую главу</span><span class="which" data-fill="chapter"></span></label>
+    </fieldset>
+    <fieldset>
+      <legend data-en="How much detail">Насколько подробно</legend>
+      <label class="opt"><input type="radio" name="plvl" value="1">
+        <span class="what" data-en="Overview">Обзор</span><span class="which" data-en="definitions and takeaways">определения и итоги</span></label>
+      <label class="opt"><input type="radio" name="plvl" value="2">
+        <span class="what" data-en="Standard">Стандарт</span><span class="which" data-en="with walkthroughs and questions">с разборами и вопросами</span></label>
+      <label class="opt"><input type="radio" name="plvl" value="3" checked>
+        <span class="what" data-en="Full">Полный</span><span class="which" data-en="with every justification">со всеми обоснованиями</span></label>
+    </fieldset>
+    <p class="hint" data-en="To get a PDF file, pick the “Save as PDF” printer in the browser dialog that opens.">Чтобы получить файл PDF, выберите в открывшемся диалоге браузера принтер «Сохранить как PDF».</p>
+    <div class="row">
+      <button class="ctl" data-close data-en="Cancel">Отмена</button>
+      <button class="ctl primary" id="dopring" data-en="Print">Печатать</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+(function () {
+/* ── Хранилище с защитой от недоступности ───────────────────────────────── */
+const mem = Object.create(null);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? (k in mem ? mem[k] : d) : v; }
+              catch (e) { return k in mem ? mem[k] : d; } },
+  set(k, v) { mem[k] = v; try { localStorage.setItem(k, v); } catch (e) {} }
+};
+const root = document.documentElement;
+const main = document.getElementById("main");
+
+/* ── Локаль: активная версия остаётся, неактивная удаляется из документа ── */
+const LANG = root.getAttribute("data-lang") === "en" ? "en" : "ru";
+document.querySelectorAll(".locale").forEach(box => {
+  if (box.dataset.locale === LANG) box.replaceWith(...box.childNodes);
+  else box.remove();
+});
+if (LANG === "en") {
+  document.title = "Forward Deployed Engineering: A Textbook";
+  document.querySelectorAll("[data-en]").forEach(el => { el.textContent = el.getAttribute("data-en"); });
+  document.querySelectorAll("[data-en-title]").forEach(el => { el.title = el.getAttribute("data-en-title"); });
+  document.querySelectorAll("[data-en-placeholder]").forEach(el => { el.placeholder = el.getAttribute("data-en-placeholder"); });
+  document.querySelectorAll("[data-en-aria-label]").forEach(el => { el.setAttribute("aria-label", el.getAttribute("data-en-aria-label")); });
+}
+
+/* Строки интерфейса, порождаемые сценарием */
+const L = LANG === "en" ? {
+  copy: "Copy", copied: "Copied", copyFail: "Failed",
+  noRun: "not executed",
+  showMore: n => "Show full listing, " + n + (n === 1 ? " more line" : " more lines"),
+  showLess: "Collapse listing",
+  railStart: "Start",
+  toastReveal: "This passage belongs to a deeper detail level; it is revealed for this chapter.",
+  toastOk: "Got it",
+  kinds: { "раздел": "section", "термин": "term", "диаграмма": "diagram", "упоминание": "mention" },
+  level: "level ",
+  searchHint: "Type a word. Search covers section headings, terms, diagram captions, and section bodies, at every detail level.",
+  searchEmpty: "Nothing found.",
+  goto: "Go to the section →",
+  notDetermined: "not determined", partNotDetermined: "part not determined",
+  chapterWord: "Chapter ", appendixWord: "Appendix ",
+  termsTotal: n => "Terms in total: " + n + ".",
+  casesTotal: n => "Walkthroughs in total: " + n + ".",
+  sourcesTotal: (s, c) => "Sources in total: " + s + "; citations: " + c + ".",
+  questionsTotal: n => "Questions in total: " + n + ".",
+  warnKind: "Warning", naiveKind: "Naive solution",
+  counts: (ch, ap) => ch + (ch === 1 ? " chapter, " : " chapters, ") + ap + (ap === 1 ? " appendix" : " appendices"),
+  levelNames: { 1: "Overview", 2: "Standard", 3: "Full" },
+  stepPrev: "← back", stepNext: "next →", stepAll: "show all", stepOf: (i, n) => i + " / " + n,
+  reset: "reset",
+  rounds: { roleplay: "Role-play and decomposition", coding: "Practical coding", deepdive: "Project deep dive",
+            behavioral: "Behavioral", staff: "Staff and Manager signals", takehome: "Take-home", other: "Other" },
+} : {
+  copy: "Копировать", copied: "Скопировано", copyFail: "Не удалось",
+  noRun: "не исполняется",
+  showMore: n => {
+    const word = (n % 10 === 1 && n % 100 !== 11) ? "строку"
+      : ([2, 3, 4].indexOf(n % 10) >= 0 && !(n % 100 >= 12 && n % 100 <= 14)) ? "строки" : "строк";
+    return "Показать листинг целиком, ещё " + n + " " + word;
+  },
+  showLess: "Свернуть листинг",
+  railStart: "Начало",
+  toastReveal: "Фрагмент относится к более подробному уровню; для этой главы он раскрыт.",
+  toastOk: "Понятно",
+  kinds: { "раздел": "раздел", "термин": "термин", "диаграмма": "диаграмма", "упоминание": "упоминание" },
+  level: "уровень ",
+  searchHint: "Введите слово. Поиск идёт по заголовкам разделов, терминам, подписям к диаграммам и содержанию разделов, независимо от выбранного уровня подробности.",
+  searchEmpty: "Ничего не найдено.",
+  goto: "Перейти к разделу →",
+  notDetermined: "не определена", partNotDetermined: "часть не определена",
+  chapterWord: "глава ", appendixWord: "приложение ",
+  termsTotal: n => "Всего терминов: " + n + ".",
+  casesTotal: n => "Всего разборов: " + n + ".",
+  sourcesTotal: (s, c) => "Всего источников: " + s + "; ссылок на них: " + c + ".",
+  questionsTotal: n => "Всего вопросов: " + n + ".",
+  warnKind: "Предупреждение", naiveKind: "Наивное решение",
+  counts: (ch, ap) => {
+    const plural = (n, one, few, many) => {
+      const a = n % 10, b = n % 100;
+      return n + " " + (a === 1 && b !== 11 ? one : a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many);
+    };
+    return plural(ch, "глава", "главы", "глав") + ", " + plural(ap, "приложение", "приложения", "приложений");
+  },
+  levelNames: { 1: "Обзор", 2: "Стандарт", 3: "Полный" },
+  stepPrev: "← назад", stepNext: "дальше →", stepAll: "показать всё", stepOf: (i, n) => i + " / " + n,
+  reset: "сбросить",
+  rounds: { roleplay: "Ролевая игра и decomposition", coding: "Практический coding", deepdive: "Project deep dive",
+            behavioral: "Поведенческий раунд", staff: "Сигналы Staff и Manager", takehome: "Take-home", other: "Прочее" },
+};
+
+/* Переключатель языка */
+const langBtn = document.getElementById("langbtn");
+langBtn.textContent = LANG === "en" ? "РУ" : "EN";
+langBtn.title = LANG === "en" ? "Читать по-русски" : "Read in English";
+langBtn.addEventListener("click", () => {
+  store.set("lang", LANG === "en" ? "ru" : "en");
+  location.reload();
+});
+
+/* ── Тема ───────────────────────────────────────────────────────────────── */
+const savedTheme = store.get("theme", "");
+if (savedTheme === "light" || savedTheme === "dark") root.setAttribute("data-theme", savedTheme);
+document.getElementById("theme").addEventListener("click", () => {
+  const dark = root.getAttribute("data-theme") === "dark" ||
+    (!root.hasAttribute("data-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
+  const next = dark ? "light" : "dark";
+  root.setAttribute("data-theme", next);
+  store.set("theme", next);
+});
+
+/* ── Уровень подробности ────────────────────────────────────────────────── */
+let level = parseInt(store.get("level", "2"), 10);
+if (!(level >= 1 && level <= 3)) level = 2;
+const levelBtns = Array.from(document.querySelectorAll(".seg [data-lvl]"));
+
+function applyLevel() {
+  document.querySelectorAll("[data-level]").forEach(el => {
+    const need = parseInt(el.getAttribute("data-level"), 10);
+    const forced = el.closest("[data-reveal]") !== null;
+    el.classList.toggle("is-hidden", !forced && need > level);
+  });
+  levelBtns.forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.lvl === level)));
+  const narrow = document.getElementById("lvlcycle");
+  if (narrow) narrow.textContent = L.levelNames[level];
+  document.querySelectorAll("[data-tabs]").forEach(fixTabs);
+}
+function setLevel(next) {
+  level = next;
+  store.set("level", String(level));
+  document.querySelectorAll("[data-reveal]").forEach(el => el.removeAttribute("data-reveal"));
+  applyLevel();
+}
+levelBtns.forEach(b => b.addEventListener("click", () => setLevel(+b.dataset.lvl)));
+
+const cycle = document.getElementById("lvlcycle");
+if (cycle) cycle.addEventListener("click", () => setLevel(level % 3 + 1));
+
+/* ── Подсветка синтаксиса Python ────────────────────────────────────────── */
+const KW = new Set(("False None True and as assert async await break class continue def del elif else " +
+  "except finally for from global if import in is lambda nonlocal not or pass raise return try while " +
+  "with yield match case type").split(" "));
+const BI = new Set(("int str float bool bytes bytearray list dict set tuple frozenset len range enumerate " +
+  "zip print isinstance issubclass super open sorted reversed min max sum abs round any all map filter " +
+  "iter next getattr setattr hasattr delattr property staticmethod classmethod object repr hash id " +
+  "Exception BaseException ValueError TypeError KeyError IndexError RuntimeError AttributeError " +
+  "NotImplementedError StopIteration StopAsyncIteration TimeoutError OSError self cls").split(" "));
+const RX = new RegExp([
+  "(#[^\\n]*)",
+  "((?:[rbfuRBFU]{0,2})\"\"\"[\\s\\S]*?\"\"\")",
+  "((?:[rbfuRBFU]{0,2})'''[\\s\\S]*?''')",
+  "((?:[rbfuRBFU]{0,2})\"(?:\\\\.|[^\"\\\\\\n])*\")",
+  "((?:[rbfuRBFU]{0,2})'(?:\\\\.|[^'\\\\\\n])*')",
+  "(@[A-Za-z_][\\w.]*)",
+  "(\\b\\d[\\w.]*)",
+  "([A-Za-z_][A-Za-z0-9_]*)"
+].join("|"), "g");
+
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+function tokenize(src) {
+  const out = []; let last = 0; let m;
+  RX.lastIndex = 0;
+  while ((m = RX.exec(src)) !== null) {
+    if (m.index > last) out.push({ c: "", t: src.slice(last, m.index) });
+    let cls = "";
+    if (m[1]) cls = "c";
+    else if (m[2] || m[3] || m[4] || m[5]) cls = "s";
+    else if (m[6]) cls = "d";
+    else if (m[7]) cls = "n0";
+    else if (m[8]) {
+      const w = m[8];
+      const after = src.slice(m.index + w.length).match(/^\s*\(/);
+      if (KW.has(w)) cls = "k";
+      else if (BI.has(w)) cls = "b";
+      else if (after) cls = "f";
+    }
+    out.push({ c: cls, t: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < src.length) out.push({ c: "", t: src.slice(last) });
+  return out;
+}
+
+function renderCode(src) {
+  const lines = [[]];
+  for (const tok of tokenize(src)) {
+    const segs = tok.t.split("\n");
+    for (let i = 0; i < segs.length; i++) {
+      if (i > 0) lines.push([]);
+      if (segs[i]) lines[lines.length - 1].push({ c: tok.c, t: segs[i] });
+    }
+  }
+  return lines.map(parts => parts.map(p => p.c ? '<span class="' + p.c + '">' + esc(p.t) + "</span>" : esc(p.t)).join(""));
+}
+
+document.querySelectorAll("figure.code").forEach(fig => {
+  const codeEl = fig.querySelector("pre > code");
+  if (!codeEl) return;
+  const raw = codeEl.textContent.replace(/^\n+|\s+$/g, "");
+  fig.dataset.src = raw;
+  const html = renderCode(raw);
+  const fold = parseInt(fig.dataset.fold || "0", 10);
+  const foldable = fold > 0 && html.length > fold + 2;
+  codeEl.innerHTML = html.map((h, i) =>
+    '<span class="ln' + (foldable && i >= fold ? " fold" : "") + '" data-n="' + (i + 1) + '">' + (h || " ") + "</span>"
+  ).join("");
+
+  let cap = fig.querySelector("figcaption");
+  if (!cap) { cap = document.createElement("figcaption"); fig.insertBefore(cap, fig.firstChild); }
+  const copy = document.createElement("button");
+  copy.className = "btn"; copy.type = "button"; copy.textContent = L.copy;
+  copy.addEventListener("click", () => {
+    navigator.clipboard.writeText(fig.dataset.src).then(
+      () => { copy.textContent = L.copied; setTimeout(() => copy.textContent = L.copy, 1400); },
+      () => { copy.textContent = L.copyFail; setTimeout(() => copy.textContent = L.copy, 1400); });
+  });
+  cap.appendChild(copy);
+  if (fig.dataset.run === "no") {
+    const mark = document.createElement("span");
+    mark.className = "norun"; mark.textContent = L.noRun;
+    cap.appendChild(mark);
+  }
+
+  if (foldable) {
+    const bar = document.createElement("button");
+    bar.type = "button"; bar.className = "foldbar";
+    const rest = html.length - fold;
+    const more = document.createElement("span"); more.className = "more"; more.textContent = L.showMore(rest);
+    const less = document.createElement("span"); less.className = "less"; less.textContent = L.showLess;
+    bar.append(more, less);
+    bar.addEventListener("click", () => {
+      fig.dataset.open = fig.dataset.open === "true" ? "false" : "true";
+    });
+    const gloss = fig.querySelector(".gloss");
+    fig.insertBefore(bar, gloss || null);
+  }
+});
+
+/* ── Вкладки ────────────────────────────────────────────────────────────── */
+function fixTabs(box) {
+  const tabs = Array.from(box.querySelectorAll('[role="tab"]'));
+  const panels = Array.from(box.querySelectorAll('[role="tabpanel"]'));
+  let sel = tabs.findIndex(t => t.getAttribute("aria-selected") === "true");
+  if (sel < 0 || tabs[sel].classList.contains("is-hidden")) {
+    sel = tabs.findIndex(t => !t.classList.contains("is-hidden"));
+    if (sel < 0) sel = 0;
+  }
+  tabs.forEach((t, i) => t.setAttribute("aria-selected", String(i === sel)));
+  panels.forEach((p, i) => p.hidden = i !== sel);
+}
+document.querySelectorAll("[data-tabs]").forEach(box => {
+  const tabs = Array.from(box.querySelectorAll('[role="tab"]'));
+  const panels = Array.from(box.querySelectorAll('[role="tabpanel"]'));
+  tabs.forEach((t, i) => {
+    t.type = "button";
+    t.addEventListener("click", () => {
+      tabs.forEach((x, j) => x.setAttribute("aria-selected", String(i === j)));
+      panels.forEach((p, j) => p.hidden = i !== j);
+    });
+    t.addEventListener("keydown", ev => {
+      const d = ev.key === "ArrowRight" ? 1 : ev.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      ev.preventDefault();
+      const vis = tabs.filter(x => !x.classList.contains("is-hidden"));
+      const cur = vis.indexOf(t);
+      vis[(cur + d + vis.length) % vis.length].focus();
+      vis[(cur + d + vis.length) % vis.length].click();
+    });
+  });
+  fixTabs(box);
+});
+
+/* ── Пошаговые диаграммы ────────────────────────────────────────────────── */
+document.querySelectorAll("figure.dia[data-steps]").forEach(fig => {
+  const groups = Array.from(fig.querySelectorAll("svg g[data-step]"))
+    .sort((a, b) => +a.dataset.step - +b.dataset.step);
+  if (groups.length < 2) return;
+  const n = groups.length;
+  let at = 0;                                  // 0 = всё видно
+  const bar = document.createElement("div");
+  bar.className = "stepbar";
+  const prev = document.createElement("button"); prev.type = "button"; prev.textContent = L.stepPrev;
+  const pos = document.createElement("span"); pos.className = "pos";
+  const next = document.createElement("button"); next.type = "button"; next.textContent = L.stepNext;
+  const all = document.createElement("button"); all.type = "button"; all.textContent = L.stepAll;
+  const cap = document.createElement("span"); cap.className = "cap";
+  bar.append(prev, pos, next, all, cap);
+  fig.querySelector(".svg-wrap").after(bar);
+  function paint() {
+    groups.forEach(g => g.classList.toggle("dim", at > 0 && +g.dataset.step > at));
+    pos.textContent = at === 0 ? L.stepOf(n, n) : L.stepOf(at, n);
+    prev.disabled = at <= 1;
+    next.disabled = at >= n;
+    all.disabled = at === 0;
+    const g = at > 0 ? groups[at - 1] : null;
+    cap.textContent = g && g.dataset.caption ? g.dataset.caption : "";
+  }
+  prev.addEventListener("click", () => { if (at > 1) { at--; paint(); } });
+  next.addEventListener("click", () => { if (at === 0) at = 1; else if (at < n) at++; paint(); });
+  all.addEventListener("click", () => { at = 0; paint(); });
+  // До первого нажатия «дальше» диаграмма показана целиком; первое нажатие начинает с шага 1.
+  paint();
+});
+
+/* ── Чек-листы: состояние хранится в браузере читателя ──────────────────── */
+document.querySelectorAll(".checklist").forEach((box, i) => {
+  const key = "chk:" + (box.id || i);
+  const saved = new Set((store.get(key, "") || "").split(",").filter(Boolean));
+  const inputs = Array.from(box.querySelectorAll('input[type="checkbox"]'));
+  inputs.forEach((inp, j) => {
+    inp.checked = saved.has(String(j));
+    inp.addEventListener("change", () => {
+      if (inp.checked) saved.add(String(j)); else saved.delete(String(j));
+      store.set(key, Array.from(saved).join(","));
+    });
+  });
+  const head = box.querySelector(".eyebrow");
+  if (head) {
+    const reset = document.createElement("button");
+    reset.type = "button"; reset.className = "reset"; reset.textContent = L.reset;
+    reset.addEventListener("click", () => { inputs.forEach(x => x.checked = false); saved.clear(); store.set(key, ""); });
+    head.appendChild(reset);
+  }
+});
+
+/* ── Оглавление ─────────────────────────────────────────────────────────── */
+const rail = document.getElementById("rail");
+const sections = Array.from(main.querySelectorAll("section.chapter"));
+let railHTML = '<h2>' + L.railStart + '</h2><ol>';
+let openGroup = true;
+
+Array.from(main.children).forEach(node => {
+  if (node.classList.contains("part")) {
+    if (openGroup) railHTML += "</ol>";
+    railHTML += "<h2>" + node.querySelector("h2").textContent.trim() + "</h2><ol>";
+    openGroup = true;
+  } else if (node.classList.contains("chapter")) {
+    const h = node.querySelector(".chead h2") || node.querySelector("h2");
+    const numEl = h.querySelector(".num");
+    const num = numEl ? numEl.textContent.trim() : "";
+    const title = h.textContent.replace(num, "").trim();
+    railHTML += '<li><a href="#' + node.id + '"><span class="n">' + (num || "•") + "</span><span>" + title + "</span></a>";
+    const subs = Array.from(node.querySelectorAll("h3[id]"));
+    if (subs.length) {
+      railHTML += '<ol class="sub" hidden>' + subs.map(s => {
+        const n = s.querySelector(".num");
+        const t = s.textContent.replace(n ? n.textContent : "", "").trim();
+        return '<li><a href="#' + s.id + '"><span class="n">' + (n ? n.textContent.trim() : "") + "</span><span>" + t + "</span></a></li>";
+      }).join("") + "</ol>";
+    }
+    railHTML += "</li>";
+  }
+});
+if (openGroup) railHTML += "</ol>";
+rail.innerHTML = railHTML;
+
+const railLinks = new Map();
+rail.querySelectorAll("a").forEach(a => railLinks.set(a.getAttribute("href").slice(1), a));
+
+/* ── Слежение за положением ─────────────────────────────────────────────── */
+let currentChapter = sections[0];
+const heads = Array.from(main.querySelectorAll("section.chapter, h3[id]"));
+const seen = new Set((store.get("done", "") || "").split(",").filter(Boolean));
+
+function markHere() {
+  let best = null, bestTop = -Infinity;
+  for (const el of heads) {
+    const top = el.getBoundingClientRect().top;
+    if (top <= 120 && top > bestTop) { bestTop = top; best = el; }
+  }
+  if (!best) best = heads[0];
+  const sec = best.classList && best.classList.contains("chapter") ? best : best.closest("section.chapter");
+  if (sec) {
+    currentChapter = sec;
+    seen.add(sec.id);
+    store.set("done", Array.from(seen).join(","));
+  }
+  rail.querySelectorAll("a.here").forEach(a => a.classList.remove("here"));
+  rail.querySelectorAll("ol.sub").forEach(o => o.hidden = true);
+  const secLink = sec ? railLinks.get(sec.id) : null;
+  if (secLink) {
+    secLink.classList.add("here");
+    const sub = secLink.parentElement.querySelector("ol.sub");
+    if (sub) sub.hidden = false;
+  }
+  if (best.id && railLinks.has(best.id) && best !== sec) railLinks.get(best.id).classList.add("here");
+  railLinks.forEach((a, id) => { if (seen.has(id)) a.classList.add("done"); });
+
+  const h = document.documentElement;
+  const p = h.scrollTop / Math.max(1, h.scrollHeight - h.clientHeight);
+  document.getElementById("progress").style.width = (p * 100).toFixed(1) + "%";
+}
+let ticking = false;
+addEventListener("scroll", () => {
+  if (ticking) return; ticking = true;
+  requestAnimationFrame(() => { markHere(); ticking = false; });
+}, { passive: true });
+
+/* ── Номера разделов для ссылок и печати ────────────────────────────────── */
+function refOf(id) {
+  const t = document.getElementById(id);
+  if (!t) return null;
+  const h = t.matches("h2,h3") ? t : t.querySelector(".chead h2, h2, h3");
+  const n = h && h.querySelector(".num");
+  return n ? n.textContent.trim() : null;
+}
+document.querySelectorAll('main a[href^="#"]').forEach(a => {
+  const r = refOf(a.getAttribute("href").slice(1));
+  if (r) a.setAttribute("data-secref", r);
+});
+
+/* ── Термины и предпросмотр ссылок ──────────────────────────────────────── */
+const defs = new Map();
+let defCounter = 0;
+document.querySelectorAll("dl.def").forEach(dl => {
+  const dt = dl.querySelector("dt"), dd = dl.querySelector("dd");
+  if (!dt || !dd) return;
+  const en = dt.querySelector(".en");
+  const key = dt.textContent.replace(en ? en.textContent : "", "").trim()
+    .toLowerCase().replace(/ё/g, "е");
+  const sec = dl.closest("section.chapter");
+  let anchor = sec ? sec.id : "";
+  let p = dl;
+  while (p && !(p.matches && p.matches("h3[id]"))) p = p.previousElementSibling;
+  if (p) anchor = p.id;
+  if (!dl.id) dl.id = "def-" + (++defCounter);
+  defs.set(key, { title: dt.textContent.trim(), body: dd.textContent.trim(), anchor: anchor, id: dl.id });
+});
+
+/* ── Разметка терминов в тексте по собранным определениям ───────────────── */
+(function markTerms() {
+  const flat = t => t.toLowerCase().replace(/ё/g, "е");
+  // Многозначные слова не размечаются: подсказка увела бы к чужому смыслу.
+  const ambiguous = new Set(["представление",
+                             "шаг", "массив", "заказчик",
+                             "customer", "agent", "агент"]);
+  const keys = Array.from(defs.keys())
+    .map(k => flat(k))
+    .filter(k => k.length >= 6 && k.split(" ").length <= 5 && !ambiguous.has(k))
+    .sort((a, b) => b.length - a.length);
+  const used = new Set();
+  const letter = /[0-9a-zа-я]/;
+
+  document.querySelectorAll("main p, main li").forEach(el => {
+    if (el.closest("dl.def") || el.closest("#glossary") || el.closest("#antipatterns") || el.closest("#qbank")) return;
+    if (el.closest(".gloss") || el.closest("figcaption")) return;
+    const sec = el.closest("section.chapter");
+    const chId = sec ? sec.id : "";
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!node.nodeValue.trim()) continue;
+      if (node.parentElement.closest("code, a, .term, .tag, .lvl, .num")) continue;
+      nodes.push(node);
+    }
+    for (const text of nodes) {
+      const lower = flat(text.nodeValue);
+      for (const key of keys) {
+        const stamp = chId + "|" + key;
+        if (used.has(stamp)) continue;
+        const at = lower.indexOf(key);
+        if (at < 0) continue;
+        const before = at === 0 ? " " : lower[at - 1];
+        const after = lower[at + key.length] || " ";
+        if (letter.test(before) || letter.test(after)) continue;
+        used.add(stamp);
+        const span = document.createElement("span");
+        span.className = "term";
+        span.dataset.t = key;
+        span.tabIndex = 0;
+        const range = document.createRange();
+        range.setStart(text, at);
+        range.setEnd(text, at + key.length);
+        try { range.surroundContents(span); } catch (e) { used.delete(stamp); }
+        break;
+      }
+    }
+  });
+})();
+
+let pop = null;
+function hidePop() { if (pop) { pop.remove(); pop = null; } }
+function showPop(target, title, body, href) {
+  hidePop();
+  pop = document.createElement("div");
+  pop.className = "pop";
+  pop.innerHTML = '<div class="h"></div><p></p>' + (href ? '<a class="go" href="' + href + '">' + L.goto + "</a>" : "");
+  pop.querySelector(".h").textContent = title;
+  pop.querySelector("p").textContent = body.length > 300 ? body.slice(0, 300) + "…" : body;
+  document.body.appendChild(pop);
+  const r = target.getBoundingClientRect();
+  const w = pop.offsetWidth, hgt = pop.offsetHeight;
+  let left = Math.min(Math.max(8, r.left + scrollX), scrollX + innerWidth - w - 8);
+  let top = r.bottom + scrollY + 8;
+  if (r.bottom + hgt + 16 > innerHeight) top = r.top + scrollY - hgt - 8;
+  pop.style.left = left + "px"; pop.style.top = top + "px";
+  pop.addEventListener("mouseleave", hidePop);
+}
+function bindPop(el, get) {
+  let timer = null;
+  const open = () => { const d = get(); if (d) showPop(el, d.title, d.body, d.href); };
+  el.addEventListener("mouseenter", () => { timer = setTimeout(open, 260); });
+  el.addEventListener("mouseleave", () => { clearTimeout(timer); setTimeout(() => { if (pop && !pop.matches(":hover")) hidePop(); }, 180); });
+  el.addEventListener("focus", open);
+  el.addEventListener("blur", hidePop);
+}
+document.querySelectorAll(".term").forEach(el => {
+  const key = (el.dataset.t || el.textContent).trim().toLowerCase().replace(/ё/g, "е");
+  bindPop(el, () => {
+    const d = defs.get(key);
+    return d ? { title: d.title, body: d.body, href: "#" + d.id } : null;
+  });
+  el.addEventListener("click", () => { const d = defs.get(key); if (d) location.hash = "#" + d.id; });
+});
+document.querySelectorAll('main a[href^="#"]').forEach(a => {
+  bindPop(a, () => {
+    const t = document.getElementById(a.getAttribute("href").slice(1));
+    if (!t) return null;
+    const h = t.matches("h2,h3") ? t : t.querySelector(".chead h2, h2, h3");
+    let p = (h || t).nextElementSibling;
+    while (p && !p.matches("p")) p = p.nextElementSibling;
+    const num = h && h.querySelector(".num");
+    const title = h
+      ? (num ? num.textContent.trim() + ". " : "") + h.textContent.replace(num ? num.textContent : "", "").trim()
+      : t.textContent.trim();
+    return { title: title, body: p ? p.textContent.trim() : "", href: null };
+  });
+});
+
+/* ── Раскрытие цели, скрытой уровнем ────────────────────────────────────── */
+function toast(text) {
+  document.querySelectorAll(".toast").forEach(t => t.remove());
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = "<span></span><button type=\"button\"></button>";
+  el.querySelector("button").textContent = L.toastOk;
+  el.querySelector("span").textContent = text;
+  el.querySelector("button").addEventListener("click", () => el.remove());
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 7000);
+}
+function reveal(id) {
+  const t = document.getElementById(id);
+  if (!t) return;
+  const hidden = t.classList.contains("is-hidden") || t.closest(".is-hidden");
+  if (!hidden) return;
+  const sec = t.closest("section.chapter");
+  if (!sec) return;
+  sec.setAttribute("data-reveal", "");
+  applyLevel();
+  toast(L.toastReveal);
+}
+addEventListener("hashchange", () => reveal(location.hash.slice(1)));
+
+/* ── Поиск ──────────────────────────────────────────────────────────────── */
+const norm = s => s.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+const index = [];
+sections.forEach(sec => {
+  const ch = sec.querySelector(".chead h2") || sec.querySelector("h2");
+  const chNum = ch && ch.querySelector(".num");
+  const chTitle = ch
+    ? (chNum ? chNum.textContent.trim() + ". " : "") + ch.textContent.replace(chNum ? chNum.textContent : "", "").trim()
+    : sec.id;
+  const lvlOf = el => { const p = el.closest("[data-level]"); return p ? p.getAttribute("data-level") : "1"; };
+  sec.querySelectorAll("h2[id],h3[id]").forEach(h => {
+    const num = h.querySelector(".num");
+    const title = h.textContent.replace(num ? num.textContent : "", "").trim();
+    index.push({
+      id: h.id, t: num ? num.textContent.trim() + ". " + title : title,
+      kind: "раздел", ch: chTitle, w: 0, lvl: lvlOf(h)
+    });
+  });
+  sec.querySelectorAll("dl.def").forEach(dl => {
+    const dt = dl.querySelector("dt");
+    index.push({ id: dl.id, t: dt.textContent.trim(), kind: "термин", ch: chTitle, w: 1, lvl: lvlOf(dl) });
+  });
+  sec.querySelectorAll("figure.dia figcaption").forEach((fc, i) => {
+    const fig = fc.parentElement;
+    if (!fig.id) fig.id = sec.id + "-dia-" + i;
+    index.push({ id: fig.id, t: fc.textContent.trim().slice(0, 90), kind: "диаграмма", ch: chTitle, w: 2, lvl: lvlOf(fig) });
+  });
+  // Содержимое раздела: находится по любому слову, показывается заголовком раздела.
+  const heads = Array.from(sec.querySelectorAll("h3[id]"));
+  if (!heads.length) heads.push(sec.querySelector(".chead h2, h2"));
+  heads.forEach(h => {
+    if (!h) return;
+    let body = "";
+    let node = h.nextElementSibling;
+    while (node && !node.matches("h2, h3")) { body += " " + node.textContent; node = node.nextElementSibling; }
+    if (!body.trim()) return;
+    const num = h.querySelector(".num");
+    index.push({
+      id: h.id || sec.id,
+      t: h.textContent.replace(num ? num.textContent : "", "").trim(),
+      kind: "упоминание", ch: chTitle, w: 3, lvl: lvlOf(h), body: norm(body)
+    });
+  });
+});
+index.forEach(e => e.n = norm(e.t));
+
+const dlg = document.getElementById("search"), qIn = document.getElementById("q"), resBox = document.getElementById("res");
+let hits = [], sel = 0;
+function runSearch() {
+  const q = norm(qIn.value);
+  if (!q) { resBox.innerHTML = '<div class="empty"></div>'; resBox.querySelector('.empty').textContent = L.searchHint; hits = []; return; }
+  const words = q.split(" ").filter(Boolean);
+  const hasAll = (text) => text && words.every(w => text.includes(w));
+  const seenIds = new Set();
+  hits = index
+    .filter(e => e.w < 3 ? hasAll(e.n) : (hasAll(e.body) && !hasAll(e.n)))
+    .sort((a, b) => (a.w - b.w) || (a.n.indexOf(words[0]) - b.n.indexOf(words[0])) || a.n.length - b.n.length)
+    .filter(e => { const key = e.id + "|" + e.kind; if (seenIds.has(key)) return false; seenIds.add(key); return true; })
+    .slice(0, 20);
+  sel = 0;
+  resBox.innerHTML = hits.length ? hits.map((h, i) =>
+    '<a href="#' + h.id + '" class="' + (i === 0 ? "sel" : "") + '"><div class="t"></div><div class="p"><span>' +
+    (L.kinds[h.kind] || h.kind) + "</span><span>" + h.ch + "</span>" + (h.lvl !== "1" ? "<span>" + L.level + h.lvl + "</span>" : "") + "</div></a>"
+  ).join("") : '<div class="empty"></div>';
+  if (!hits.length) resBox.querySelector(".empty").textContent = L.searchEmpty;
+  resBox.querySelectorAll(".t").forEach((el, i) => el.textContent = hits[i].t);
+  resBox.querySelectorAll("a").forEach((a, i) => a.addEventListener("click", () => { closeSearch(); setTimeout(() => reveal(hits[i].id), 60); }));
+}
+function openSearch() { dlg.dataset.open = "true"; qIn.value = ""; runSearch(); qIn.focus(); }
+function closeSearch() { dlg.dataset.open = "false"; qIn.blur(); }
+document.getElementById("find").addEventListener("click", openSearch);
+qIn.addEventListener("input", runSearch);
+dlg.addEventListener("click", e => { if (e.target === dlg) closeSearch(); });
+qIn.addEventListener("keydown", e => {
+  if (e.key === "Escape") { closeSearch(); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!hits.length) return;
+    sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + hits.length) % hits.length;
+    resBox.querySelectorAll("a").forEach((a, i) => a.classList.toggle("sel", i === sel));
+    resBox.querySelectorAll("a")[sel].scrollIntoView({ block: "nearest" });
+  }
+  if (e.key === "Enter" && hits.length) { e.preventDefault(); resBox.querySelectorAll("a")[sel].click(); }
+});
+
+/* ── Печать ─────────────────────────────────────────────────────────────── */
+const pdlg = document.getElementById("printdlg");
+
+function partOf(section) {
+  let node = section;
+  while (node) {
+    if (node.classList && node.classList.contains("part")) return node;
+    node = node.previousElementSibling;
+  }
+  return null;
+}
+
+document.getElementById("printbtn").addEventListener("click", () => {
+  const chapter = currentChapter;
+  const part = partOf(chapter);
+  const title = el => {
+    if (!el) return L.notDetermined;
+    const h = el.querySelector(".chead h2") || el.querySelector("h2");
+    const n = h && h.querySelector(".num");
+    return h ? h.textContent.replace(n ? n.textContent : "", "").trim() : "";
+  };
+  pdlg.querySelectorAll("[data-fill]").forEach(el => {
+    const kind = el.getAttribute("data-fill");
+    if (kind === "all") {
+      const all = Array.from(document.querySelectorAll("section.chapter"));
+      const numbered = all.filter(x => /^\d+$/.test((x.querySelector(".chead .num") || {}).textContent || ""));
+      const apps = all.filter(x => x.id.startsWith("app-"));
+      el.textContent = L.counts(numbered.length, apps.length);
+    }
+    if (kind === "part") el.textContent = part ? title(part) : L.partNotDetermined;
+    if (kind === "chapter") el.textContent = title(chapter);
+  });
+  pdlg.querySelector('input[name="plvl"][value="' + level + '"]').checked = true;
+  pdlg.dataset.open = "true";
+});
+pdlg.addEventListener("click", e => { if (e.target === pdlg || e.target.hasAttribute("data-close")) pdlg.dataset.open = "false"; });
+
+let saved = null;
+document.getElementById("dopring").addEventListener("click", () => {
+  const scope = pdlg.querySelector('input[name="scope"]:checked').value;
+  const plvl = +pdlg.querySelector('input[name="plvl"]:checked').value;
+  pdlg.dataset.open = "false";
+  saved = { level: level, theme: root.getAttribute("data-theme"), scope: scope };
+  root.setAttribute("data-theme", "light");
+  level = plvl; applyLevel();
+  document.body.dataset.scope = scope;
+  if (scope === "chapter" && currentChapter) currentChapter.classList.add("printing");
+  if (scope === "part") {
+    let n = currentChapter, part = null;
+    while (n) { if (n.classList.contains("part")) { part = n; break; } n = n.previousElementSibling; }
+    if (part) {
+      part.classList.add("printing");
+      let m = part.nextElementSibling;
+      while (m && !m.classList.contains("part")) { m.classList.add("printing"); m = m.nextElementSibling; }
+    }
+  }
+  document.querySelectorAll("figure.code").forEach(f => f.dataset.open = "true");
+  document.querySelectorAll("details").forEach(d => { d.dataset.was = d.open ? "1" : "0"; d.open = true; });
+  setTimeout(() => print(), 60);
+});
+// Прямая печать из браузера, минуя диалог пособия: раскрываем свёрнутое.
+let quickPrep = false;
+addEventListener("beforeprint", () => {
+  if (saved || quickPrep) return;
+  quickPrep = true;
+  document.querySelectorAll("figure.code").forEach(f => {
+    f.dataset.wasOpen = f.dataset.open || "false";
+    f.dataset.open = "true";
+  });
+  document.querySelectorAll("details").forEach(d => { d.dataset.was = d.open ? "1" : "0"; d.open = true; });
+});
+
+addEventListener("afterprint", () => {
+  if (quickPrep) {
+    quickPrep = false;
+    document.querySelectorAll("figure.code").forEach(f => {
+      f.dataset.open = f.dataset.wasOpen || "false";
+      delete f.dataset.wasOpen;
+    });
+    document.querySelectorAll("details").forEach(d => { d.open = d.dataset.was === "1"; delete d.dataset.was; });
+  }
+  if (!saved) return;
+  document.querySelectorAll(".printing").forEach(e => e.classList.remove("printing"));
+  delete document.body.dataset.scope;
+  document.querySelectorAll("figure.code").forEach(f => f.dataset.open = "false");
+  document.querySelectorAll("details").forEach(d => { d.open = d.dataset.was === "1"; delete d.dataset.was; });
+  if (saved.theme) root.setAttribute("data-theme", saved.theme); else root.removeAttribute("data-theme");
+  level = saved.level; applyLevel();
+  saved = null;
+});
+
+/* ── Боковая панель на узком экране ─────────────────────────────────────── */
+const burger = document.getElementById("burger");
+let scrim = null;
+function setRail(open) {
+  rail.dataset.open = String(open);
+  burger.setAttribute("aria-expanded", String(open));
+  if (open && !scrim) {
+    scrim = document.createElement("div"); scrim.className = "scrim";
+    scrim.addEventListener("click", () => setRail(false));
+    document.body.appendChild(scrim);
+  } else if (!open && scrim) { scrim.remove(); scrim = null; }
+}
+burger.addEventListener("click", () => setRail(rail.dataset.open !== "true"));
+rail.addEventListener("click", e => { if (e.target.closest("a") && innerWidth < 1024) setRail(false); });
+
+/* ── Клавиатура: по физическому коду, независимо от раскладки ───────────── */
+addEventListener("keydown", e => {
+  const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if (e.key === "Escape") { closeSearch(); pdlg.dataset.open = "false"; setRail(false); hidePop(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === "KeyK") { e.preventDefault(); openSearch(); return; }
+  if (inField) return;
+  if (e.code === "Slash" && !e.ctrlKey && !e.metaKey) { e.preventDefault(); openSearch(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const step = (dir, list) => {
+    const items = Array.from(main.querySelectorAll(list));
+    const y = scrollY + 130;
+    let idx = items.findIndex(el => el.getBoundingClientRect().top + scrollY > y + 4);
+    if (dir < 0) idx = idx <= 0 ? items.length - 1 : idx - 1;
+    else if (idx < 0) idx = items.length - 1;
+    const t = items[Math.max(0, Math.min(items.length - 1, idx))];
+    if (t) { reveal(t.id); t.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  };
+  if (e.code === "KeyJ") { e.preventDefault(); step(1, "h3[id], section.chapter"); }
+  if (e.code === "KeyK") { e.preventDefault(); step(-1, "h3[id], section.chapter"); }
+  if (e.code === "ArrowRight") { e.preventDefault(); step(1, "section.chapter"); }
+  if (e.code === "ArrowLeft") { e.preventDefault(); step(-1, "section.chapter"); }
+});
+
+/* ── Приложения, собираемые из содержания ───────────────────────────────── */
+function chapterLabel(el) {
+  const sec = el && el.closest("section.chapter");
+  if (!sec) return null;
+  const h = sec.querySelector(".chead h2") || sec.querySelector("h2");
+  const n = h && h.querySelector(".num");
+  const num = n ? n.textContent.trim() : "";
+  return { num: num, title: h ? h.textContent.replace(num, "").trim() : sec.id, id: sec.id };
+}
+function whereLink(el, targetId) {
+  const lab = chapterLabel(el);
+  const a = document.createElement("a");
+  a.className = "where";
+  a.href = "#" + (targetId || (lab ? lab.id : ""));
+  const kind = lab && lab.num.length > 2 ? "" : (lab && /^[A-ZА-Я]$/u.test(lab.num) ? L.appendixWord : L.chapterWord);
+  a.textContent = lab ? kind + lab.num + ". " + lab.title : "";
+  if (lab) a.setAttribute("data-secref", lab.num);
+  return a;
+}
+
+(function buildGlossary() {
+  const host = document.getElementById("glossary");
+  if (!host) return;
+  const items = Array.from(defs.values())
+    .sort((a, b) => a.title.localeCompare(b.title, LANG));
+  for (const item of items) {
+    const source = document.getElementById(item.id);
+    const box = document.createElement("div");
+    box.className = "gl";
+    const title = document.createElement("div");
+    title.className = "t";
+    const dt = source ? source.querySelector("dt") : null;
+    const en = dt ? dt.querySelector(".en") : null;
+    title.textContent = en ? dt.textContent.replace(en.textContent, "").trim() : item.title;
+    if (en) {
+      const sp = document.createElement("span");
+      sp.className = "en";
+      sp.textContent = " " + en.textContent.trim();
+      title.appendChild(sp);
+    }
+    const body = document.createElement("p");
+    body.textContent = item.body;
+    box.append(title, body);
+    if (source) box.appendChild(whereLink(source, item.id));
+    host.appendChild(box);
+  }
+  const count = document.createElement("p");
+  count.className = "where";
+  count.textContent = L.termsTotal(items.length);
+  host.appendChild(count);
+})();
+
+(function buildAntipatterns() {
+  const host = document.getElementById("antipatterns");
+  if (!host) return;
+  const rows = [];
+  let n = 0;
+  document.querySelectorAll("main .warn").forEach(el => {
+    if (el.closest("#app-d")) return;
+    if (!el.id) el.id = "warn-" + (++n);
+    const b = el.querySelector("b");
+    const kind = b ? b.textContent.trim() : L.warnKind;
+    const text = el.textContent.replace(b ? b.textContent : "", "").trim();
+    rows.push({ kind: kind, text: text, el: el, id: el.id });
+  });
+  document.querySelectorAll('main [data-tabs] [role="tabpanel"]').forEach(panel => {
+    const naiveTitle = LANG === "en" ? "Naive" : "Наивно";
+    if (panel.getAttribute("data-title") !== naiveTitle) return;
+    if (!panel.id) panel.id = "naive-" + (++n);
+    const p = panel.querySelector("p");
+    rows.push({ kind: L.naiveKind, text: p ? p.textContent.trim() : "", el: panel, id: panel.id });
+  });
+  rows.sort((a, b) => {
+    const la = chapterLabel(a.el), lb = chapterLabel(b.el);
+    const na = parseInt(la ? la.num : "99", 10) || 99;
+    const nb = parseInt(lb ? lb.num : "99", 10) || 99;
+    return na - nb;
+  });
+  const list = document.createElement("div");
+  list.className = "applist";
+  for (const row of rows) {
+    const box = document.createElement("div");
+    box.className = "ap";
+    const k = document.createElement("div");
+    k.className = "k";
+    k.textContent = row.kind;
+    const p = document.createElement("p");
+    p.textContent = row.text.length > 260 ? row.text.slice(0, 260) + "…" : row.text;
+    box.append(k, p, whereLink(row.el, row.id));
+    list.appendChild(box);
+  }
+  host.appendChild(list);
+  const count = document.createElement("p");
+  count.className = "where";
+  count.textContent = L.casesTotal(rows.length);
+  host.appendChild(count);
+})();
+
+/* Указатель источников: собирается из ссылок a.src во всех главах, по одному
+   элементу на адрес, с перечнем глав, где источник процитирован */
+(function buildSources() {
+  const host = document.getElementById("sources-index");
+  if (!host) return;
+  const byHref = new Map();
+  let n = 0, citations = 0;
+  document.querySelectorAll("main a.src").forEach(el => {
+    if (el.closest("#app-e")) return;
+    const lab = chapterLabel(el);
+    if (!lab) return;
+    if (!el.id) el.id = "src-" + (++n);
+    citations++;
+    const key = el.href;
+    if (!byHref.has(key)) byHref.set(key, { title: el.textContent.trim(), href: key, first: el, places: new Map() });
+    const item = byHref.get(key);
+    if (!item.places.has(lab.id)) item.places.set(lab.id, el);
+  });
+  const order = el => {
+    const lab = chapterLabel(el);
+    const num = lab ? parseInt(lab.num, 10) : NaN;
+    return Number.isNaN(num) ? 99 : num;
+  };
+  const items = Array.from(byHref.values())
+    .sort((a, b) => order(a.first) - order(b.first) || a.title.localeCompare(b.title, LANG));
+  for (const item of items) {
+    const box = document.createElement("div");
+    box.className = "gl";
+    const title = document.createElement("a");
+    title.className = "t";
+    title.href = item.href;
+    title.target = "_blank";
+    title.rel = "noreferrer";
+    title.textContent = item.title;
+    const host2 = document.createElement("span");
+    host2.className = "en";
+    host2.textContent = " " + new URL(item.href).hostname.replace(/^www\./, "");
+    const places = document.createElement("p");
+    places.className = "where";
+    item.places.forEach(el => {
+      if (places.childNodes.length) places.appendChild(document.createTextNode(" · "));
+      places.appendChild(whereLink(el, el.id));
+    });
+    box.append(title, host2, places);
+    host.appendChild(box);
+  }
+  const count = document.createElement("p");
+  count.className = "where";
+  count.textContent = L.sourcesTotal(items.length, citations);
+  host.appendChild(count);
+})();
+
+/* Банк вопросов (только в локальной сборке): собирается из элементов с data-round */
+(function buildQuestionBank() {
+  const host = document.getElementById("qbank");
+  if (!host) return;
+  const groups = new Map();
+  let n = 0;
+  document.querySelectorAll("main [data-round]").forEach(el => {
+    if (el.closest("#app-q")) return;
+    if (!el.id) el.id = "q-" + (++n);
+    const round = el.getAttribute("data-round") || "other";
+    if (!groups.has(round)) groups.set(round, []);
+    const p = el.querySelector("p");
+    groups.get(round).push({ text: p ? p.textContent.trim() : el.textContent.trim(), el: el, id: el.id });
+  });
+  let total = 0;
+  for (const round of Object.keys(L.rounds)) {
+    const rows = groups.get(round);
+    if (!rows || !rows.length) continue;
+    const h = document.createElement("h3");
+    h.textContent = L.rounds[round];
+    host.appendChild(h);
+    for (const row of rows) {
+      const box = document.createElement("div");
+      box.className = "ap";
+      const p = document.createElement("p");
+      p.textContent = row.text;
+      box.append(p, whereLink(row.el, row.id));
+      host.appendChild(box);
+      total++;
+    }
+  }
+  const count = document.createElement("p");
+  count.className = "where";
+  count.textContent = L.questionsTotal(total);
+  host.appendChild(count);
+})();
+
+/* ── Проверка целостности внутренних ссылок ─────────────────────────────── */
+(function check() {
+  const bad = [];
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    const id = a.getAttribute("href").slice(1);
+    if (id && !document.getElementById(id)) bad.push(a.getAttribute("href") + " ← «" + a.textContent.trim() + "»");
+  });
+  const ids = new Map();
+  document.querySelectorAll("[id]").forEach(el => ids.set(el.id, (ids.get(el.id) || 0) + 1));
+  const dup = Array.from(ids).filter(p => p[1] > 1).map(p => p[0]);
+  if (bad.length) console.error("Учебник: битые внутренние ссылки (" + bad.length + "):\n" + bad.join("\n"));
+  if (dup.length) console.error("Учебник: повторяющиеся идентификаторы: " + dup.join(", "));
+  if (!bad.length && !dup.length) console.info("Учебник: внутренние ссылки целы, идентификаторы уникальны (" + ids.size + ").");
+})();
+
+applyLevel();
+markHere();
+if (location.hash) setTimeout(() => reveal(location.hash.slice(1)), 120);
+})();
+</script>

@@ -1,0 +1,933 @@
+<!-- ────────────────────────── CHAPTER 5 ────────────────────────── -->
+<section class="chapter" id="ch-5">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter five</p>
+    <span class="strata" role="img" aria-label="Layers A, B and E: customer systems, model and agent, security">
+      <i data-s="A"></i><i data-s="B"></i><i></i><i></i><i data-s="E"></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-5"><span class="num">5</span>Data Pipelines and Retrieval</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>separate the data-preparation problem from the retrieval problem and plan data preparation first;</li>
+<li>build an ingestion path that preserves the structure, the rights and the version of every chunk;</li>
+<li>choose a store by scale, filter complexity, freshness and the presence of an on-call team;</li>
+<li>put the rights check before ranking and confirm it with a post-check;</li>
+<li>measure retrieval quality in numbers and name the stage at which an answer is lost.</li>
+</ul>
+</div>
+
+<h3 id="s-5-1"><span class="num">5.1</span>The task: guideline search at Meridian</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-2" data-secref="G.2">Case file CF2 · Meridian Health Network</a></span>
+  <span class="tag">12 hospitals</span>
+  <span class="tag">ACLs per department</span>
+  <span class="tag">PHI on-prem</span>
+  <span>a hospital network</span>
+</div>
+
+<p>Clinicians at Meridian's twelve hospitals ask questions whose answers are written down in clinical guidelines, standing orders and protocols: which dose of antibiotic is given on a suspicion of sepsis, who signs consent for a procedure on a minor, from which date the new revision of a protocol applies. Today the answer is looked for on the corporate portal by full-text search, and an intensivist gets a parking policy in the first ten results. The customer asks for an assistant that answers the question in prose and shows the document, the revision and the section the answer came from.</p>
+
+<p>Four constraints define the task. The corpus holds around two hundred thousand documents accumulated over fifteen years in a document store that has been replaced three times. Rights are granted per department: the psychiatry protocol is not visible to a cardiologist, and part of the corpus is open to heads of department only. An answer must carry a reference to its source, because the clinical decision is made by the clinician, who checks what the answer rests on. Medical data does not leave the network's perimeter: only de-identified content is sent to the cloud.</p>
+
+<p>This chapter turns those constraints into a pipeline: ingestion that preserves structure and rights, an index with a vector and a lexical part, retrieval that checks rights before ranking, and a question set that turns retrieval quality into a number. The assembled context reaches the model the way <a href="#ch-4" data-secref="4">Chapter 4</a> describes, the perimeter as a whole is taken apart in <a href="#ch-10" data-secref="10">Chapter 10</a>, and the release gate for the whole system is built in <a href="#ch-12" data-secref="12">Chapter 12</a>.</p>
+
+<h3 id="s-5-2"><span class="num">5.2</span>Why RAG is a data-engineering problem</h3>
+
+<p>The composition of the corpus that the statement of the task calls "documents" becomes known in the second week. Forty per cent of Meridian's corpus consists of PDFs produced by scanning paper, with no text layer in them. Another fifth are Excel exports with merged cells, where a person reads a dosage table without difficulty and machine parsing loses the link between values and headers. The remaining documents are stored in a fifteen-year-old document store where half the files name "administrator" as their author and the modification date coincides with the date of the last migration.</p>
+
+<dl class="def">
+<dt>Retrieval-augmented generation, RAG</dt>
+<dd>A way of answering in which the system first finds the fragments of documents that bear on the question and then passes them to the model together with the question, requiring the answer to rest on them. The quality of the answer is bounded above by the quality of what was found: the model cannot quote a fragment that retrieval did not return, and does not always detect that the returned fragments do not bear on the question.</dd>
+</dl>
+
+<p>An order of work follows from this definition. First it is established which share of the corpus can be parsed, which documents are duplicates, which are obsolete and which nobody is entitled to read. Then ingestion is built, and only then are the embedding model and the ranking scheme discussed. If a project starts with the choice of a vector database, a month later it turns out that the scans without a text layer, which make up forty per cent of Meridian's corpus, have not been converted to text, and the index has to be rebuilt from scratch.</p>
+
+<p>The second part of the thesis concerns rights. Search over a corpus with access control runs inside the subset of documents the asker is entitled to see. Search over the whole corpus followed by filtering of the results does not meet this condition: ranking over the whole corpus reveals the existence of closed documents through result counts, through the list of "related" items, and through a summary the model composes from fragments obtained in violation of the rights.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 392" role="img" aria-label="The data path from sources through parsing, chunking, enrichment with rights and version and embedding to the index, and beneath it two query paths: one filtering by groups before ranking and one filtering afterwards, where ranks, counts and summaries have already been computed over closed documents" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="30" y="38" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">THE DATA PATH</text>
+  <text x="30" y="182" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">THE QUERY PATH</text>
+
+  <rect x="30" y="248" width="140" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="270" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">query and principal</text>
+  <text x="100" y="286" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">who is asking</text>
+
+  <g data-step="1" data-caption="Ingestion turns files into chunks with their rights and version; files that fail to parse are placed in quarantine.">
+    <rect x="30" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+    <text x="89" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">sources</text>
+    <text x="89" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">PDF · XLSX</text>
+    <rect x="170" y="52" width="118" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="229" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">parsing</text>
+    <text x="229" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">text · tables</text>
+    <rect x="310" y="52" width="118" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="369" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">chunking</text>
+    <text x="369" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">by structure</text>
+    <rect x="450" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="509" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">enrichment</text>
+    <text x="509" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">acl · version</text>
+    <rect x="590" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="649" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">embedding</text>
+    <text x="649" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">model · dims</text>
+    <rect x="730" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+    <text x="789" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">index</text>
+    <text x="789" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">vector + BM25</text>
+    <line x1="148" y1="76" x2="162" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="288" y1="76" x2="302" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="428" y1="76" x2="442" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="568" y1="76" x2="582" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="708" y1="76" x2="722" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <rect x="170" y="122" width="118" height="40" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="229" y="140" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">quarantine</text>
+    <text x="229" y="155" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">not parsed</text>
+    <line x1="229" y1="100" x2="229" y2="116" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar5a)"/>
+  </g>
+
+  <g data-step="2" data-caption="The group filter stands before ranking: only what the asker is entitled to see is ranked.">
+    <path d="M170,262 H188 V220 H198" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <rect x="206" y="196" width="150" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="281" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">filter by groups</text>
+    <text x="281" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">acl ∩ principal</text>
+    <rect x="376" y="196" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="451" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">ranking</text>
+    <text x="451" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">vector + BM25</text>
+    <rect x="546" y="196" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="621" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">rerank</text>
+    <text x="621" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">cross-encoder</text>
+    <rect x="716" y="196" width="138" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="785" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">post-check</text>
+    <text x="785" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">cited sources</text>
+    <line x1="356" y1="220" x2="368" y2="220" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="526" y1="220" x2="538" y2="220" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="696" y1="220" x2="708" y2="220" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+  </g>
+
+  <g data-step="3" data-caption="The same filter applied after ranking does not prevent the leak: by that point ranks, counts and summaries have already been computed with closed documents included.">
+    <path d="M170,282 H188 V334 H198" fill="none" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar5a)"/>
+    <rect x="206" y="310" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="281" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">ranking</text>
+    <text x="281" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">over the whole index</text>
+    <rect x="376" y="310" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="451" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">rerank</text>
+    <text x="451" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">over a superset</text>
+    <rect x="546" y="310" width="308" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="700" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">filter after ranking</text>
+    <text x="700" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">leak: summaries, related items, counts</text>
+    <line x1="356" y1="334" x2="368" y2="334" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="526" y1="334" x2="538" y2="334" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+  </g>
+
+  <text x="440" y="380" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">A chunk acquires its rights during enrichment and is checked twice: before ranking and before the answer leaves.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> A rank, a result count and a summary are functions of the set of documents they were computed over. The rights filter is therefore applied before ranking: a filter applied afterwards does not change values already computed.</figcaption>
+</figure>
+
+<h3 id="s-5-3"><span class="num">5.3</span>Data readiness and ingestion</h3>
+
+<p>The work starts with an inventory of sources, built like the inventory of systems in <a href="#ch-2" data-secref="2">Chapter 2</a>: for every source the format, the volume, the share of machine-readable text, the owner, the rights scheme and the rate of change are written down. Meridian's inventory showed five sources: the guideline store, standing orders in the document system, exports from the protocol registry, a departmental network share and a mailing list of amendments. The last two sources had neither an owner nor a rights scheme, so the customer excluded them from the corpus before parsing began.</p>
+
+<p>Parsing structured and unstructured data differs in the cost of an error. A dosage table parsed row by row with the column headers lost turns into a set of numbers without units, and a model given such a chunk can formulate a wrong answer without any qualification. A figure with the cardiac-arrest algorithm does not convert to text, so an answer about it contains a reference to the page of the document. A file from which parsing extracted three lines instead of thirty pages goes to quarantine with the reason recorded, and an owner and a processing deadline are assigned to that event.</p>
+
+<p>Deduplication and provenance close the ingestion path. The same protocol exists in Meridian's corpus in four copies: the original, the signed one, the one scanned after signing, and the one attached to an email. Deduplication by content hash merges the first two copies into one document, while the third remains a separate document because its text comes from recognition and differs. Provenance keeps, for every chunk, the path to the source file, the revision number and the time of ingestion; from these data the answer carries a reference to its source.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 344" role="img" aria-label="Meridian's trust-boundary map: the inner perimeter holds the medical systems, the parsing path and the full-text index, the cloud holds only de-identified chunks, managed search and evaluation, and the single crossing between the zones is the de-identification gateway with its audit of crossings" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar5b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="14" y="44" width="330" height="252" rx="8" fill="none" stroke="var(--sA)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="26" y="34" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sA)">Meridian perimeter: PHI</text>
+  <rect x="536" y="44" width="330" height="252" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="548" y="34" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">Cloud: de-identified content only</text>
+
+  <rect x="34" y="80" width="290" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="48" y="100" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">EHR · FHIR · reports</text>
+  <text x="48" y="116" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">patient records</text>
+  <rect x="34" y="140" width="290" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="48" y="160" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">parsing and chunking</text>
+  <text x="48" y="176" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">OCR · tables · quarantine</text>
+  <rect x="34" y="200" width="290" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="48" y="222" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">PHI index, on-prem</text>
+  <text x="48" y="238" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">full text · ACL</text>
+
+  <rect x="372" y="140" width="136" height="76" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="440" y="166" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">de-identification</text>
+  <text x="440" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">gateway</text>
+  <text x="440" y="201" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">audit of crossings</text>
+
+  <rect x="556" y="80" width="290" height="44" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="570" y="100" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">de-identified chunks</text>
+  <text x="570" y="116" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">no names, no record ids</text>
+  <rect x="556" y="140" width="290" height="44" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="570" y="160" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">managed vector search</text>
+  <text x="570" y="176" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">scale and ANN</text>
+  <rect x="556" y="200" width="290" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="570" y="222" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">evaluation and experiments</text>
+  <text x="570" y="238" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">sets without PHI</text>
+
+  <path d="M324,162 H348 V170 H364" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5b)"/>
+  <path d="M508,170 H528 V102 H548" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5b)"/>
+  <line x1="701" y1="124" x2="701" y2="134" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5b)"/>
+  <line x1="324" y1="226" x2="548" y2="226" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <line x1="428" y1="218" x2="444" y2="234" stroke="var(--sE)" stroke-width="1.6"/>
+  <line x1="444" y1="218" x2="428" y2="234" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="436" y="252" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no direct path</text>
+
+  <text x="440" y="326" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Citations in the answer come from the internal index; only de-identified text is sent to the cloud.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> With only one crossing between the zones, the requirement "PHI does not leave the perimeter" is checked against the gateway's log: every de-identified chunk in the cloud must have a record in the log, and a chunk without a record indicates a bypass.</figcaption>
+</figure>
+
+<p>Naive and considered ingestion perform every loading step differently; the listing of the naive one is visible from the Standard level on. The naive version cuts the text by character count, puts the pieces in a shared index and looks for the nearest vectors among them. The considered one keeps the structure, attaches rights and a version to every chunk, records a content hash and sets aside whatever failed to parse.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Two ways to ingest a corpus of documents">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_rag.py</span></figcaption>
+      <pre><code>GUIDELINES = {
+    "sepsis-v3": ("Department: intensive care. Lactate threshold 2 mmol/l. On suspicion "
+                  "of sepsis, blood cultures are drawn before the first dose of antibiotic."),
+    "psych-v1": ("Department: psychiatry. Suicide risk is assessed on every admission. "
+                 "The document is closed to the other departments."),
+}
+
+
+def fixed_chunks(text: str, size: int = 60) -&gt; list[str]:
+    """Slicing by character count: sentence and table boundaries are ignored."""
+    return [text[i:i + size] for i in range(0, len(text), size)]
+
+
+def index_all() -&gt; list[str]:
+    return [part for text in GUIDELINES.values() for part in fixed_chunks(text)]
+
+
+def search(query: str, k: int = 3) -&gt; list[str]:
+    q = embed(query)
+    parts = index_all()
+    return sorted(parts, key=lambda part: cosine(q, embed(part)), reverse=True)[:k]
+
+
+if __name__ == "__main__":
+    parts = index_all()
+    assert len(parts) &gt; len(GUIDELINES)                  # the document was cut blindly
+    cut = [i for i in range(len(parts) - 1)
+           if parts[i][-1].isalnum() and parts[i + 1][0].isalnum()]
+    assert cut                                           # a chunk boundary fell inside a word
+    assert any("psychiatr" in part for part in parts)    # a closed document in the shared index
+    hits = search("lactate threshold in sepsis")
+    assert len(hits) == 3 and all(isinstance(h, str) for h in hits)
+    print("three strings with no source, version or rights check:", len(hits))</code></pre>
+    </figure>
+    <p>A chunk here is a string without metadata. The chunk carries no information about the document and revision it came from, so the answer cannot carry a citation. The chunk carries no information about access rights, so the psychiatry protocol is found by a query from any clinician. The cut falls in the middle of a word, and the sentence "blood cultures are drawn before the first dose" is divided between two chunks, neither of which answers the question in full.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">ingest_pipeline.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import hashlib
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
+MAX_CHUNK = 220         # characters per chunk before the rest moves to the next one
+MIN_TEXT = 40           # below this the parser counts as having failed
+HEADING = re.compile(r"^##\s+(.+)$")
+
+
+@dataclass(frozen=True)
+class RawDoc:
+    """What arrived from SharePoint: the text was either extracted or it was not."""
+    id: str
+    title: str
+    department: str
+    version: int
+    text: str | None
+
+
+@dataclass(frozen=True)
+class IndexedChunk:
+    id: str
+    doc_id: str
+    heading: str
+    text: str
+    acl_groups: frozenset[str]
+    doc_version: int
+    content_hash: str
+
+
+def sections(text: str) -&gt; list[tuple[str, str]]:
+    """Splitting on headings: a chunk never crosses a section boundary."""
+    parts: list[tuple[str, list[str]]] = [("", [])]
+    for line in text.splitlines():
+        found = HEADING.match(line.strip())
+        if found:
+            parts.append((found.group(1), []))
+        else:
+            parts[-1][1].append(line)
+    return [(head, "\n".join(body).strip()) for head, body in parts if "".join(body).strip()]
+
+
+def pack(heading: str, body: str, limit: int = MAX_CHUNK) -&gt; list[str]:
+    """A long section is cut on sentence boundaries, a short one stays whole."""
+    pieces: list[str] = []
+    current = ""
+    for sentence in re.split(r"(?&lt;=[.!?])\s+", body):
+        if current and len(current) + len(sentence) + 1 &gt; limit:
+            pieces.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        pieces.append(current)
+    return [f"{heading}. {piece}" if heading else piece for piece in pieces]
+
+
+def content_hash(doc: RawDoc, text: str) -&gt; str:
+    payload = f"{doc.id}|{doc.version}|{doc.department}|{text}"
+    return hashlib.blake2b(payload.encode("utf-8"), digest_size=12).hexdigest()
+
+
+@dataclass
+class Index:
+    rows: dict[str, IndexedChunk] = field(default_factory=dict)
+
+    def upsert(self, chunk: IndexedChunk) -&gt; int:
+        if chunk.id in self.rows:
+            return 0                      # same hash: nothing to write
+        self.rows[chunk.id] = chunk
+        return 1
+
+
+@dataclass
+class Quarantine:
+    rows: list[tuple[str, str]] = field(default_factory=list)
+
+    def hold(self, doc: RawDoc, reason: str) -&gt; None:
+        if all(held != doc.id for held, _ in self.rows):
+            self.rows.append((doc.id, reason))
+
+
+def ingest(docs: Iterable[RawDoc], index: Index, quarantine: Quarantine) -&gt; int:
+    written = 0
+    for doc in docs:
+        if doc.text is None or len(doc.text.strip()) &lt; MIN_TEXT:
+            quarantine.hold(doc, "the parser extracted no text")
+            continue
+        for heading, body in sections(doc.text):
+            for piece in pack(heading, body):
+                digest = content_hash(doc, piece)
+                written += index.upsert(IndexedChunk(
+                    id=f"{doc.id}:{digest}", doc_id=doc.id, heading=heading, text=piece,
+                    acl_groups=frozenset({doc.department}), doc_version=doc.version,
+                    content_hash=digest))
+    return written
+
+
+if __name__ == "__main__":
+    body = ("## Indications\nA lactate above 2 mmol/l calls for a second measurement.\n"
+            "## Actions\nBlood cultures precede the antibiotic. The dose follows within an hour.\n")
+    docs = [RawDoc("gl-17", "Sepsis", "icu", 3, body),
+            RawDoc("gl-18", "A scan from 2009", "cardio", 1, None),
+            RawDoc("gl-19", "An export with no text", "cardio", 1, "   ")]
+    index, quarantine = Index(), Quarantine()
+    assert ingest(docs, index, quarantine) == len(index.rows) == 2
+    assert {c.heading for c in index.rows.values()} == {"Indications", "Actions"}
+    assert all(c.acl_groups == frozenset({"icu"}) for c in index.rows.values())
+    assert [d for d, _ in quarantine.rows] == ["gl-18", "gl-19"]   # held in quarantine
+    assert ingest(docs, index, quarantine) == 0                    # a rerun writes nothing
+    assert ingest([RawDoc("gl-17", "Sepsis", "icu", 4, body)], index, quarantine) == 2
+    assert {c.doc_version for c in index.rows.values()} == {3, 4}  # the old chunks are still there
+    print("sections indexed:", len(index.rows), "· quarantined:", len(quarantine.rows))</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="MIN_TEXT = 40">line 9</span><p>The threshold separates a document from which text was extracted from a parsing failure. A thirty-page scan that yielded fewer than forty characters is classified as a parsing failure and goes to quarantine, where the failure is visible.</p></div>
+        <div><span class="at" data-anchor="def sections(text: str)">line 34</span><p>Chunking follows the structure of the document. A section heading stays with the text of its section, and a chunk never crosses the boundary between indications and contraindications.</p></div>
+        <div><span class="at" data-anchor="+ 1 &gt; limit">line 51</span><p>A long section is split on sentence boundaries, because a sentence is the smallest unit it makes sense to show a clinician as a quotation.</p></div>
+        <div><span class="at" data-anchor="payload = f">line 62</span><p>The hash includes the document version and the owning department. A change of rights changes the hash as a change of text does, so a chunk with new rights is written as a new row and does not match the chunk with the old rights.</p></div>
+        <div><span class="at" data-anchor="if chunk.id in self.rows:">line 71</span><p>Re-ingesting the same document writes nothing. The property is necessary for a daily pass over a corpus of two hundred thousand documents: without it every pass reindexes everything and costs as much as the initial load.</p></div>
+        <div><span class="at" data-anchor="quarantine.hold(doc,">line 90</span><p>A document that failed to parse is set aside with the reason recorded. Quarantine is a work queue with an owner: while a file is in it, no answer can rest on it, and the number of such files appears in a report.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns the unit of indexing. The naive version indexes a stretch of text, the considered one indexes a fragment of a document with its section heading, revision number, rights and hash. An answer built on a stretch of text cannot be verified, an answer built on a fragment of a document carries a reference to a section of a specific revision.</p>
+    <p>The second difference concerns files that failed to parse. The naive pipeline skips such files without a record, and part of the corpus's content does not reach the index unnoticed; the considered pipeline sets them aside in quarantine, and the number of such files appears in a report.</p>
+    <p>The third difference concerns the cost of a repeat pass. Keying on the content hash makes ingestion idempotent: the daily pass writes only the chunks that changed.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Common mistake</b>Treating the share of successfully parsed files as a quality metric and not analysing the contents of quarantine. A parsed share of ninety per cent does not show which documents make up the remaining ten: if they are recent protocols scanned after signing, the system cannot answer from the documents it was built for.</div>
+
+<h3 id="s-5-4"><span class="num">5.4</span>Chunking and metadata</h3>
+
+<dl class="def">
+<dt>Chunk</dt>
+<dd>The unit of indexing and of retrieval: a stretch of a document short enough to fit into the context alongside other chunks and self-contained enough to be understood without the neighbouring chunks. A chunk contains the metadata of the document it came from and is used in the answer as a quotation with its source named.</dd>
+</dl>
+
+<p>The chunking strategy is derived from the structure of the corpus. Meridian's clinical guidelines have an explicit hierarchy of sections, so a chunk is built from a whole section, and a section that is too long is divided on sentence boundaries with the heading kept at the start of every part. Standing orders are short and split by clause. Dosage tables are split by rows: every row is serialised together with the column headers and becomes a separate chunk that can be understood without the rest of the table.</p>
+
+<p>A chunk's metadata determines which operations are available during retrieval. The field <code>acl_groups</code> holds the groups the chunk is available to and is used by the store as the filter condition. The field <code>doc_version</code> lets revisions be told apart and stale chunks be removed on republication. The content hash makes ingestion idempotent. The heading path and the effective date are needed in the answer: a clinician who sees a quotation must know which section of which revision it was taken from.</p>
+
+<p>Chunk size is chosen as a compromise between two errors. A short chunk matches the question more precisely but more often loses the condition under which the statement holds, and in clinical text the condition often stands in the preceding sentence. A long chunk keeps the condition, but its similarity to the question is lower and it takes up space in the context that other sources could have used. Meridian chose the section as the unit with a limit of about a thousand characters and checked that decision with the measurement of <a href="#s-5-9" data-secref="5.9">Section 5.9</a>.</p>
+
+<div class="note" data-level="2">The language mechanisms such a pipeline is built on are covered separately: streaming parsing of large files without loading them whole, generators and the division of work between processes are described in the textbook <a class="src" href="https://github.com/laputski/book-python" target="_blank" rel="noreferrer">"Advanced Python for RAG"</a>. This chapter is limited to the structure of the pipeline.</div>
+
+<h3 id="s-5-5"><span class="num">5.5</span>Embeddings and stores</h3>
+
+<p>The embedding model and its version are part of the schema of the index, as is the dimension of the vector. Vectors built by different models are not comparable, so changing the model means rebuilding the index in full. For the same reason the model identifier is stored next to the vector, and the query is embedded by the same model as the corpus. During a migration the stored identifier shows which vectors were built by the old model and have to be recomputed.</p>
+
+<p>Stores for retrieval come in three families, and the choice between them is determined by four properties of the task: scale, filter complexity, update frequency and the presence of an on-call team. Managed vector search performs sharding, approximate nearest-neighbour search and operation of the index; its filter language is usually narrower than SQL, and every query passes an additional network hop. A relational database with a vector extension stores the vector in the same row as the attributes, so a filter by department, date and status and a vector search run as one SQL query. An analytical warehouse performs vector search over the tables of the marts and suits rare updates and large batch computations.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 388" role="img" aria-label="A decision tree for choosing a store: first the question of corpus size, then of filter complexity, then of update frequency and finally of an on-call team, where each affirmative answer leads to its own kind of store and the last negative one to fully managed search" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar5c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="24" y="36" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">THE QUESTION</text>
+  <text x="372" y="36" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">WHAT FOLLOWS FROM IT</text>
+
+  <rect x="24" y="52" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="72" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">more than 10 million chunks?</text>
+  <text x="38" y="88" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">scale</text>
+  <rect x="24" y="124" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="144" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">filters over many attributes?</text>
+  <text x="38" y="160" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">filter complexity</text>
+  <rect x="24" y="196" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="216" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">updates less often than daily?</text>
+  <text x="38" y="232" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">freshness</text>
+  <rect x="24" y="268" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="288" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">is there an on-call team?</text>
+  <text x="38" y="304" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">operations capacity</text>
+
+  <rect x="372" y="52" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="72" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">managed vector search</text>
+  <text x="386" y="88" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">sharding and ANN as a service</text>
+  <rect x="372" y="124" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="144" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">SQL store with pgvector</text>
+  <text x="386" y="160" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">filter and vector in one query</text>
+  <rect x="372" y="196" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="216" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">the analytical warehouse</text>
+  <text x="386" y="232" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">vectors next to the marts</text>
+  <rect x="372" y="268" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="288" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">your own index</text>
+  <text x="386" y="304" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">full control, your own on-call</text>
+  <rect x="372" y="330" width="300" height="40" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="348" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">fully managed search</text>
+  <text x="386" y="363" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">less control, less work</text>
+
+  <line x1="304" y1="74" x2="364" y2="74" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="66" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+  <line x1="304" y1="146" x2="364" y2="146" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="138" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+  <line x1="304" y1="218" x2="364" y2="218" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="210" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+  <line x1="304" y1="290" x2="364" y2="290" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="282" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+
+  <line x1="164" y1="96" x2="164" y2="118" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="112" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <line x1="164" y1="168" x2="164" y2="190" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="184" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <line x1="164" y1="240" x2="164" y2="262" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="256" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <path d="M164,312 V350 H364" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="330" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> A store is chosen by the constraints of the task: scale determines the admissible architecture, filter complexity determines the query language, update frequency determines the cost of updating the index, and an index of your own is justified only when an on-call team exists to operate it.</figcaption>
+</figure>
+
+<p>Meridian's corpus holds around two hundred thousand documents and roughly two million chunks, the filters are complex, and updates arrive daily. The tree leads to a relational store with a vector extension inside the perimeter, and the same choice simplifies the PHI requirement: chunks carrying medical data stay where the rest of the patient's data is already stored. The cloud part of the index holds de-identified content only and serves experiments and evaluation.</p>
+
+<h3 id="s-5-6"><span class="num">5.6</span>Hybrid retrieval and reranking</h3>
+
+<p>Vector search finds chunks that are close in meaning and therefore misses matches wherever meaning is carried by an exact string. A diagnosis code, an order number, a department acronym and a drug's brand name are rare tokens that an embedding averages together with their surroundings. Lexical search over an inverted index, on the contrary, finds the exact match and fails on the paraphrase. The two approaches err on different queries, so their results are combined.</p>
+
+<dl class="def">
+<dt>Reciprocal rank fusion, RRF</dt>
+<dd>A way to merge several ordered result lists without bringing their scores onto a common scale. Every document is credited with the sum of 1/(k + place) over the lists it appears in, and the final order follows that sum. The constant k, sixty in the original work, reduces the influence of the leading places of any single list, so a document found by both methods in fifth place overtakes a document found by one method in first place: 2/65 is greater than 1/61.<a class="src" href="https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf" target="_blank" rel="noreferrer">Cormack, Clarke, Büttcher, SIGIR 2009: reciprocal rank fusion</a></dd>
+</dl>
+
+<p>The second stage is reranking. A reranking model, known as a cross-encoder, takes the pair of question and chunk as a whole as its input and scores their correspondence, whereas vector search compares two independently built vectors. The second stage is more accurate but requires a pass of the model for every pair of question and chunk, so only tens of candidates selected by the first stage are reranked.<a class="src" href="https://sbert.net/examples/cross_encoder/applications/README.html" target="_blank" rel="noreferrer">sbert.net, cross-encoder applications</a> The two-stage scheme, cheap candidate selection followed by expensive ordering, is used in retrieval systems of this class.</p>
+
+<p>Techniques of hybrid retrieval and reranking are numerous and differ in maturity: some have been in production use for years, some are described only in publications. The technology registry <a class="src" href="https://ragworld.org" target="_blank" rel="noreferrer">RAG World</a> lists them on a maturity map. The registry is used when choosing: at a customer, the techniques deployed are those the customer's team can maintain after the engineers leave, and experimental techniques are tested alongside the working scheme, which stays in production.</p>
+
+<h3 id="s-5-7"><span class="num">5.7</span>ACL-aware retrieval</h3>
+
+<dl class="def">
+<dt>ACL-aware retrieval</dt>
+<dd>Retrieval in which the asker's rights enter the query to the store and narrow the candidate set before ranking. The access rights are stored in the chunk's metadata, the asker's groups are computed from their identity, and the rights are checked again before the answer is returned, so that a violation raises an error.</dd>
+</dl>
+
+<p>The rights check runs in three places, and none of them replaces the others. The pre-filter enters the query to the store and determines which chunks will be ranked. Tenant isolation separates the Meridian network from other customers of the same installation and is expressed by a field of its own, because groups with the same name, for example <code>icu</code>, exist at different customers. The post-check runs before the result is returned and serves as an assertion about the correctness of the two preceding checks: when it fires, that indicates a defect in the filter and raises an exception.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">acl_retrieval.py</span></figcaption>
+<pre><code>from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+
+class AclViolation(Exception):
+    """The post-check found what the filter should never have let through."""
+
+
+@dataclass
+class AclVectorStore:
+    """A store that filters by tenant and groups before it ranks."""
+    rows: dict[str, tuple[Chunk, list[float]]] = field(default_factory=dict)
+    ranked: int = 0
+
+    @staticmethod
+    def visible(chunk: Chunk, principal: Principal) -&gt; bool:
+        return (chunk.metadata.get("tenant") == principal.tenant
+                and bool(chunk.acl &amp; principal.groups))
+
+    def upsert(self, chunks: Sequence[Chunk]) -&gt; None:
+        for chunk in chunks:
+            self.rows[chunk.id] = (chunk, embed(chunk.text))
+
+    def search(self, vector: Sequence[float], k: int,
+               principal: Principal | None) -&gt; list[Hit]:
+        hits = [Hit(chunk, cosine(vector, vec)) for chunk, vec in self.rows.values()
+                if principal is None or self.visible(chunk, principal)]
+        self.ranked = len(hits)
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:k]
+
+
+def rerank(query: str, hits: Sequence[Hit]) -&gt; list[Hit]:
+    """A stand-in cross-encoder: the share of query words found in the chunk."""
+    words = set(query.lower().split())
+
+    def overlap(hit: Hit) -&gt; float:
+        return len(words &amp; set(hit.chunk.text.lower().split())) / len(words)
+
+    return sorted(hits, key=overlap, reverse=True)
+
+
+def retrieve(store: AclVectorStore, principal: Principal, query: str, k: int = 3,
+             candidates: int = 20, prefilter: bool = True) -&gt; list[Hit]:
+    vector = embed(query)
+    hits = store.search(vector, candidates, principal if prefilter else None)
+    top = rerank(query, hits)[:k]
+    for hit in top:
+        if not AclVectorStore.visible(hit.chunk, principal):
+            raise AclViolation(f"{hit.chunk.id} is outside the rights of {principal.id}")
+    return top
+
+
+if __name__ == "__main__":
+    def make(cid: str, dept: str, tenant: str, text: str) -&gt; Chunk:
+        return Chunk(id=cid, doc_id=cid.split("#")[0], text=text,
+                     acl=frozenset({dept}), metadata={"tenant": tenant})
+
+    store = AclVectorStore()
+    store.upsert([
+        make("gl-17#1", "icu", "meridian", "the lactate threshold in sepsis is 2 mmol"),
+        make("gl-31#1", "cardio", "meridian", "the troponin threshold in coronary syndrome"),
+        make("gl-44#1", "psych", "meridian", "the risk threshold in suicidal behaviour review"),
+        make("gl-90#1", "icu", "harbor", "the lactate threshold in another network protocol"),
+    ])
+    doctor = Principal("u-7", frozenset({"icu", "cardio"}), tenant="meridian")
+    hits = retrieve(store, doctor, "the lactate threshold in sepsis")
+    assert {hit.chunk.id for hit in hits} == {"gl-17#1", "gl-31#1"}
+    visible = store.ranked
+    assert visible == 2                          # only visible chunks are ranked
+    try:
+        retrieve(store, doctor, "risk threshold", prefilter=False)
+    except AclViolation as err:
+        assert "gl-44#1" in str(err)
+    else:
+        raise AssertionError("the post-check must catch a foreign chunk")
+    print("ranked", visible, "chunks of", len(store.rows), "· returned", len(hits))</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def visible(chunk: Chunk">line 16</span><p>The visibility condition is written once and used by both the filter and the post-check. If the rule were written twice, a change to one statement without the other would cause a leak that the build does not detect.</p></div>
+  <div><span class="at" data-anchor="if principal is None or self.visible">line 27</span><p>The filter applies inside the traversal of the store, that is, before sorting. In a store used in production a query predicate stands in this place and is executed by the store's engine before ranking.</p></div>
+  <div><span class="at" data-anchor="self.ranked = len(hits)">line 28</span><p>The number of ranked candidates is kept for verification: the test uses it to confirm that ranking received only permitted chunks. In production this value is written to a trace attribute.</p></div>
+  <div><span class="at" data-anchor="raise AclViolation(f">line 50</span><p>The post-check raises an exception. If it silently dropped the extra hit, the defect in the filter would stay hidden and the leak would remain in the derived values: in the result count, in the related list and in the summary.</p></div>
+</div>
+</figure>
+
+<p>In hybrid retrieval this requirement applies to two arms. The lexical and the vector arm search independently, so the rights are applied in each arm before the fusion. If an arm is filtered only after the fusion, a closed document that took first place in the lexical list pushes every permitted result down, and the order of results depends on documents the asker is not entitled to see.</p>
+
+<figure class="code" data-fold="26">
+<figcaption><span class="file">hybrid_search.py</span></figcaption>
+<pre><code>import math
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+TOKEN = re.compile(r"[\w.-]+")
+RRF_K = 60
+
+
+def tokens(text: str) -&gt; list[str]:
+    return TOKEN.findall(text.lower())
+
+
+@dataclass
+class LexicalStore:
+    """BM25 over the same chunks: the rare codes and acronyms a vector blurs."""
+    chunks: list[Chunk] = field(default_factory=list)
+    k1: float = 1.2
+    b: float = 0.75
+
+    def search(self, query: str, principal: Principal, k: int) -&gt; list[str]:
+        allowed = [c for c in self.chunks if c.acl &amp; principal.groups]
+        if not allowed:
+            return []
+        bags = [tokens(c.text) for c in allowed]
+        avg = sum(len(bag) for bag in bags) / len(bags)
+        scored: list[tuple[str, float]] = []
+        for chunk, bag in zip(allowed, bags, strict=True):
+            score = 0.0
+            for term in set(tokens(query)):
+                tf = bag.count(term)
+                if not tf:
+                    continue
+                df = sum(1 for other in bags if term in other)
+                idf = math.log(1 + (len(allowed) - df + 0.5) / (df + 0.5))
+                norm = tf + self.k1 * (1 - self.b + self.b * len(bag) / avg)
+                score += idf * tf * (self.k1 + 1) / norm
+            if score:
+                scored.append((chunk.id, score))
+        scored.sort(key=lambda row: row[1], reverse=True)
+        return [cid for cid, _ in scored[:k]]
+
+
+def rrf(rankings: Sequence[Sequence[str]], k: int = RRF_K) -&gt; list[tuple[str, float]]:
+    """Fusion by reciprocal ranks: places are added, incomparable scores are not."""
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for place, cid in enumerate(ranking, 1):
+            scores[cid] = scores.get(cid, 0.0) + 1 / (k + place)
+    return sorted(scores.items(), key=lambda row: row[1], reverse=True)
+
+
+def hybrid(query: str, principal: Principal, lexical: LexicalStore,
+           vectors: FakeVectorStore, k: int = 3, depth: int = 10) -&gt; list[str]:
+    lex = lexical.search(query, principal, depth)
+    vec = [hit.chunk.id for hit in
+           vectors.search(embed(query), depth, allowed_groups=principal.groups)]
+    return [cid for cid, _ in rrf([lex, vec])[:k]]
+
+
+if __name__ == "__main__":
+    def make(cid: str, dept: str, text: str) -&gt; Chunk:
+        return Chunk(id=cid, doc_id=cid.split("#")[0], text=text, acl=frozenset({dept}))
+
+    corpus = [
+        make("gl-17#1", "icu", "sepsis under code R65.2 requires a lactate measurement"),
+        make("gl-17#2", "icu", "a lactate above two millimoles is repeated within the hour"),
+        make("gl-31#1", "cardio", "troponin in coronary syndrome is measured twice"),
+        make("gl-44#1", "psych", "code R65.2 is not used in a psychiatric discharge letter"),
+    ]
+    lexical = LexicalStore(corpus)
+    vectors = FakeVectorStore()
+    vectors.upsert(corpus)
+    doctor = Principal("u-7", frozenset({"icu", "cardio"}))
+
+    assert lexical.search("R65.2", doctor, 5) == ["gl-17#1"]     # only the lexical arm finds a code
+    assert "gl-44#1" not in hybrid("R65.2", doctor, lexical, vectors)
+    merged = rrf([["lexical-only", "both"], ["both"]])
+    assert merged[0][0] == "both"    # found by both arms beats found by one
+    top = hybrid("lactate R65.2", doctor, lexical, vectors)
+    assert "gl-17#1" in top and "gl-44#1" not in top
+    print("the fusion returned:", top)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="allowed = [c for c in self.chunks if c.acl">line 22</span><p>Rights apply in the lexical arm before the statistics are computed. Document frequencies are counted over the permitted subset, otherwise the rarity of a term reveals the existence of closed documents containing it.</p></div>
+  <div><span class="at" data-anchor="idf = math.log(">line 35</span><p>Inverse document frequency raises the weight of rare tokens: a diagnosis code, an order number, a drug name. Vector search averages these tokens together with their surroundings, so the lexical arm is used for them.</p></div>
+  <div><span class="at" data-anchor="1 / (k + place)">line 49</span><p>The fusion adds values computed from the places in the lists. The scores are not used: a BM25 score and a cosine similarity are measured on incomparable scales, and a linear combination of scores requires the weights to be tuned again after every change of model.</p></div>
+  <div><span class="at" data-anchor="allowed_groups=principal.groups">line 57</span><p>The vector arm receives the same groups as the lexical one. Omitting this argument causes a leak: one arm is filtered, the other is not, and the fusion lifts chunks closed to the asker to the top.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Selecting candidates over the whole index, reranking them and filtering by rights at the very end, because "it is simpler and the result is the same". The result differs: the ranks that reach the filter were computed with closed documents included, and the related lists and the model's summaries have already been composed from closed content.</div>
+
+<h3 id="s-5-8"><span class="num">5.8</span>Freshness and incremental indexing</h3>
+
+<p>Meridian's corpus changes daily: new revisions of protocols are issued, standing orders are withdrawn, departmental rights change after reorganisations. A full reindex of two million chunks takes hours and requires paid compute, so ingestion runs incrementally. The list of changes comes either from the change log of the document system or from comparing hashes during a crawl. The first source is preferable, because the log records a deletion when it happens, while a crawl detects it only at the next full pass, by the absence of the file.</p>
+
+<p>A change of revision is handled as a replacement. The chunks of the previous revision are deleted, the chunks of the new one are inserted, and the document's version in the index rises in a single operation. Without the deletion the index accumulates revisions, and a clinician can receive a quotation from a protocol withdrawn eighteen months ago, presented in the same way as a quotation from the protocol in force. The clinician cannot tell such an answer from a correct one by its form.</p>
+
+<p>Deletion and revocation of rights need a mechanism of their own, because they propagate asynchronously. The serving replica receives changes of the index with a delay of minutes, a cache entry is kept for hours, and the requirement "the document is withdrawn and must not appear in answers" takes effect at once. The solution is a tombstone log: the revocation is written immediately into a small table that is read at query time, and a result arriving from a lagging replica is discarded against that table. A tombstone is lifted once the deletion has been carried out in every copy.</p>
+
+<div class="warn"><b>Common mistake</b>Assuming that removal from the index has happened because the delete call returned success. A success response means that the command was accepted; propagation of the deletion to replicas and caches happens later. Revocation is verified by a query on behalf of a user who had access to the document, and in the customer's requirements this check is written as a separate acceptance scenario.</div>
+
+<h3 id="s-5-9"><span class="num">5.9</span>Measuring retrieval</h3>
+
+<p>Retrieval quality is measured on a labelled set of questions where, for every question, the chunks that must appear in the results are named. Two basic quantities measure different properties of the results. Recall at k, recall@k, is the share of the needed chunks that appear in the first k results; when a question has one needed chunk, as in the listing below, it shows whether that chunk appeared in the results, and it bounds the quality of the answer from above.<a class="src" href="https://nlp.stanford.edu/IR-book/html/htmledition/evaluation-of-ranked-retrieval-results-1.html" target="_blank" rel="noreferrer">Manning, Raghavan, Schütze, Introduction to Information Retrieval: evaluation of ranked retrieval</a> The mean reciprocal rank, MRR, is the mean over all questions of 1/place of the first needed chunk, with a chunk that was not found contributing zero; the value decreases when the model has to read irrelevant chunks before the needed one.<a class="src" href="https://en.wikipedia.org/wiki/Mean_reciprocal_rank" target="_blank" rel="noreferrer">Wikipedia, mean reciprocal rank</a> A third quantity, the groundedness of the answer, is measured at the next stage and is taken apart in <a href="#ch-12" data-secref="12">Chapter 12</a>.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">retrieval_eval.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+
+NOT_INDEXED = "not indexed"
+HIDDEN = "hidden by the filter"
+CANDIDATES = "missed by candidate generation"
+RANKING = "below the cut at k"
+FOUND = "found"
+
+
+@dataclass(frozen=True)
+class Question:
+    qid: str
+    text: str
+    gold: frozenset[str]           # the chunks that must appear in the answer
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    qid: str
+    rank: int | None
+    stage: str                     # exactly where the right answer was lost
+
+
+@dataclass
+class Report:
+    recall_at_k: float
+    mrr: float
+    rows: list[Diagnosis]
+
+    def failed(self, stage: str) -&gt; list[str]:
+        return [row.qid for row in self.rows if row.stage == stage]
+
+
+def diagnose(question: Question, ranked: Sequence[str], indexed: frozenset[str],
+             visible: frozenset[str], k: int) -&gt; Diagnosis:
+    places = [i for i, cid in enumerate(ranked, 1) if cid in question.gold]
+    if places and places[0] &lt;= k:
+        return Diagnosis(question.qid, places[0], FOUND)
+    if not question.gold &amp; indexed:
+        return Diagnosis(question.qid, None, NOT_INDEXED)
+    if not question.gold &amp; visible:
+        return Diagnosis(question.qid, None, HIDDEN)
+    if not places:
+        return Diagnosis(question.qid, None, CANDIDATES)
+    return Diagnosis(question.qid, places[0], RANKING)
+
+
+def evaluate(questions: Sequence[Question], run: Callable[[Question], list[str]],
+             indexed: frozenset[str], visible: frozenset[str], k: int = 5) -&gt; Report:
+    rows = [diagnose(q, run(q), indexed, visible, k) for q in questions]
+    found = [row for row in rows if row.stage == FOUND and row.rank]
+    return Report(recall_at_k=len(found) / len(rows),
+                  mrr=sum(1 / row.rank for row in found if row.rank) / len(rows),
+                  rows=rows)
+
+
+if __name__ == "__main__":
+    questions = [
+        Question("q1", "the lactate threshold in sepsis", frozenset({"gl-17#1"})),
+        Question("q2", "the suicide risk review", frozenset({"gl-44#1"})),
+        Question("q3", "how long images are kept", frozenset({"gl-52#3"})),
+        Question("q4", "when the antibiotic is given", frozenset({"gl-17#4"})),
+    ]
+    runs: dict[str, list[str]] = {
+        "q1": ["gl-31#1", "gl-17#1", "gl-90#1"],
+        "q2": ["gl-31#1", "gl-90#1"],
+        "q3": ["gl-31#1"],
+        "q4": ["gl-31#1", "gl-90#1", "gl-52#1", "gl-52#2", "gl-44#1", "gl-17#4"],
+    }
+    indexed = frozenset({"gl-17#1", "gl-17#4", "gl-31#1", "gl-44#1", "gl-90#1",
+                         "gl-52#1", "gl-52#2"})
+    visible = indexed - {"gl-44#1"}          # psychiatry is closed to this principal
+    report = evaluate(questions, lambda q: runs[q.qid], indexed, visible, k=5)
+
+    assert report.recall_at_k == 0.25 and report.mrr == 0.125
+    assert report.failed(HIDDEN) == ["q2"]           # indexed, but not for this reader
+    assert report.failed(NOT_INDEXED) == ["q3"]      # the document never reached the index
+    assert report.failed(RANKING) == ["q4"]          # ranked sixth with k = 5
+    print("recall@5:", report.recall_at_k, "· MRR:", report.mrr,
+          "· failures:", len(report.rows) - 1)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="places = [i for i, cid in enumerate(ranked, 1)">line 39</span><p>The place of the first correct chunk is computed over the full result list, so that the case "found sixth with k equal to five" is distinguished from the case "not found": the two cases point at different defects and call for different repairs.</p></div>
+  <div><span class="at" data-anchor="if not question.gold &amp; indexed:">line 42</span><p>The order of the checks lays out the attribution of a failure by stage. First it is established whether the document reached the index, then whether the asker can see it, then whether it entered the candidate set, and only then is ranking taken as the cause.</p></div>
+  <div><span class="at" data-anchor="visible = indexed - ">line 75</span><p>Rights enter the evaluation as a stage of their own. If the correct answer is closed to the asker, the system must refuse, and such a case is counted separately from ranking misses.</p></div>
+  <div><span class="at" data-anchor="mrr=sum(1 / row.rank">line 56</span><p>The sum of reciprocal ranks is divided by the number of all questions. Divided by the number of successes, the metric would describe only the successful cases and would not decrease as the number of misses grows.</p></div>
+</div>
+</figure>
+
+<p>An aggregate metric is used in the release gate and does not indicate the cause of a drop. A recall@5 of 0.72 does not show which stage needs repair: parsing, chunking, rights or ranking, and repairing these stages differs in cost. The report therefore keeps the result of every question separately and names the stage at which the answer was lost; comparing two runs question by question shows which questions started to find the needed chunk after a change and which stopped. The diagnostic bench <a class="src" href="https://github.com/laputski/causa-rag" target="_blank" rel="noreferrer">causa-rag</a> builds a report of this form and is given here as an example.</p>
+
+<p>The question set is made up of questions that users ask at their workplaces. For Meridian the first hundred and fifty questions were recorded across two shifts in intensive care and in admissions, and another hundred were taken from the log of enquiries to the clinical standards office. Labelling is done by physicians and its cost is high, so the set is extended from incidents: every incident that gets analysed adds a question that reproduces it. This set is also used for the evaluation of the whole system in <a href="#ch-12" data-secref="12">Chapter 12</a>.</p>
+
+<h3 id="s-5-10" data-level="2"><span class="num">5.10</span>On Google Cloud: Agent Search, Vector Search, AlloyDB</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Agent Search</span>
+  <span class="tag">AlloyDB · pgvector</span>
+  <span class="tag">Document AI</span>
+</div>
+
+<p data-level="2">The decision tree of <a href="#s-5-5" data-secref="5.5">Section 5.5</a> maps onto Google Cloud services without changing the questions. Google Cloud's model and agent platform is called Gemini Enterprise Agent Platform (formerly Vertex AI), and within it the Vertex AI Search service has been renamed Agent Search.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes" target="_blank" rel="noreferrer">cloud.google.com, Agent Platform name changes</a> Agent Search corresponds to the "fully managed search" case: the service parses documents, divides them into chunks at ingestion, indexes them and ranks the results.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/vertex-ai-search" target="_blank" rel="noreferrer">cloud.google.com, about Agent Search</a><a class="src" href="https://docs.cloud.google.com/generative-ai-app-builder/docs/parse-chunk-documents" target="_blank" rel="noreferrer">cloud.google.com, parse and chunk documents in Agent Search</a> For a data store created with access control turned on, Agent Search identifies the user through the identity provider and returns only documents the user has access to, so the group filter is executed by the service; as of September 2026 this feature is in Preview.<a class="src" href="https://docs.cloud.google.com/generative-ai-app-builder/docs/data-source-access-control" target="_blank" rel="noreferrer">cloud.google.com, data source access control in Agent Search</a></p>
+
+<p data-level="2">Vector Search corresponds to the large-scale case, where only a vector index is needed: the service filters by numeric and text attributes, while the embeddings and the ingestion pipeline are built in-house.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/vector-search/overview" target="_blank" rel="noreferrer">cloud.google.com, Vector Search</a> AlloyDB uses the pgvector extension and runs a vector search in one SQL query with conditions on attributes, Cloud SQL for PostgreSQL supports the same extension, and both services correspond to the complex-filter branch.<a class="src" href="https://docs.cloud.google.com/alloydb/docs/ai/vector-search-overview" target="_blank" rel="noreferrer">cloud.google.com, AlloyDB AI vector search</a><a class="src" href="https://docs.cloud.google.com/sql/docs/postgres/work-with-vectors" target="_blank" rel="noreferrer">cloud.google.com, vectors in Cloud SQL for PostgreSQL</a> Vector search in BigQuery is performed by the <code>VECTOR_SEARCH</code> function in SQL and is billed by the amount of data processed or by slots, which corresponds to the branch of batch computations next to the marts.<a class="src" href="https://docs.cloud.google.com/bigquery/docs/vector-search-intro" target="_blank" rel="noreferrer">cloud.google.com, vector search in BigQuery</a> Document AI recognises the text of scans and extracts tables, and a document that failed to parse is placed in the same quarantine.<a class="src" href="https://docs.cloud.google.com/document-ai/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, Document AI</a></p>
+
+<p data-level="2">The choice for Meridian in 2026: the index holding medical data is stored inside the perimeter in AlloyDB Omni, the edition of AlloyDB that is installed in the customer's own data centre,<a class="src" href="https://docs.cloud.google.com/alloydb/omni/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, AlloyDB Omni</a> the de-identified copy and the experiments are placed in managed search, and the de-identification gateway is built on Sensitive Data Protection as described in <a href="#ch-10" data-secref="10">Chapter 10</a>.<a class="src" href="https://docs.cloud.google.com/sensitive-data-protection/docs/deidentify-sensitive-data" target="_blank" rel="noreferrer">cloud.google.com, de-identification in Sensitive Data Protection</a> The names and capabilities of the services are given according to the Google Cloud documentation as of September 2026. Product names change more often than the structure of the solution, so the questions of the tree remain applicable after the products change.</p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>The four questions of the tree do not depend on the vendor. For a corpus with access control, stores differ above all in whether the metadata filter is applied during the vector search or only to results already found. Qdrant and Pinecone accept metadata conditions in the search query,<a class="src" href="https://qdrant.tech/documentation/concepts/filtering/" target="_blank" rel="noreferrer">qdrant.tech, filtering</a><a class="src" href="https://docs.pinecone.io/guides/search/filter-by-metadata" target="_blank" rel="noreferrer">docs.pinecone.io, filter by metadata</a> and Weaviate builds a list of permitted objects from the filter before the vector search.<a class="src" href="https://docs.weaviate.io/weaviate/concepts/filtering" target="_blank" rel="noreferrer">docs.weaviate.io, filtering</a> In Elasticsearch the filter of a kNN search is applied during the approximate search;<a class="src" href="https://www.elastic.co/docs/solutions/search/vector/knn" target="_blank" rel="noreferrer">elastic.co, kNN search</a> in OpenSearch this mode is called efficient k-NN filtering, while a Boolean filter outside the k-NN query and the <code>post_filter</code> parameter are applied after the search and can return fewer than k results.<a class="src" href="https://docs.opensearch.org/latest/vector-search/filter-search-knn/index/" target="_blank" rel="noreferrer">docs.opensearch.org, filtering vector search results</a> A store or mode in which the filter is applied only after the search does not suit a corpus with access control, for the reasons given in <a href="#s-5-7" data-secref="5.7">Section 5.7</a>.</div>
+
+<h3 id="s-5-11" data-level="3"><span class="num">5.11</span>In depth: reranker leakage, chunk-level ACL, embedding migration</h3>
+
+<h4 data-level="3">Leakage through the reranker and through summaries</h4>
+
+<p data-level="3">Reranking a superset is chosen for recall: candidates are taken over the whole index so that a coarse filter does not cut off a relevant chunk, and rights are applied to the final twenty. The final list of results in this scheme contains no closed documents, and the leak appears in the values derived from the candidate set. A counter saying "47 documents found" differs from "12 found" and announces the existence of thirty-five closed ones. A "related documents" block is built from neighbours in vector space and can include closed ones. A summary composed by the model over all the reranked chunks retells the content of closed documents without quoting them, and a filter on document identifiers does not detect that retelling.</p>
+
+<p data-level="3">The rule: every value computed over a set of documents is computed over the permitted set. The rule extends to counters, facets, search-box suggestions, the cache of popular queries and the training data of the reranker. In the case of training data, a reranker fine-tuned on the clicks of all users memorises closed documents as good answers and raises them in the results for users who never opened them.</p>
+
+<h4 data-level="3">Rights on the document and rights on the chunk</h4>
+
+<p data-level="3">The rights model "the whole document is visible to a group" is sufficient as long as the corpus has no documents of mixed sensitivity. At Meridian such a document exists: the protocol for managing a patient with an addiction holds a general part for every department and a section of psychiatric history closed to the rest. Document-level rights force a choice between hiding the general part from everyone and revealing the psychiatric section to everyone.</p>
+
+<p data-level="3">Chunk-level rights solve that task and create two obligations. First: a chunk's rights are taken from the document system, so the document must contain section markings, and those markings need someone responsible for maintaining them. Second: an answer assembled from chunks with different rights must show the source of every quotation, so that a clinician can understand why a colleague sees only part of the answer. Meridian adopted a mixed scheme: document rights by default, with section markings introduced only for the document types where mixing has been confirmed by the clinical standards office.</p>
+
+<h4 data-level="3">A revoked document in a lagging replica</h4>
+
+<p data-level="3">A freshness failure develops according to the following scenario. A document is withdrawn, the delete command is sent, the API returns success, the incident is closed. A week later a clinician quotes the withdrawn protocol, found through a serving replica that was unavailable at the moment of deletion and was later restored from a snapshot. The listing below shows the protective mechanism: the tombstone log is the source of truth about documents in force and is read at query time, so a lagging replica does not return the revoked document even while its rows are still stored there.</p>
+
+<figure class="code" data-fold="22" data-level="3">
+<figcaption><span class="file">incremental_index.py</span></figcaption>
+<pre><code>from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+
+@dataclass
+class LiveIndex:
+    """The truth about what is alive: document versions and the tombstones of the revoked."""
+    rows: dict[str, Chunk] = field(default_factory=dict)
+    live_version: dict[str, int] = field(default_factory=dict)
+    revoked: set[str] = field(default_factory=set)
+
+    def publish(self, doc_id: str, version: int, chunks: Sequence[Chunk]) -&gt; tuple[int, int]:
+        stale = [cid for cid, row in self.rows.items()
+                 if row.doc_id == doc_id and row.version &lt; version]
+        for cid in stale:
+            del self.rows[cid]
+        for chunk in chunks:
+            self.rows[chunk.id] = chunk
+        self.live_version[doc_id] = version
+        self.revoked.discard(doc_id)
+        return len(chunks), len(stale)
+
+    def revoke(self, doc_id: str) -&gt; None:
+        self.revoked.add(doc_id)                 # the tombstone is written at once
+        for cid in [cid for cid, row in self.rows.items() if row.doc_id == doc_id]:
+            del self.rows[cid]
+
+    def alive(self, chunk: Chunk) -&gt; bool:
+        return (chunk.doc_id not in self.revoked
+                and chunk.version &gt;= self.live_version.get(chunk.doc_id, chunk.version))
+
+
+@dataclass
+class SearchReplica:
+    """The serving replica, minutes behind the index it copies."""
+    rows: dict[str, Chunk] = field(default_factory=dict)
+
+    def sync(self, index: LiveIndex) -&gt; None:
+        self.rows = dict(index.rows)
+
+    def search(self, term: str, index: LiveIndex, k: int = 5) -&gt; list[Chunk]:
+        found = [row for row in self.rows.values() if term in row.text]
+        return [row for row in found if index.alive(row)][:k]   # tombstones read at query time
+
+
+if __name__ == "__main__":
+    def make(cid: str, doc_id: str, version: int, text: str) -&gt; Chunk:
+        return Chunk(id=cid, doc_id=doc_id, text=text, acl=frozenset({"icu"}), version=version)
+
+    index, replica = LiveIndex(), SearchReplica()
+    index.publish("gl-17", 3, [make("gl-17:v3", "gl-17", 3, "lactate threshold 2 mmol/l")])
+    replica.sync(index)
+    assert [row.id for row in replica.search("lactate", index)] == ["gl-17:v3"]
+
+    added, removed = index.publish("gl-17", 4, [make("gl-17:v4", "gl-17", 4, "lactate threshold 4 mmol/l")])
+    assert (added, removed) == (1, 1)                    # the old version is removed
+    assert replica.search("lactate", index) == []        # the replica lags, the tombstone holds
+    replica.sync(index)
+    assert [row.id for row in replica.search("lactate", index)] == ["gl-17:v4"]
+
+    index.revoke("gl-17")
+    assert replica.rows and replica.search("lactate", index) == []   # revocation precedes the sync
+    print("rows in the replica:", len(replica.rows), "· visible in search:", len(replica.search("lactate", index)))</code></pre>
+</figure>
+
+<p data-level="3">The cost of the solution is reading the tombstone table on every query, which is usually single-digit milliseconds for a table of a few thousand rows. Tombstones are lifted by a reconciliation process that compares the copies and removes the record once the deletion has reached them all. The retention of a tombstone is chosen longer than the longest possible lag of a replica and the longest restore from backup, that is, it is measured in days.</p>
+
+<h4 data-level="3">Migrating the embedding model</h4>
+
+<p data-level="3">Changing the embedding model means recomputing every chunk of the corpus and losing the ability to compare old vectors with new ones. Meridian's two hundred thousand documents give about two million chunks, and the recomputation takes hours of paid compute. The cutover therefore uses two indexes: the new one is built alongside, filled by the recomputation in the background and receives the same incremental changes as the old one. The switch happens once the new index has caught up on freshness and has not fallen behind on the measurement of <a href="#s-5-9" data-secref="5.9">Section 5.9</a>.</p>
+
+<p data-level="3">During a migration the evaluation itself can change. The question set is labelled with chunk identifiers, and a new chunking or a new model changes chunk boundaries and their identifiers, so a direct comparison of metrics between the indexes compares different quantities. Labelling is therefore done at the level of the document and the section, and the metric stays comparable across the migration.</p>
+
+<h4 data-level="3">Tables and figures</h4>
+
+<p data-level="3">Chunking by paragraph damages a table in two ways. The column headers stay in one chunk and the rows in another, and the row "Adults · 500 mg · every 8 h" loses its meaning because the drug it refers to is unknown. The reading order in a two-column PDF often interleaves the cells, and a chunk ends up holding numbers from different rows in sequence.</p>
+
+<p data-level="3">Tables are handled by row serialisation. Every row of the table becomes a chunk of its own, of the form "Drug: ceftriaxone. Group: adults. Dose: 2 g. Frequency: every 24 h. Source: table 3 of protocol 17, revision 4", and the table as a whole is kept as a second chunk with its caption and headers. The first form answers a question about a dose, the second is needed when the question concerns the structure of the table. Figures and algorithms that do not become text are indexed by their caption and the surrounding paragraph, and an answer resting on them carries a reference to the page.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why is a rights filter applied after ranking counted as a leak when no closed documents appear in the results?</summary>
+<div class="ans"><p>What leaks are the quantities computed before the filter: the result count, the order of the permitted results, the related list and the summary the model composed over the reranked chunks. These quantities depend on the set they were computed over, and they allow conclusions about closed documents even when the documents themselves are hidden.</p></div>
+</details>
+<details>
+<summary>What does reciprocal rank fusion give that a weighted sum of the two searches' scores does not?</summary>
+<div class="ans"><p>Reciprocal rank fusion does not depend on the scales of the scores. A BM25 score and a cosine similarity are not comparable, and the weights of a linear combination have to be tuned again after every change of model or corpus. The fusion uses places in the lists, and places are comparable whatever the scales of the scores.</p></div>
+</details>
+<details>
+<summary>Recall@5 fell from 0.81 to 0.74 after a daily ingestion pass. Where does the investigation start?</summary>
+<div class="ans"><p>The investigation starts with the per-question diagnosis: which questions stopped finding the correct chunk and at which stage. If the correct chunks vanished from the index, the cause is ingestion or the version-driven deletion; if they are visible but do not enter the candidate set, the cause is chunking or selection; if they enter it but fall below the cut, the cause is ranking.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>RAG is a data-preparation problem: corpus readiness, parsing, deduplication and provenance bound the quality of the answer from above, and the model and the ranking scheme work within that bound.</li>
+<li>A chunk carries its rights, its version and a content hash, so the filter is executed by the store, republication is idempotent, and the answer cites a revision.</li>
+<li>Rights apply before ranking and in every arm of a hybrid search, and a post-check before the answer is returned raises an error when rights are violated.</li>
+<li>Freshness is provided by incremental ingestion and by tombstones read at query time, while retrieval quality is measured question by question with the failing stage named.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-4" data-secref="4">Chapter 4: how what was found enters the context</a>
+<a href="#ch-10" data-secref="10">Chapter 10: the perimeter, PHI and sovereignty</a>
+<a href="#ch-12" data-secref="12">Chapter 12: evaluating the whole system and the release gate</a>
+</p>
+</div>
+</section>

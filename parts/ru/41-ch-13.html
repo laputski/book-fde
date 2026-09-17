@@ -1,0 +1,1237 @@
+<!-- ────────────────────────── ГЛАВА 13 ────────────────────────── -->
+<section class="chapter" id="ch-13">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава тринадцатая</p>
+    <span class="strata" role="img" aria-label="Слой D: оценка и наблюдаемость">
+      <i></i><i></i><i></i><i data-s="D"></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-13"><span class="num">13</span>Наблюдаемость, трассировка и стоимость</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>построить модель трассы агентного запроса, в которой вызов модели, вызов инструмента, поиск и шаг агента являются отдельными спанами с атрибутами расхода;</li>
+<li>выбрать метрики, учитывающие природу языковых моделей, и хранить их гистограммами, из которых перцентили считаются по всему парку;</li>
+<li>спроектировать атрибуцию стоимости по бизнес-единицам, функциям и пользователям на версионированном прайсе и сверить её со счётом поставщика;</li>
+<li>задать политику журналирования, при которой стоимость и задержка сохраняются всегда, а персональные данные не сохраняются в открытом виде никогда;</li>
+<li>сформулировать SLO агентной системы и настроить алерты по скорости расходования бюджета ошибок в нескольких окнах.</li>
+</ul>
+</div>
+
+<h3 id="s-13-1"><span class="num">13.1</span>Задача: платформа для пяти бизнес-единиц Orion</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-4" data-secref="G.4">Досье CF4 · Orion Telecom</a></span>
+  <span class="tag">мультиарендная платформа</span>
+  <span class="tag">chargeback</span>
+  <span class="tag">пять бизнес-единиц</span>
+  <span>телеком, 30 млн абонентов</span>
+</div>
+
+<p>К осени 2026 года отдельные агентные проекты Orion объединены в общую платформу. Подсказки операторам из <a href="#ch-4" data-secref="4">главы 4</a>, триаж инцидентов из <a href="#ch-8" data-secref="8">главы 8</a> и ещё несколько сценариев используют один шлюз, одну среду исполнения агентов, общие квоты у поставщиков моделей и общий счёт. Платформой пользуются пять бизнес-единиц: массовый рынок, корпоративные клиенты, домашний интернет и ТВ, оптовые услуги для других операторов и служба эксплуатации сети. За сутки через шлюз проходит около полумиллиона агентных запросов, и каждый порождает от трёх до нескольких десятков вызовов модели, инструментов и поиска.</p>
+
+<p>В первый месяц платформа разделила счёт поставщика между бизнес-единицами пропорционально числу запросов и через неделю получила два возражения. Корпоративный блок указал, что его запросы короткие, тогда как триаж инцидентов читает на каждом шаге десятки тысяч токенов алармов, и деление по числу запросов перекладывает на корпоративный блок чужие расходы. Массовый рынок сообщил, что подсказка иногда появляется у оператора через шесть секунд и позже, а журналы показывают только время прихода запроса и время ответа. Данных, которыми можно было бы ответить на эти возражения, у платформы не было.</p>
+
+<p>Требования, которые владелец платформы сформулировал после этого месяца, составляют предмет главы. Каждый запрос восстанавливается по трассе до отдельного вызова модели и инструмента, с длительностью и расходом токенов. Стоимость распределяется между бизнес-единицами по фактическому потреблению, раскрывается до функции и пользователя и сходится со счётом поставщика с точностью до процента. У задержки и доли успешных запусков есть целевые уровни обслуживания (service level objective, SLO), и их нарушение поднимает дежурного раньше, чем бизнес-единица напишет жалобу. Журналы и трассы не содержат номеров абонентов и текстов обращений, кроме явно разрешённой и отредактированной выборки: этого требуют GDPR и границы законного перехвата, записанные в досье.</p>
+
+<h3 id="s-13-2"><span class="num">13.2</span>Почему без трасс нет доказательств</h3>
+
+<p>Журнал отвечает на вопрос, что произошло в данной точке кода в данный момент. Агентный запрос представляет собой дерево операций, в котором цикл агента порождает шаги, шаг порождает вызовы модели, инструментов и поиска, а инструмент обращается к системам заказчика в другом процессе. Строка журнала не хранит отношения между родителем и потомком, и при двух одновременных запросах строки перемешиваются так, что по журналу нельзя установить, какой шаг сделал ответ медленным и дорогим. Строка «инструмент: ok» с отметкой времени содержит момент окончания операции, но не содержит ни момента её начала, ни указания на запрос.</p>
+
+<p>Сведения о ходе запроса нужны на платформе трём потребителям, и каждому нужен ответ, подтверждённый записанными данными. Инженеру при отладке нужно знать, где прошло время конкретного запроса. Финансовому контролёру нужно знать, кто потребил токены, за которые выставлен счёт. Руководителю бизнес-единицы, аудитору или регулятору нужно знать, какие данные читал агент и какие действия выполнил. Все три вопроса требуют причинной структуры запроса, то есть связей между операциями.</p>
+
+<dl class="def">
+<dt>Спан <span class="en">(span)</span></dt>
+<dd>Запись об одной именованной операции с началом и концом, содержащая идентификатор трассы, собственный идентификатор, идентификатор родительского спана, атрибуты и статус завершения. Спан открывается там, где операция начинается, и закрывается там, где она заканчивается, поэтому его длительность и атрибуты измеряются непосредственно в ходе операции.</dd>
+<dt>Трасса <span class="en">(trace)</span></dt>
+<dd>Дерево спанов с общим идентификатором трассы, корнем которого служит входящий запрос. Трасса описывает причинную структуру одного запроса: какие операции он породил, в каком порядке, какие из них выполнялись одновременно и чем закончилась каждая.</dd>
+</dl>
+
+<p>Отсюда тезис главы. Детальная трассировка, в которой отдельным спаном становится каждый вызов модели, каждый вызов инструмента, каждый поиск и каждый шаг агента, вместе с метриками, учитывающими природу языковых моделей, является необходимым условием отладки агентной системы, оценки её стоимости и доказательства её поведения. Второе следствие: атрибуция стоимости между арендаторами является ограничением проекта, которое выполняется в момент каждого вызова. Ежемесячный отчёт её не заменяет, поскольку атрибут арендатора, не записанный на спан в момент вызова, никакой запрос к счёту в конце месяца не восстановит.</p>
+
+<h3 id="s-13-3"><span class="num">13.3</span>Модель трассы</h3>
+
+<p>Трасса агентного запроса Orion строится из спанов пяти видов, и четыре из них описаны семантическими соглашениями OpenTelemetry для генеративного AI.<a class="src" href="https://github.com/open-telemetry/semantic-conventions-genai" target="_blank" rel="noreferrer">OpenTelemetry, GenAI semantic conventions</a> Спан вызова модели называется по операции и модели, например <code>chat model-flash</code>, и несёт в атрибутах расход токенов. Спан вызова инструмента имеет операцию <code>execute_tool</code> и имя инструмента, спан поиска имеет операцию <code>retrieval</code> и идентификатор источника данных, спан вызова агента имеет операцию <code>invoke_agent</code>. Пятый вид, шаг агентного цикла, соглашения отдельно не выделяют, и платформа вводит его сама, поскольку шаг является единицей рассуждения из <a href="#s-7-3" data-secref="7.3">раздела 7.3</a>.</p>
+
+<p>Расход токенов записывается атрибутами <code>gen_ai.usage.input_tokens</code> и <code>gen_ai.usage.output_tokens</code>, а токены, прочитанные из кэша и записанные в него, отдельными атрибутами <code>gen_ai.usage.cache_read.input_tokens</code> и <code>gen_ai.usage.cache_write.input_tokens</code>; в прежних версиях соглашений второй атрибут назывался <code>gen_ai.usage.cache_creation.input_tokens</code>. Соглашения предписывают включать кэшированные токены в общее число входных, поэтому стоимость свежего входа получается вычитанием, и ошибка в этом месте учитывает кэшированные токены дважды. В 2026 году соглашения имеют статус разработки и ещё меняются, поэтому платформа закрепляет их версию в коде трассировщика так же, как закрепляет версию модели. Единицы измерения и цены, к которым применяются эти атрибуты, определены в <a href="#s-3-3" data-secref="3.3">разделе 3.3</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Дерево одной трассы подсказки оператору: входящий запрос содержит вызов агента, агент содержит два шага, первый шаг содержит поиск и вызов модели, второй шаг содержит неудачный и повторный вызовы инструмента и второй вызов модели; на каждом спане стоит метка арендатора, у вызовов модели записан расход токенов, а стоимость каждого родителя складывается из стоимости его потомков" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar13a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="24" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">СПАН</text>
+  <text x="376" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">АРЕНДАТОР</text>
+  <text x="452" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">АТРИБУТЫ</text>
+  <text x="676" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">СТОИМОСТЬ</text>
+
+  <line x1="692" y1="40" x2="692" y2="354" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="776" y1="40" x2="776" y2="354" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <path d="M36,69 V92 H50" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M62,105 V236 H76" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M62,128 H76" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,141 V200 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,164 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,249 V344 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,272 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,308 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+
+  <rect x="24" y="43" width="336" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="36" y="60" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">POST /assist</text>
+  <rect x="50" y="79" width="310" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="62" y="96" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">invoke_agent assist</text>
+  <rect x="76" y="115" width="284" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="88" y="132" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">step 1</text>
+  <rect x="102" y="151" width="258" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="114" y="168" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">retrieval kb-consumer</text>
+  <rect x="102" y="187" width="258" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="114" y="204" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">chat model-flash</text>
+  <rect x="76" y="223" width="284" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="88" y="240" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">step 2</text>
+  <rect x="102" y="259" width="258" height="26" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="114" y="276" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">execute_tool get_charges</text>
+  <rect x="102" y="295" width="258" height="26" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="114" y="312" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">execute_tool get_charges</text>
+  <rect x="102" y="331" width="258" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="114" y="348" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">chat model-flash</text>
+
+  <rect x="376" y="47" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="60" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="83" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="119" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="132" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="155" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="168" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="191" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="204" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="227" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="240" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="263" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="276" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="299" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="312" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="335" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+
+  <text x="452" y="60" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">feature=agent_assist · 6.2 с</text>
+  <text x="452" y="96" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2 шага · 6.2 с</text>
+  <text x="452" y="132" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1.4 с</text>
+  <text x="452" y="168" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">hits=2 · 0.3 с</text>
+  <text x="452" y="204" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">in 5000 · cache 4200 · out 60</text>
+  <text x="452" y="240" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">4.8 с</text>
+  <text x="452" y="276" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">error.type=TimeoutError · 2.0 с</text>
+  <text x="452" y="312" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">повтор · 0.3 с</text>
+  <text x="452" y="348" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">in 13290 · cache 4200 · out 180</text>
+
+  <rect x="676" y="51" width="100" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <line x1="692" y1="51" x2="692" y2="61" stroke="var(--sB)" stroke-width="1.3"/>
+  <rect x="676" y="87" width="100" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <line x1="692" y1="87" x2="692" y2="97" stroke="var(--sB)" stroke-width="1.3"/>
+  <rect x="676" y="123" width="16" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <rect x="676" y="195" width="16" height="10" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="692" y="231" width="84" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <rect x="692" y="339" width="84" height="10" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <text x="860" y="60" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.001559</text>
+  <text x="860" y="96" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.001559</text>
+  <text x="860" y="132" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.000252</text>
+  <text x="860" y="204" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">$0.000252</text>
+  <text x="860" y="240" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.001307</text>
+  <text x="860" y="348" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">$0.001307</text>
+
+  <text x="24" y="386" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Родитель несёт сумму стоимости потомков; счёт бизнес-единицы складывается из корней с её меткой арендатора.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Стоимость записывается атрибутом каждого спана и суммируется вверх по дереву. У каждого вызова модели своя цена, вычисленная из его токенов, у родителя сумма цен потомков, у бизнес-единицы сумма корней с её меткой. Метка арендатора записана на каждом спане, поэтому свёртку можно остановить на любом уровне: на шаге, на запуске, на функции.</figcaption>
+</figure>
+
+<dl class="def">
+<dt>Распространение контекста трассы <span class="en">(trace context propagation)</span></dt>
+<dd>Передача идентификатора трассы, идентификатора текущего спана и сопутствующих атрибутов запроса, называемых baggage, от операции к её потомкам, в том числе через границы потоков, процессов и организаций. Внутри процесса контекст хранится в контекстных переменных, между процессами передаётся заголовками W3C <code>traceparent</code> и <code>baggage</code>, а в протоколе MCP теми же ключами в поле <code>params._meta</code>.<a class="src" href="https://www.w3.org/TR/trace-context/" target="_blank" rel="noreferrer">W3C, Trace Context</a></dd>
+</dl>
+
+<p>Распространение контекста разрывается в предсказуемых местах, и все они встречаются на платформе Orion. Пул потоков и фоновая задача не наследуют контекстные переменные, если их не скопировать явно, и работник руководителя начинает собственную трассу. Очередь сообщений теряет заголовки, если продюсер не записал их в сообщение. MCP-сервер, не читающий <code>params._meta</code>, открывает новую трассу на каждый вызов инструмента. Во всех трёх случаях спаны записываются, но остаются сиротами без родителя и арендатора, и их расход не относится ни к одной бизнес-единице.</p>
+
+<p>В мультиагентной системе из <a href="#ch-8" data-secref="8">главы 8</a> дерево трассы повторяет дерево делегирования. Спан <code>invoke_agent</code> работника вложен в спан шага руководителя, выдавшего контракт, а вызовы модели и инструментов работника вложены в его собственные шаги. Поэтому стоимость триажа раскладывается по работникам без дополнительной разметки: стоимость диагностики равна сумме её поддерева, а собственные расходы руководителя видны отдельно. Сравнение двух трассировщиков, наивного и продуманного, показывает, чем эта структура отличается от журнала.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы записать ход запроса">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="16">
+      <figcaption><span class="file">naive_logging.py</span></figcaption>
+      <pre><code>import heapq
+import io
+from collections.abc import Iterator
+from contextlib import redirect_stdout
+
+NOW = [0.0]
+
+
+def log(message: str) -&gt; None:
+    print(f"[{NOW[0]:4.1f}] {message}")
+
+
+def handle(tenant: str, question: str, tool_s: float) -&gt; Iterator[float]:
+    """Обработчик подсказки: yield отдаёт управление на время ожидания."""
+    log(f"запрос от {tenant}: {question}")
+    yield 0.3
+    log("поиск: ok")
+    yield 1.1
+    log("модель: ok, 5060 токенов")
+    yield tool_s
+    log("инструмент: ok")
+    yield 2.3
+    log("модель: ok, 13470 токенов")
+
+
+def serve(handlers: list[Iterator[float]]) -&gt; None:
+    """Два запроса одновременно: будим того, чьё ожидание кончается раньше."""
+    wake = [(i * 0.2, i) for i in range(len(handlers))]
+    while wake:
+        NOW[0], i = heapq.heappop(wake)
+        wait = next(handlers[i], None)
+        if wait is not None:
+            heapq.heappush(wake, (round(NOW[0] + wait, 1), i))
+
+
+if __name__ == "__main__":
+    out = io.StringIO()
+    with redirect_stdout(out):
+        serve([handle("consumer", "почему списали 300 рублей?", tool_s=2.5),
+               handle("enterprise", "статус канала 4471", tool_s=0.3)])
+    lines = out.getvalue().splitlines()
+    starts = [float(x[1:5]) for x in lines if "запрос от" in x]
+    tools = [float(x[1:5]) for x in lines if "инструмент" in x]
+    assert len(starts) == len(tools) == 2
+    assert all(s &lt; t for s in starts for t in tools)      # любая строка подходит любому запросу
+    assert sum("consumer" in x for x in lines) == 1          # арендатор только в первой строке
+    assert "300 рублей" in out.getvalue()                     # при этом вопрос абонента записан в журнал
+    print("по журналу не понять, чей инструмент был медленным и кто за что платит")</code></pre>
+    </figure>
+    <p>Обработчик пишет строку на каждую операцию, и каждая строка по отдельности верна. Два одновременных запроса дают журнал, в котором строки «инструмент: ok» записаны с отметками 1.9 и 3.9 секунды, и ничто не связывает их ни с запросом, ни с арендатором: имя бизнес-единицы есть только в первой строке каждого запроса. Длительность инструмента не восстанавливается, поскольку журнал содержит момент окончания операции, но не момент её начала. При этом вопрос абонента записан в журнал целиком.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">tracing.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import contextvars
+import functools
+import hashlib
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Any
+
+type Attr = str | int | float | bool
+
+
+@dataclass
+class ManualClock:
+    t: float = 0.0
+
+    def now(self) -&gt; float:
+        return self.t
+
+    def advance(self, seconds: float) -&gt; None:
+        self.t = round(self.t + seconds, 6)
+
+
+@dataclass(frozen=True)
+class SpanContext:
+    trace_id: str
+    span_id: str
+
+
+@dataclass
+class Span:
+    name: str
+    context: SpanContext
+    parent_id: str | None
+    start: float
+    end: float = 0.0
+    status: str = "ok"
+    attributes: dict[str, Attr] = field(default_factory=dict)
+
+    @property
+    def duration(self) -&gt; float:
+        return round(self.end - self.start, 6)
+
+
+@dataclass(frozen=True)
+class Completion:
+    input_tokens: int               # по соглашениям OTel включает токены из кэша
+    cache_read_tokens: int
+    output_tokens: int
+
+
+CURRENT: contextvars.ContextVar[SpanContext | None] = contextvars.ContextVar("span", default=None)
+BAGGAGE: contextvars.ContextVar[tuple[tuple[str, str], ...]] = contextvars.ContextVar("baggage", default=())
+
+
+@contextmanager
+def baggage(items: dict[str, str]) -&gt; Iterator[None]:
+    """Атрибуты запроса, которые наследует каждый спан ниже по дереву."""
+    token = BAGGAGE.set(BAGGAGE.get() + tuple(items.items()))
+    try:
+        yield
+    finally:
+        BAGGAGE.reset(token)
+
+
+def inject() -&gt; dict[str, str]:
+    """Заголовки W3C для HTTP; в MCP те же ключи передаются в params._meta."""
+    ctx = CURRENT.get()
+    assert ctx is not None, "inject вне спана"
+    return {"traceparent": f"00-{ctx.trace_id}-{ctx.span_id}-01",
+            "baggage": ",".join(f"{k}={v}" for k, v in BAGGAGE.get())}
+
+
+@contextmanager
+def extracted(carrier: dict[str, str]) -&gt; Iterator[None]:
+    """Принимающая сторона: удалённый родитель и baggage из заголовков."""
+    _, trace_id, span_id, _ = carrier["traceparent"].split("-")
+    pairs = tuple((k, v) for k, v in (p.split("=", 1) for p in carrier["baggage"].split(",") if p))
+    parent, bag = CURRENT.set(SpanContext(trace_id, span_id)), BAGGAGE.set(pairs)
+    try:
+        yield
+    finally:
+        BAGGAGE.reset(bag)
+        CURRENT.reset(parent)
+
+
+class Tracer:
+    def __init__(self, service: str, clock: ManualClock) -&gt; None:
+        self.service = service
+        self.clock = clock
+        self.finished: list[Span] = []
+        self._n = 0
+
+    def _id(self, size: int) -&gt; str:
+        self._n += 1
+        return hashlib.blake2b(f"{self.service}:{self._n}".encode(), digest_size=size).hexdigest()
+
+    @contextmanager
+    def span(self, name: str, attributes: dict[str, Attr] | None = None) -&gt; Iterator[Span]:
+        parent = CURRENT.get()
+        ctx = SpanContext(parent.trace_id if parent else self._id(16), self._id(8))
+        inherited: dict[str, Attr] = dict(BAGGAGE.get())
+        span = Span(name, ctx, parent.span_id if parent else None, self.clock.now(),
+                    attributes=inherited | (attributes or {}))
+        token = CURRENT.set(ctx)
+        try:
+            yield span
+        except Exception as err:
+            span.status = "error"
+            span.attributes["error.type"] = type(err).__name__
+            raise
+        finally:
+            CURRENT.reset(token)
+            span.end = self.clock.now()
+            self.finished.append(span)
+
+    def _wrap[**P, R](self, name: str, attributes: dict[str, Attr],
+                      after: Callable[[Span, Any], None] | None = None
+                      ) -&gt; Callable[[Callable[P, R]], Callable[P, R]]:
+        def decorator(fn: Callable[P, R]) -&gt; Callable[P, R]:
+            @functools.wraps(fn)
+            def inner(*args: P.args, **kwargs: P.kwargs) -&gt; R:
+                with self.span(name, attributes) as span:
+                    result = fn(*args, **kwargs)
+                    if after is not None:
+                        after(span, result)
+                return result
+            return inner
+        return decorator
+
+    def llm[**P](self, model: str) -&gt; Callable[[Callable[P, Completion]], Callable[P, Completion]]:
+        def usage(span: Span, c: Completion) -&gt; None:
+            span.attributes |= {"gen_ai.usage.input_tokens": c.input_tokens,
+                                "gen_ai.usage.cache_read.input_tokens": c.cache_read_tokens,
+                                "gen_ai.usage.output_tokens": c.output_tokens}
+        return self._wrap(f"chat {model}", {"gen_ai.operation.name": "chat",
+                                             "gen_ai.request.model": model}, usage)
+
+    def tool[**P, R](self, name: str) -&gt; Callable[[Callable[P, R]], Callable[P, R]]:
+        return self._wrap(f"execute_tool {name}", {"gen_ai.operation.name": "execute_tool",
+                                                   "gen_ai.tool.name": name})
+
+    def retrieval[**P, R](self, source: str) -&gt; Callable[[Callable[P, R]], Callable[P, R]]:
+        return self._wrap(f"retrieval {source}", {"gen_ai.operation.name": "retrieval",
+                                                  "gen_ai.data_source.id": source})
+
+
+if __name__ == "__main__":
+    clock = ManualClock()
+    gateway = Tracer("gateway", clock)
+    billing = Tracer("mcp-billing", clock)             # другой процесс со своим трассировщиком
+
+    @gateway.retrieval("kb-consumer")
+    def search(query: str) -&gt; list[str]:
+        clock.advance(0.3)
+        return ["kb-112", "kb-587"]
+
+    @gateway.llm("model-flash")
+    def chat(prompt: str, seconds: float, usage: tuple[int, int, int]) -&gt; Completion:
+        clock.advance(seconds)
+        return Completion(*usage)
+
+    def backend(headers: dict[str, str]) -&gt; int:
+        with extracted(headers), billing.span("SELECT charges", {"db.system.name": "postgresql"}):
+            clock.advance(0.2)
+        return 300
+
+    outcomes: Iterator[TimeoutError | None] = iter([TimeoutError("billing: нет ответа за 2 с"), None])
+
+    @gateway.tool("get_charges")
+    def get_charges(account: str) -&gt; int:
+        if (failure := next(outcomes)) is not None:
+            clock.advance(2.0)
+            raise failure
+        clock.advance(0.1)
+        return contextvars.Context().run(backend, inject())   # пустой контекст, как в чужом процессе
+
+    request = {"orion.tenant": "consumer", "orion.feature": "agent_assist", "orion.user": "u-5f2a"}
+    with (baggage(request), gateway.span("POST /assist"),
+          gateway.span("invoke_agent assist", {"gen_ai.operation.name": "invoke_agent"})):
+        with gateway.span("step 1", {"orion.agent.step": 1}):
+            search("почему списали 300 рублей")
+            chat("план", 1.1, (5_000, 4_200, 60))
+        with gateway.span("step 2", {"orion.agent.step": 2}):
+            try:
+                get_charges("acc-17")
+            except TimeoutError:
+                clock.advance(0.2)                     # отсрочка перед повтором
+                get_charges("acc-17")
+            chat("ответ", 2.3, (13_290, 4_200, 180))
+
+    spans = gateway.finished + billing.finished
+    by_id = {s.context.span_id: s for s in spans}
+    assert len({s.context.trace_id for s in spans}) == 1             # одна трасса, включая MCP-сервер
+    assert all(s.parent_id in by_id for s in spans if s.parent_id)    # сирот нет
+    assert all(s.attributes["orion.tenant"] == "consumer" for s in spans)
+    tools = [s for s in spans if s.name == "execute_tool get_charges"]
+    assert [t.status for t in tools] == ["error", "ok"]
+    assert billing.finished[0].parent_id == tools[1].context.span_id
+    llm = [s for s in spans if s.attributes.get("gen_ai.operation.name") == "chat"]
+    assert sum(int(s.attributes["gen_ai.usage.input_tokens"]) for s in llm) == 18_290
+    parents = {s.parent_id for s in spans}
+    slowest = max((s for s in spans if s.context.span_id not in parents), key=lambda s: s.duration)
+    root = next(s for s in spans if s.parent_id is None)
+    step_2 = next(s for s in spans if s.name == "step 2")
+    assert root.duration == 6.2 and step_2.duration == 4.8
+    assert slowest.name == "chat model-flash" and slowest.parent_id == step_2.context.span_id
+    print(f"трасса {root.context.trace_id[:8]}: {len(spans)} спанов, дольше всех {slowest.name} в шаге 2")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="contextvars.ContextVar(&quot;span&quot;, default=None)">строка 53</span><p>Текущий спан хранится в контекстной переменной. Асинхронные задачи наследуют её автоматически, пул потоков не наследует: работу в пул передают через <code>contextvars.copy_context().run</code>, иначе работник начнёт собственную трассу.</p></div>
+        <div><span class="at" data-anchor="inherited: dict[str, Attr] = dict(BAGGAGE.get())">строка 103</span><p>Каждый спан копирует baggage при создании. Арендатор, функция и пользователь задаются один раз на шлюзе, и каждый вызов получает их без дополнительного кода.</p></div>
+        <div><span class="at" data-anchor="span.attributes[&quot;error.type&quot;] = type(err).__name__">строка 111</span><p>Исключение закрывает спан со статусом ошибки и классом исключения в атрибуте <code>error.type</code>, после чего пробрасывается дальше. Трассировщик записывает отказ, а решение о повторе принимает агентный цикл.</p></div>
+        <div><span class="at" data-anchor="&quot;gen_ai.usage.cache_read.input_tokens&quot;: c.cache_read_tokens">строка 135</span><p>Расход записывается на спан модели в момент ответа. Имена атрибутов следуют соглашениям OpenTelemetry, поэтому тот же спан без переделки читают Cloud Trace, сторонние инструменты и книга затрат.</p></div>
+        <div><span class="at" data-anchor="contextvars.Context().run(backend, inject())">строка 177</span><p>Сервер биллинга исполняется в пустом контексте, как в отдельном процессе: сведения о трассе и арендаторе он получает только из заголовков. Поэтому атрибут <code>orion.tenant</code> на его спане подтверждает, что распространение через заголовки работает.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается структуры. Журнал хранит последовательность строк, трасса хранит дерево. В трассе вопрос «где прошло время» решается поиском самого долгого листа и его родителя; в журнале данных для ответа на него нет.</p>
+    <p>Второе различие касается наследования. Арендатор, функция и пользователь записываются в трассировщике один раз при входе запроса и попадают на каждый спан, включая спаны MCP-сервера в другом процессе. В журнале они присутствуют только в тех строках, где разработчик явно их напечатал.</p>
+    <p>Третье различие касается содержания. Спан содержит числа: длительность, токены, статус, и не содержит текста обращения. Журнал наивного обработчика содержит текст обращения и не содержит длительностей операций.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Типичная ошибка</b>Оборачивать спаном только входящий запрос целиком и называть это трассировкой. Такой спан содержит общую длительность подсказки, например шесть секунд, без разбивки по операциям. Расход токенов в нём либо отсутствует, либо записан суммой, которую нельзя разложить по вызовам. Спан открывается на каждой операции, у которой есть собственная длительность, собственный расход или собственный способ отказать.</div>
+
+<h3 id="s-13-4"><span class="num">13.4</span>LLM-native метрики</h3>
+
+<p>Трасса описывает один запрос, метрика описывает распределение по всем запросам. Метрики агрегируются в момент записи, объём их хранения не зависит от трафика, и потому они не сэмплируются; к трассам обращаются, когда метрика показала, где искать. Обычные метрики веб-сервиса, то есть число запросов, доля ошибок и время ответа, агентной платформе необходимы, но недостаточны: они не содержат сведений о токенах, кэше и шагах агента.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Метрика</th><th>Единица</th><th>Что показывает</th><th>Форма хранения</th></tr></thead>
+<tbody>
+<tr><td>Время до первого токена, TTFT</td><td>секунды</td><td>успеет ли подсказка появиться раньше, чем оператор допечатает ответ; растёт при промахе кэша и очереди у поставщика</td><td>гистограмма, границы от 0.01 до 81.92 с с удвоением</td></tr>
+<tr><td>Скорость потока</td><td>выходные токены в секунду</td><td>остаток задержки после первого токена; только для потоковых вызовов</td><td>гистограмма, от 5 до 640</td></tr>
+<tr><td>Стоимость запроса</td><td>доллары</td><td>распределение цены запуска по функции и арендатору, в том числе на успешную задачу</td><td>гистограмма и счётчик суммы</td></tr>
+<tr><td>Доля попаданий в кэш</td><td>доля входных токенов</td><td>стабильность префикса; падает первой после правки инструкции</td><td>отношение двух счётчиков</td></tr>
+<tr><td>Шагов на запуск</td><td>шаги</td><td>петли и лишние перепланирования агента</td><td>гистограмма, от 1 до 128 с удвоением</td></tr>
+</tbody></table></div>
+
+<p>Время до первого токена и скорость потока разобраны в <a href="#s-3-3" data-secref="3.3">разделе 3.3</a>, а стабильный префикс, от которого зависит доля попаданий в кэш, в <a href="#s-4-5" data-secref="4.5">разделе 4.5</a>. Этот раздел определяет форму хранения: каждая из этих величин хранится гистограммой с фиксированными границами корзин. Среднее для этого не подходит, поскольку скрывает хвост: у подсказок массового рынка среднее TTFT составляет 0.84 секунды, а 95-й перцентиль около трёх, и медленные подсказки, которые замечает оператор, относятся к хвосту. Перцентили нельзя усреднять, поскольку p95 двух экземпляров шлюза с разной нагрузкой не равен среднему их p95. Гистограммы с одинаковыми границами складываются по экземплярам и окнам времени, и перцентиль вычисляется после сложения.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">metrics.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import bisect
+import functools
+import random
+from dataclasses import dataclass, field
+
+SECONDS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92)
+TOKENS_PER_S = (5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0)
+STEPS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
+LABELS = frozenset({"tenant", "feature", "model"})     # ограниченная мощность: без user и request_id
+
+
+@dataclass
+class Histogram:
+    bounds: tuple[float, ...]
+    counts: list[int] = field(default_factory=list)
+    total: float = 0.0
+    n: int = 0
+
+    def __post_init__(self) -&gt; None:
+        self.counts = self.counts or [0] * (len(self.bounds) + 1)   # последняя корзина: выше границ
+
+    def record(self, value: float) -&gt; None:
+        self.counts[bisect.bisect_left(self.bounds, value)] += 1
+        self.total += value
+        self.n += 1
+
+    def merge(self, other: Histogram) -&gt; Histogram:
+        if other.bounds != self.bounds:
+            raise ValueError("сливаются только гистограммы с одинаковыми границами")
+        counts = [a + b for a, b in zip(self.counts, other.counts, strict=True)]
+        return Histogram(self.bounds, counts, self.total + other.total, self.n + other.n)
+
+    def mean(self) -&gt; float:
+        return self.total / self.n
+
+    def quantile(self, q: float) -&gt; float:
+        """Интерполяция внутри корзины: точность ограничена её шириной."""
+        rank, seen = q * self.n, 0
+        for i, c in enumerate(self.counts):
+            if c and seen + c &gt;= rank:
+                if i == len(self.bounds):
+                    return self.bounds[-1]
+                low = self.bounds[i - 1] if i else 0.0
+                return low + (self.bounds[i] - low) * (rank - seen) / c
+            seen += c
+        return self.bounds[-1]
+
+
+@dataclass
+class Metrics:
+    series: dict[tuple[str, tuple[tuple[str, str], ...]], Histogram] = field(default_factory=dict)
+
+    def observe(self, name: str, bounds: tuple[float, ...], value: float, **labels: str) -&gt; None:
+        if extra := set(labels) - LABELS:
+            raise ValueError(f"метка неограниченной мощности: {sorted(extra)}")
+        key = (name, tuple(sorted(labels.items())))
+        if key not in self.series:
+            self.series[key] = Histogram(bounds)
+        self.series[key].record(value)
+
+    def query(self, name: str, **match: str) -&gt; Histogram:
+        found = [h for (n, labels), h in self.series.items()
+                 if n == name and match.items() &lt;= dict(labels).items()]
+        return functools.reduce(Histogram.merge, found)
+
+
+def record_call(m: Metrics, *, stream: bool, ttft_s: float, total_s: float, output_tokens: int,
+                **labels: str) -&gt; None:
+    m.observe("gen_ai.client.operation.duration", SECONDS, total_s, **labels)
+    if stream:                                         # без потока нет ни первого токена, ни скорости
+        m.observe("orion.ttft", SECONDS, ttft_s, **labels)
+        m.observe("orion.output_tokens_per_s", TOKENS_PER_S, output_tokens / (total_s - ttft_s), **labels)
+
+
+if __name__ == "__main__":
+    rng = random.Random(13)
+    pods = {"pod-a": Metrics(), "pod-b": Metrics()}
+    raw: list[float] = []
+    for pod, calls, slow_share in (("pod-a", 1_500, 0.08), ("pod-b", 500, 0.0)):
+        for _ in range(calls):
+            ttft = rng.uniform(3.0, 5.0) if rng.random() &lt; slow_share else rng.uniform(0.4, 0.9)
+            raw.append(ttft)
+            record_call(pods[pod], stream=True, ttft_s=ttft, total_s=ttft + 1.4, output_tokens=400,
+                        tenant="consumer", feature="agent_assist", model="model-flash")
+    record_call(pods["pod-b"], stream=False, ttft_s=0.0, total_s=38.0, output_tokens=9_000,
+                tenant="netops", feature="incident_triage", model="model-pro")
+
+    a, b = (pods[p].query("orion.ttft", tenant="consumer") for p in ("pod-a", "pod-b"))
+    fleet = a.merge(b)
+    exact_p95 = sorted(raw)[int(0.95 * len(raw))]
+    assert fleet.mean() &lt; 1.0 &lt; 2.56 &lt; fleet.quantile(0.95)        # среднее ниже секунды, p95 выше 2.56
+    assert 2.56 &lt; exact_p95 &lt;= 5.12                                 # та же корзина, что у оценки
+    assert fleet.quantile(0.95) - (a.quantile(0.95) + b.quantile(0.95)) / 2 &gt; 0.5    # p95 не усредняют
+    tps = pods["pod-a"].query("orion.output_tokens_per_s")
+    assert tps.n == 1_500 and 160 &lt; tps.quantile(0.5) &lt;= 320
+    assert pods["pod-b"].query("gen_ai.client.operation.duration", tenant="netops").n == 1
+
+    runs = Metrics()
+    for steps in (2, 2, 3, 2, 4, 2, 9, 2, 3, 2, 2, 17):
+        runs.observe("orion.agent.steps", STEPS, steps, feature="incident_triage")
+    per_run = runs.query("orion.agent.steps")
+    assert per_run.quantile(0.5) &lt;= 2 and per_run.quantile(0.95) &gt; 8     # медиана два шага, хвост петель
+    try:
+        runs.observe("orion.agent.steps", STEPS, 3, user="u-5f2a")
+        raise AssertionError("метка пользователя принята")
+    except ValueError:
+        pass
+    print(f"TTFT: среднее {fleet.mean():.2f} с, p95 {fleet.quantile(0.95):.2f} с, точный p95 {exact_p95:.2f} с")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="bisect.bisect_left(self.bounds, value)">строка 25</span><p>Значение, равное границе, попадает в корзину, которую эта граница закрывает сверху, как в явных корзинах OpenTelemetry. Гистограммы разных процессов складываются только при одинаковом соглашении о границах.</p></div>
+  <div><span class="at" data-anchor="return low + (self.bounds[i] - low) * (rank - seen) / c">строка 46</span><p>Перцентиль оценивается линейной интерполяцией внутри корзины, и точность оценки ограничена шириной корзины. В примере оценка p95 равна 2.85 секунды при точном значении 3.34: обе величины лежат в корзине от 2.56 до 5.12, и для алерта этой точности достаточно.</p></div>
+  <div><span class="at" data-anchor="if extra := set(labels) - LABELS:">строка 56</span><p>Мощность меток ограничивается проверкой в коде. Метка пользователя отвергается при записи, до того как число рядов перегрузит хранилище метрик.</p></div>
+  <div><span class="at" data-anchor="if stream:">строка 72</span><p>Для непотокового вызова записывается только длительность: момента первого токена у него нет, и скорость потока из полной длительности не выводится.</p></div>
+  <div><span class="at" data-anchor="fleet.quantile(0.95) - (a.quantile(0.95) + b.quantile(0.95)) / 2">строка 95</span><p>Среднее из p95 двух экземпляров меньше p95 парка больше чем на полсекунды: медленный экземпляр обслуживает втрое больше запросов, а усреднение считает экземпляры равными.</p></div>
+</div>
+</figure>
+
+<p>Метки метрик ограничены измерениями с малым числом значений: арендатор, функция, модель. Идентификатор пользователя или запроса в метке порождает отдельный ряд на каждое значение, и число рядов растёт вместе с числом пользователей, пока хранилище метрик не перестанет отвечать. Вопросы о конкретном пользователе адресуются книге затрат и трассам, где такая мощность предусмотрена проектом и учтена в стоимости хранения.</p>
+
+<div class="note" data-level="2">Скорость потока считается только для потоковых вызовов и только после первого токена. Вызов без потока не имеет момента первого токена, и деление выходных токенов на полную длительность смешивает скорость генерации с обработкой входа и очередью у поставщика, из-за чего модель с длинным входом получает заниженную скорость. Искажения, которые остаются и внутри потоковых вызовов, разобраны в <a href="#s-13-9" data-secref="13.9">разделе 13.9</a>.</div>
+
+<h3 id="s-13-5"><span class="num">13.5</span>Атрибуция стоимости</h3>
+
+<dl class="def">
+<dt>Внутренний перерасчёт затрат <span class="en">(chargeback)</span></dt>
+<dd>Распределение затрат общей платформы между внутренними потребителями по измеренному потреблению с выставлением каждому из них счёта. От распределения по заранее заданным долям chargeback отличается тем, что каждая строка счёта сводится к событиям расхода, которые можно предъявить потребителю.</dd>
+</dl>
+
+<p>Деление счёта пропорционально числу запросов, с которого начинал Orion, ошибочно по построению, поскольку стоимость запросов различается на два порядка. Подсказка оператору делает два вызова младшей модели: вызов планирования и вызов ответа, который читает контекст из <a href="#s-4-3" data-secref="4.3">раздела 4.3</a> размером около тринадцати тысяч токенов. Оба вызова читают из кэша стабильный префикс в 4 200 токенов, и подсказка целиком стоит около 0.16 цента. Шаг триажа читает старшей моделью сорок тысяч токенов алармов и стоит около шести центов, а запуск триажа состоит из нескольких таких шагов. При делении по числу запросов корпоративный блок с его множеством коротких запросов оплачивает триаж службы эксплуатации сети.</p>
+
+<p>Атрибуция начинается на шлюзе. Шлюз проверяет токен вызывающей стороны и выводит из него арендатора, функцию и псевдоним пользователя; из тела запроса эти значения не берутся, иначе любой клиент мог бы отнести свои расходы на другую бизнес-единицу, изменив одно поле запроса. Далее атрибуты передаются в baggage контекста трассы и копируются на каждый спан, включая спаны MCP-серверов и работников в других процессах. Спан без арендатора относится к корзине «без атрибуции», и доля этой корзины является отдельной метрикой с целевым уровнем ниже процента.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 390" role="img" aria-label="Поток данных наблюдаемости: шлюз ставит атрибут арендатора из токена вызывающей стороны, контекст трассы с этим атрибутом проходит через среду агентов в MCP-сервер, все три процесса экспортируют спаны в коллектор, а коллектор направляет агрегаты в метрики, отредактированную выборку содержимого в хранилище трасс и полный поток событий расхода в книгу затрат, которая сверяется со счётом поставщика" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar13b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <g data-step="1" data-caption="Шлюз проверяет токен вызывающей стороны и выводит атрибут арендатора из идентичности, указанной в этом токене.">
+    <text x="125" y="22" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">запрос · токен вызывающей стороны</text>
+    <line x1="125" y1="30" x2="125" y2="58" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <rect x="20" y="64" width="210" height="56" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="34" y="88" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">шлюз платформы</text>
+    <text x="34" y="106" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tenant ← токен</text>
+    <rect x="166" y="70" width="56" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+    <text x="194" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--sD)">tenant</text>
+  </g>
+
+  <g data-step="2" data-caption="Контекст трассы и baggage пересекают границы процессов: заголовки W3C для HTTP, поле params._meta для MCP. Метка арендатора появляется на спанах каждого процесса.">
+    <line x1="125" y1="120" x2="125" y2="158" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <text x="137" y="146" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">traceparent · baggage</text>
+    <rect x="20" y="164" width="210" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="34" y="188" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">среда агентов</text>
+    <text x="34" y="206" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">invoke_agent · chat</text>
+    <rect x="166" y="170" width="56" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+    <text x="194" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--sD)">tenant</text>
+    <line x1="125" y1="220" x2="125" y2="258" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <text x="137" y="246" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">params._meta</text>
+    <rect x="20" y="264" width="210" height="56" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+    <text x="34" y="288" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">MCP-сервер</text>
+    <text x="34" y="306" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">execute_tool</text>
+    <rect x="166" y="270" width="56" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+    <text x="194" y="283" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--sD)">tenant</text>
+  </g>
+
+  <g data-step="3" data-caption="Процессы экспортируют спаны по OTLP в коллектор; к этому моменту атрибут арендатора записан на каждом спане.">
+    <path d="M230,92 H280 V192" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M230,292 H280 V192" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <line x1="230" y1="192" x2="314" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <text x="297" y="184" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">OTLP</text>
+    <rect x="320" y="48" width="250" height="292" rx="8" fill="none" stroke="var(--sD)" stroke-width="1.5" stroke-dasharray="6 5"/>
+    <text x="332" y="40" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sD)">коллектор OpenTelemetry</text>
+    <path d="M320,192 H332" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M332,100 V284" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <line x1="332" y1="100" x2="342" y2="100" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="332" y1="192" x2="342" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="332" y1="284" x2="342" y2="284" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+  </g>
+
+  <g data-step="4" data-caption="Коллектор разделяет поток: метрики агрегируются без выборки, содержимое проходит политику журналирования, все события расхода передаются в книгу затрат.">
+    <rect x="350" y="76" width="196" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="364" y="96" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">агрегация</text>
+    <text x="364" y="113" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">гистограммы, без выборки</text>
+    <rect x="350" y="168" width="196" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="364" y="188" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">политика содержимого</text>
+    <text x="364" y="205" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">HMAC · редакция · 1 %</text>
+    <rect x="350" y="260" width="196" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="364" y="280" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">события расхода</text>
+    <text x="364" y="297" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">каждая попытка, без выборки</text>
+    <line x1="546" y1="100" x2="632" y2="100" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="546" y1="192" x2="632" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="546" y1="284" x2="632" y2="284" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <rect x="640" y="76" width="220" height="48" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="654" y="96" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">метрики и SLO</text>
+    <text x="654" y="113" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">хранятся 13 месяцев</text>
+    <rect x="640" y="168" width="220" height="48" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="654" y="188" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">трассы и журналы</text>
+    <text x="654" y="205" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">30 дней · содержимое 7</text>
+    <rect x="640" y="260" width="220" height="48" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="654" y="280" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">книга затрат</text>
+    <text x="654" y="297" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tenant · feature · user</text>
+  </g>
+
+  <g data-step="5" data-caption="Книга затрат сверяется со счётом поставщика по модели и дню; расхождение больше процента означает потерю событий или устаревший прайс.">
+    <line x1="750" y1="332" x2="750" y2="314" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar13b)"/>
+    <text x="762" y="326" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">сверка</text>
+    <rect x="640" y="332" width="220" height="44" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+    <text x="654" y="351" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">счёт поставщика</text>
+    <text x="654" y="367" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">выгрузка по дням и меткам</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Атрибут арендатора записывается один раз, из идентичности вызывающей стороны, и передаётся с контекстом трассы, поэтому к моменту экспорта он записан на каждом спане. Коллектор разделяет один поток на три назначения с разными правилами: метрики агрегируются, содержимое редактируется и сэмплируется, а события расхода полностью передаются в книгу затрат и сверяются со счётом поставщика.</figcaption>
+</figure>
+
+<p>Книга затрат хранит отдельные события расхода, из которых суммы вычисляются при свёртке. Событие выпускается при закрытии спана с расходом токенов и содержит идентификатор спана, день, арендатора, функцию, псевдоним пользователя, модель и четыре счётчика токенов: входные, прочитанные из кэша, записанные в кэш и выходные. Стоимость события вычисляется по прайсу, действовавшему в день события: таблица цен хранится данными с датой вступления в силу, как требует <a href="#s-3-3" data-secref="3.3">раздел 3.3</a>, и смена прайса меняет стоимость будущих событий, не переписывая прошлые. Токены из кэша оцениваются по собственной цене, а свёртка по арендатору, функции и пользователю сводится к суммированию событий. Набор измерений расширяется по потребности: конвейер TKL из <a href="#s-3-10" data-secref="3.10">раздела 3.10</a> добавляет к ним язык документа.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">cost_ledger.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+
+MILLION = Decimal(1_000_000)
+
+
+@dataclass(frozen=True)
+class Price:
+    """Доллары за миллион токенов с даты вступления в силу."""
+    since: date
+    input: Decimal
+    cache_read: Decimal
+    cache_write: Decimal
+    output: Decimal
+
+
+def usd(*values: str) -&gt; tuple[Decimal, ...]:
+    return tuple(Decimal(v) for v in values)
+
+
+PRICES: dict[str, tuple[Price, ...]] = {
+    "model-flash": (Price(date(2026, 2, 1), *usd("0.15", "0.0375", "0.1875", "0.60")),
+                    Price(date(2026, 8, 1), *usd("0.12", "0.03", "0.15", "0.50"))),
+    "model-pro": (Price(date(2026, 2, 1), *usd("1.25", "0.3125", "1.5625", "5.00")),),
+}
+
+
+class UsageEvent(BaseModel):
+    """Событие расхода: выпускается при закрытии спана с usage и никогда не сэмплируется."""
+    model_config = ConfigDict(frozen=True)
+
+    span_id: str
+    day: date
+    tenant: str = "unattributed"
+    feature: str
+    user: str
+    model: str
+    input_tokens: int                 # включает cache_read и cache_write, как в соглашениях OTel
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    output_tokens: int = 0
+
+    @model_validator(mode="after")
+    def cached_within_input(self) -&gt; UsageEvent:
+        if self.cache_read_tokens + self.cache_write_tokens &gt; self.input_tokens:
+            raise ValueError("токенов из кэша больше, чем входных")
+        return self
+
+
+def price_for(model: str, day: date) -&gt; Price:
+    versions = [p for p in PRICES[model] if p.since &lt;= day]
+    if not versions:
+        raise LookupError(f"нет цены {model} на {day}")
+    return versions[-1]
+
+
+def cost(e: UsageEvent) -&gt; Decimal:
+    p = price_for(e.model, e.day)
+    fresh = e.input_tokens - e.cache_read_tokens - e.cache_write_tokens
+    return (fresh * p.input + e.cache_read_tokens * p.cache_read
+            + e.cache_write_tokens * p.cache_write + e.output_tokens * p.output) / MILLION
+
+
+class Ledger:
+    def __init__(self) -&gt; None:
+        self.rows: dict[str, tuple[UsageEvent, Decimal]] = {}
+
+    def add(self, event: UsageEvent) -&gt; bool:
+        """Экспорт доставляет «хотя бы раз»: повтор события не удваивает счёт."""
+        if event.span_id in self.rows:
+            return False
+        self.rows[event.span_id] = (event, cost(event))
+        return True
+
+    def rollup(self, *keys: str) -&gt; dict[tuple[str, ...], Decimal]:
+        out: defaultdict[tuple[str, ...], Decimal] = defaultdict(Decimal)
+        for event, amount in self.rows.values():
+            out[tuple(str(getattr(event, k)) for k in keys)] += amount
+        return dict(out)
+
+    def total(self) -&gt; Decimal:
+        return sum((amount for _, amount in self.rows.values()), Decimal(0))
+
+    def gap(self, invoice: Decimal) -&gt; Decimal:
+        """Относительное расхождение со счётом поставщика за тот же период."""
+        return abs(self.total() - invoice) / invoice
+
+
+if __name__ == "__main__":
+    aug, jul = date(2026, 8, 14), date(2026, 7, 30)
+    hint = UsageEvent(span_id="a1", day=aug, tenant="consumer", feature="agent_assist", user="u-5f2a",
+                      model="model-flash", input_tokens=5_000, cache_read_tokens=4_200, output_tokens=60)
+    events = [
+        hint,
+        UsageEvent(span_id="a2", day=aug, tenant="consumer", feature="agent_assist", user="u-5f2a",
+                   model="model-flash", input_tokens=13_290, cache_read_tokens=4_200, output_tokens=180),
+        UsageEvent(span_id="t1", day=aug, tenant="netops", feature="incident_triage", user="u-duty",
+                   model="model-pro", input_tokens=41_000, cache_write_tokens=12_000, output_tokens=900),
+        UsageEvent(span_id="e1", day=jul, tenant="enterprise", feature="agent_assist", user="u-9c01",
+                   model="model-flash", input_tokens=5_000, cache_read_tokens=4_200, output_tokens=60),
+        UsageEvent(span_id="x1", day=aug, feature="agent_assist", user="u-0000",
+                   model="model-flash", input_tokens=1_000, output_tokens=100),
+    ]
+    ledger = Ledger()
+    assert all(ledger.add(e) for e in events) and not ledger.add(hint)   # повторный экспорт отброшен
+
+    assert cost(hint) == Decimal("0.000252")
+    assert cost(hint.model_copy(update={"cache_read_tokens": 0})) == Decimal("0.00063")   # без кэша в 2.5 раза дороже
+    assert cost(events[3]) == Decimal("0.0003135")          # июльский прайс: та же работа дороже
+    by_tenant = ledger.rollup("tenant")
+    assert by_tenant[("consumer",)] == Decimal("0.0015588") and by_tenant[("netops",)] == Decimal("0.0595")
+    assert sum(by_tenant.values()) == ledger.total()
+    assert ledger.rollup("tenant", "feature", "user")[("consumer", "agent_assist", "u-5f2a")] == Decimal("0.0015588")
+    assert by_tenant[("unattributed",)] / ledger.total() &lt; Decimal("0.01")
+    assert ledger.gap(invoice=Decimal("0.0619")) &lt; Decimal("0.01")
+    try:
+        UsageEvent(span_id="bad", day=aug, feature="f", user="u", model="model-flash",
+                   input_tokens=100, cache_read_tokens=200)
+        raise AssertionError("кэш больше входа принят")
+    except ValidationError:
+        pass
+    try:
+        price_for("model-pro", date(2026, 1, 31))
+        raise AssertionError("стоимость без записи прайса")
+    except LookupError:
+        pass
+    print(f"книга затрат: {len(ledger.rows)} событий, ${ledger.total()} всего, consumer ${by_tenant[('consumer',)]}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="MILLION = Decimal(1_000_000)">строка 10</span><p>Деньги считаются в <code>Decimal</code>. Сумма миллионов событий во float накапливает погрешность, и сверка со счётом расходится на величину, которой не соответствует ни одно событие.</p></div>
+  <div><span class="at" data-anchor="tenant: str = &quot;unattributed&quot;">строка 40</span><p>Событие без арендатора попадает в отдельную корзину. Если бы такие события отбрасывались, их расход исчез бы из сверки незаметно; корзина делает его видимым и измеримым.</p></div>
+  <div><span class="at" data-anchor="versions = [p for p in PRICES[model] if p.since &lt;= day]">строка 57</span><p>Цена выбирается по дню события. Июльская вызов планирования в подсказке корпоративного блока стоит 0.0003135 доллара и после августовского снижения цен, потому что по этой цене её посчитал поставщик.</p></div>
+  <div><span class="at" data-anchor="fresh = e.input_tokens - e.cache_read_tokens - e.cache_write_tokens">строка 65</span><p>Свежие входные токены получаются вычитанием, поскольку счётчик входных токенов по соглашениям OpenTelemetry уже включает кэшированные. Сложение вместо вычитания учло бы кэшированные токены дважды.</p></div>
+  <div><span class="at" data-anchor="if event.span_id in self.rows:">строка 76</span><p>Идентификатор спана служит ключом идемпотентности события. Коллектор повторяет экспорт после сетевого сбоя, и без этой проверки каждый сбой удваивал бы расход события в счёте арендатора.</p></div>
+</div>
+</figure>
+
+<p>Последний шаг атрибуции состоит в сверке со счётом поставщика. Раз в сутки книга затрат суммируется по модели и дню и сравнивается с выгрузкой биллинга; расхождение больше процента означает, что часть вызовов идёт мимо трассировщика, что события теряются при экспорте или что прайс в таблице устарел. Коллектор доставляет события по принципу «хотя бы один раз», поэтому книга отбрасывает повторы по идентификатору спана. Корзина без атрибуции сверяется так же, как остальные: её рост указывает на сервис, который перестал передавать контекст.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Хранить в спане только токены и считать стоимость в момент построения отчёта по текущему прайсу. Отчёт за июль, построенный в августе после снижения цен, покажет меньшую сумму, чем выставил поставщик, и сверка разойдётся на разницу между июльскими и августовскими ценами. Цена выбирается по дате события, а таблица цен никогда не редактируется задним числом.</div>
+
+<h3 id="s-13-6"><span class="num">13.6</span>Безопасное логирование</h3>
+
+<p>Содержимое запросов агентной платформы почти целиком состоит из персональных данных: реплики абонентов с номерами телефонов, начисления биллинга, заметки операторов. Соглашения OpenTelemetry для генеративного AI предписывают инструментам по умолчанию не записывать ни инструкции, ни входные сообщения, ни ответы модели, а для production предлагают хранить содержимое отдельно, со ссылкой из спана. Orion оформляет эту рекомендацию как политику из пяти классов, в которой класс атрибута определяется его ключом.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Класс</th><th>Атрибуты</th><th>Обработка</th></tr></thead>
+<tbody>
+<tr><td>Сохраняется всегда</td><td>стоимость, длительность, TTFT, токены, модель, статус, арендатор, функция</td><td>без изменений: по этим атрибутам вычисляются SLO и chargeback</td></tr>
+<tr><td>Псевдонимизируется</td><td>идентификатор пользователя, номер абонента</td><td>HMAC с ключом из хранилища секретов после приведения к канонической записи</td></tr>
+<tr><td>Редактируется и сэмплируется</td><td>тексты сообщений, аргументы инструментов</td><td>телефоны, почта и счета заменяются метками; сохраняется 1 % трасс на 7 дней</td></tr>
+<tr><td>Не сохраняется никогда</td><td>токены доступа, записи CDR, сведения законного перехвата</td><td>отбрасываются, и политика запрещает включать их в другие классы</td></tr>
+<tr><td>Не перечисленные</td><td>всё, что добавлено без изменения политики</td><td>отбрасываются: политика является списком разрешённых ключей</td></tr>
+</tbody></table></div>
+
+<p>Псевдоним вычисляется хеш-функцией с секретным ключом. Простой хеш для этого не подходит: у номеров абонентов одной страны порядка десяти миллиардов возможных значений, и таблица SHA-256 для всех номеров строится на одной видеокарте за минуты, после чего «обезличенный» журнал читается как открытый. HMAC с секретным ключом сохраняет свойство хеша, необходимое для соединения журналов, то есть одинаковый псевдоним одного номера во всех журналах, и делает псевдоним необратимым для того, у кого нет ключа. Уничтожение ключа по истечении срока хранения обезличивает архив целиком, не переписывая его.</p>
+
+<p>Решение о выборке содержимого принимается для трассы целиком и вычисляется из идентификатора трассы, поэтому все процессы, через которые прошёл запрос, приходят к одному ответу без координации. При решении по отдельным спанам в выборку попадал бы вызов модели без ответа инструмента, и сохранённое содержимое было бы непригодно для разбора. Сроки хранения различаются по назначению данных: отредактированное содержимое хранится семь дней, трассы тридцать, метрики тринадцать месяцев, а книга затрат столько, сколько требует финансовая отчётность.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">redaction.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import hmac
+import re
+from dataclasses import dataclass
+
+type Attr = str | int | float | bool
+
+KEEP = frozenset({"orion.tenant", "orion.feature", "gen_ai.operation.name", "gen_ai.request.model",
+                  "gen_ai.usage.input_tokens", "gen_ai.usage.cache_read.input_tokens",
+                  "gen_ai.usage.output_tokens", "orion.cost_usd", "orion.duration_s", "orion.ttft_s",
+                  "error.type"})
+PSEUDONYMIZE = frozenset({"orion.user", "orion.msisdn"})
+REDACT = frozenset({"gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.tool.call.arguments"})
+NEVER = frozenset({"http.request.header.authorization", "orion.cdr", "orion.intercept_ref"})
+
+PATTERNS = (
+    (re.compile(r"\+?\d[\d\s()-]{8,}\d"), "&lt;phone&gt;"),
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "&lt;email&gt;"),
+    (re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"), "&lt;iban&gt;"),
+)
+
+
+def redact(text: str) -&gt; str:
+    for pattern, placeholder in PATTERNS:
+        text = pattern.sub(placeholder, text)
+    return text
+
+
+@dataclass(frozen=True)
+class Policy:
+    key: bytes                      # из хранилища секретов; уничтожение ключа обезличивает архив
+    content_rate: float = 0.01      # доля трасс, чьё отредактированное содержимое сохраняется
+
+    def pseudonym(self, value: str) -&gt; str:
+        canonical = re.sub(r"[\s()-]", "", value)
+        return hmac.new(self.key, canonical.encode(), hashlib.blake2b).hexdigest()[:16]
+
+    def keeps_content(self, trace_id: str) -&gt; bool:
+        """Решение принимается по трассе целиком, одинаково во всех процессах."""
+        digest = hashlib.blake2b(trace_id.encode(), digest_size=8).digest()
+        return int.from_bytes(digest) / 2**64 &lt; self.content_rate
+
+    def apply(self, trace_id: str, attrs: dict[str, Attr]) -&gt; tuple[dict[str, Attr], dict[str, str]]:
+        record: dict[str, Attr] = {}
+        content: dict[str, str] = {}
+        for k, v in attrs.items():
+            if k in KEEP:
+                record[k] = v
+            elif k in PSEUDONYMIZE:
+                record[k] = self.pseudonym(str(v))
+            elif k in REDACT and self.keeps_content(trace_id):
+                content[k] = redact(str(v))
+            # остальное отбрасывается: NEVER, неизвестные ключи и содержимое вне выборки
+        return record, content
+
+
+if __name__ == "__main__":
+    assert not NEVER &amp; (KEEP | PSEUDONYMIZE | REDACT)
+    policy = Policy(key=b"orion-logs-2026-09")
+    span: dict[str, Attr] = {
+        "orion.tenant": "consumer", "orion.feature": "agent_assist", "orion.cost_usd": 0.001307,
+        "orion.duration_s": 2.3, "gen_ai.usage.output_tokens": 180,
+        "orion.user": "u-5f2a", "orion.msisdn": "+44 7700 900461",
+        "gen_ai.input.messages": "Мой номер +44 7700 900461, почта ivan@mail.example. Почему списали 300 рублей?",
+        "http.request.header.authorization": "Bearer eyJhbGciOiJSUzI1NiJ9", "debug.prompt_dump": "…",
+    }
+    ids = [f"trace-{i:05d}" for i in range(20_000)]
+    sampled = next(t for t in ids if policy.keeps_content(t))
+    unsampled = next(t for t in ids if not policy.keeps_content(t))
+
+    record, content = policy.apply(sampled, span)
+    assert record["orion.cost_usd"] == 0.001307 and record["orion.duration_s"] == 2.3   # цена и время целы
+    assert record["orion.msisdn"] == policy.pseudonym("+447700900461")                    # соединяется по ключу
+    assert record["orion.msisdn"] != hashlib.sha256(b"+447700900461").hexdigest()[:16]   # и не подбирается
+    assert "Bearer" not in str(record) and "debug.prompt_dump" not in record
+    text = content["gen_ai.input.messages"]
+    assert "&lt;phone&gt;" in text and "&lt;email&gt;" in text and "300 рублей" in text
+    assert policy.apply(unsampled, span)[1] == {} and "orion.cost_usd" in policy.apply(unsampled, span)[0]
+    share = sum(map(policy.keeps_content, ids)) / len(ids)
+    assert 0.008 &lt; share &lt; 0.012
+    print(f"в журнал: {len(record)} атрибутов из {len(span)}, содержимое: {share:.1%} трасс, отредактировано")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="canonical = re.sub(">строка 37</span><p>Номер приводится к канонической записи до вычисления псевдонима. Иначе один абонент получает разные псевдонимы в журналах шлюза и BSS, и соединить эти журналы по псевдониму невозможно.</p></div>
+  <div><span class="at" data-anchor="hmac.new(self.key, canonical.encode(), hashlib.blake2b)">строка 38</span><p>Псевдоним вычисляется с секретным ключом. Перебор всех номеров страны без ключа не даёт соответствия, а ротация ключа по сроку хранения обрывает связь старых журналов с новыми.</p></div>
+  <div><span class="at" data-anchor="return int.from_bytes(digest) / 2**64 &lt; self.content_rate">строка 43</span><p>Решение о выборке выводится из идентификатора трассы, поэтому шлюз, агент и MCP-сервер независимо приходят к одному ответу. Содержимое трассы сохраняется целиком или не сохраняется совсем.</p></div>
+  <div><span class="at" data-anchor="# остальное отбрасывается">строка 55</span><p>Политика перечисляет разрешённое. Атрибут, добавленный разработчиком для отладки, по умолчанию не попадёт в журнал, и его сохранение требует изменения политики, которое проходит ревью.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Считать SHA-256 номера телефона обезличиванием. Пространство номеров мало, и хеш без секретного ключа обращается перебором за минуты. Для регулятора такой журнал содержит персональные данные со всеми следствиями для сроков хранения, прав доступа и уведомлений об утечке.</div>
+
+<div class="note" data-level="2">Редактирование по регулярным выражениям распознаёт только форматы записи: адрес, продиктованный словами, или номер договора в нестандартной записи фильтр не распознаёт. Поэтому отредактированное содержимое по-прежнему считается персональными данными, хранится отдельно от трасс с отдельными правами, а его выборка ограничена процентом трасс. Сведения, связанные с законным перехватом, не попадают даже в эту выборку, поскольку отбрасываются по ключу раньше редактирования.</div>
+
+<h3 id="s-13-7"><span class="num">13.7</span>SLO и алерты</h3>
+
+<p>Целевой уровень обслуживания агентной системы формулируется в тех же терминах, что и для веб-сервиса, но индикаторы у него другие. Orion задаёт для подсказок три индикатора. Задержка: 95 % подсказок начинают появляться у оператора не позже чем через 2.5 секунды, причём время считается от запроса до первого токена итогового ответа, поскольку промежуточные вызовы модели оператору не видны. Успешность: 99 % запусков заканчиваются ответом, прошедшим проверку схемы; код HTTP 200 успехом не считается, поскольку ответ с таким кодом может схеме не соответствовать. Стоимость успешной задачи: сумма стоимости всех запусков функции, делённая на число успешных, не превышает порога бизнес-единицы, и рост этой величины при неизменных ценах поставщика означает, что агент чаще зацикливается или чаще завершает запуск без результата.</p>
+
+<dl class="def">
+<dt>Бюджет ошибок <span class="en">(error budget)</span></dt>
+<dd>Доля событий, которой SLO разрешает быть плохими за окно соответствия: при цели 99 % за 30 дней бюджет составляет 1 % событий этого окна. Бюджет расходуют сбои, выкладки и эксперименты, и его остаток служит основанием для решения, выкатывать ли следующую версию.</dd>
+<dt>Скорость расходования бюджета <span class="en">(burn rate)</span></dt>
+<dd>Отношение наблюдаемой доли плохих событий в окне к доле, разрешённой SLO. Скорость 1 означает, что бюджет кончится ровно к концу окна соответствия; скорость 14.4, выдержанная в течение часа, расходует 2 % месячного бюджета.<a class="src" href="https://sre.google/workbook/alerting-on-slos/" target="_blank" rel="noreferrer">Google SRE Workbook, Alerting on SLOs</a></dd>
+</dl>
+
+<p>Алерт по порогу вида «p95 выше 2.5 секунды за пять минут» ошибается в обе стороны. Ночью, когда подсказок единицы в минуту, одна медленная подсказка поднимает дежурного. Днём деградация на полпроцента не пересекает порога неделями и расходует бюджет без срабатывания алерта. Алерт по скорости расходования бюджета отвечает на вопрос, от которого зависит действие дежурного: кончится ли бюджет раньше конца окна и с какой скоростью он расходуется.</p>
+
+<p>Каждое правило проверяет два окна. Длинное окно показывает, что расход значим для бюджета, короткое подтверждает, что расход продолжается прямо сейчас, и снимает тревогу вскоре после исправления. Orion использует три правила по методике Google SRE: вызов дежурного при скорости 14.4 в окнах один час и пять минут, вызов при скорости 6 в окнах шесть часов и тридцать минут, тикет при скорости 1 в окнах трое суток и шесть часов.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">slo_alerts.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+MINUTE = 60
+HOUR = 60 * MINUTE
+DAY = 24 * HOUR
+
+
+@dataclass
+class ManualClock:
+    t: float = 0.0
+
+    def now(self) -&gt; float:
+        return self.t
+
+
+@dataclass(frozen=True)
+class Rule:
+    long_s: int
+    short_s: int
+    burn: float
+    severity: str
+
+
+RULES = (
+    Rule(1 * HOUR, 5 * MINUTE, 14.4, "page"),       # 2 % месячного бюджета за час
+    Rule(6 * HOUR, 30 * MINUTE, 6.0, "page"),       # 5 % за шесть часов
+    Rule(3 * DAY, 6 * HOUR, 1.0, "ticket"),         # 10 % за трое суток
+)
+
+
+@dataclass
+class BurnRateAlerts:
+    clock: ManualClock
+    objective: float                                 # доля успешных запусков за 30 дней
+    rules: tuple[Rule, ...] = RULES
+    minutes: dict[int, tuple[int, int]] = field(default_factory=dict)   # минута: (всего, неудачных)
+
+    def record(self, total: int, bad: int) -&gt; None:
+        m = int(self.clock.now() // MINUTE)
+        seen, failed = self.minutes.get(m, (0, 0))
+        self.minutes[m] = (seen + total, failed + bad)
+
+    def error_ratio(self, window_s: int) -&gt; float:
+        now = int(self.clock.now() // MINUTE)
+        cells = [self.minutes.get(m, (0, 0)) for m in range(now - window_s // MINUTE + 1, now + 1)]
+        total = sum(t for t, _ in cells)
+        return sum(b for _, b in cells) / total if total else 0.0
+
+    def burn_rate(self, window_s: int) -&gt; float:
+        """1.0 означает, что бюджет кончится ровно к концу 30-дневного окна."""
+        return self.error_ratio(window_s) / (1 - self.objective)
+
+    def firing(self) -&gt; list[str]:
+        return [r.severity for r in self.rules
+                if self.burn_rate(r.long_s) &gt;= r.burn and self.burn_rate(r.short_s) &gt;= r.burn]
+
+
+def run(alerts: BurnRateAlerts, minutes: int, per_minute: int, bad_share: float) -&gt; None:
+    for _ in range(minutes):
+        alerts.clock.t += MINUTE
+        alerts.record(per_minute, round(per_minute * bad_share))
+
+
+if __name__ == "__main__":
+    day = BurnRateAlerts(ManualClock(), objective=0.99)
+    run(day, 6 * 60, per_minute=500, bad_share=0.002)
+    assert day.firing() == []                                  # фон: 0.2 % отказов, бюджет почти цел
+
+    detected = 0
+    while "page" not in day.firing():                          # MCP-сервер биллинга недоступен: все запуски завершаются ошибкой
+        run(day, 1, per_minute=500, bad_share=1.0)
+        detected += 1
+    assert detected == 9 and day.firing() == ["page", "ticket"]
+    run(day, 3, per_minute=500, bad_share=1.0)
+    run(day, 6, per_minute=500, bad_share=0.002)               # сбой устранён
+    assert day.firing() == ["ticket"] and day.burn_rate(HOUR) &gt; 14.4   # вызов снят, тикет остался
+
+    slow = BurnRateAlerts(ManualClock(), objective=0.99)
+    run(slow, 3 * 24 * 60, per_minute=300, bad_share=0.015)   # тихая деградация после смены промпта
+    assert slow.firing() == ["ticket"]
+
+    night = BurnRateAlerts(ManualClock(), objective=0.99)
+    run(night, 60, per_minute=2, bad_share=0.0)
+    night.record(1, 1)                                         # одна неудача из одиннадцати за 5 минут
+    assert night.error_ratio(5 * MINUTE) &gt; 0.05                # порог «5 % за 5 минут» разбудил бы дежурного
+    assert night.firing() == []                                # правило по бюджету не срабатывает
+    print(f"сбой: вызов на {detected}-й минуте; деградация: тикет; ночной шум: тишина")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="minutes: dict[int, tuple[int, int]]">строка 38</span><p>События хранятся поминутными счётчиками. Трое суток занимают 4320 ячеек при любом трафике, и окно любой длины считается суммой ячеек.</p></div>
+  <div><span class="at" data-anchor="return self.error_ratio(window_s) / (1 - self.objective)">строка 53</span><p>Скорость нормирована на бюджет, поэтому одно правило подходит SLO с разной целью: скорость 14.4 означает 2 % месячного бюджета за час и при цели 99 %, и при цели 99.9 %.</p></div>
+  <div><span class="at" data-anchor="if self.burn_rate(r.long_s) &gt;= r.burn and self.burn_rate(r.short_s) &gt;= r.burn]">строка 57</span><p>Порог обязаны превысить оба окна. При полном отказе часовое окно впервые превышает 14.4 на девятой минуте, а через пять минут после исправления короткое окно снимает вызов, хотя часовое ещё хранит след сбоя.</p></div>
+  <div><span class="at" data-anchor="assert slow.firing() ==">строка 82</span><p>Деградация до 1.3 % отказов не вызывает дежурного, но за трое суток расходует 13 % бюджета и открывает тикет. Такие деградации возникают после правки промпта или смены версии модели и разбираются в <a href="#ch-15" data-secref="15">главе 15</a>.</p></div>
+</div>
+</figure>
+
+<p>Алерт сообщает, что бюджет расходуется, но не указывает причину; причину находят по трассам. Гистограмма TTFT хранит рядом с корзинами образцы, то есть идентификаторы трасс, попавших в каждую корзину, и дежурный открывает трассу из хвоста распределения. Диаграмма показывает одну такую трассу, открытую по алерту массового рынка.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 356" role="img" aria-label="Временная диаграмма одной медленной подсказки на шкале от нуля до восьми секунд: поиск полторы секунды ждёт в очереди, первый вызов модели занимает 1.1 секунды, первая попытка инструмента падает по таймауту через две секунды, после отсрочки повтор проходит за 0.3 секунды, и второй вызов модели выдаёт первый токен на отметке 6.4 секунды при цели 2.5 секунды" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar13c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <line x1="296" y1="34" x2="296" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="376" y1="34" x2="376" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="456" y1="34" x2="456" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="536" y1="34" x2="536" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="616" y1="34" x2="616" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="696" y1="34" x2="696" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="776" y1="34" x2="776" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <text x="24" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">СПАН</text>
+  <line x1="416" y1="32" x2="416" y2="282" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="422" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--sD)">цель: первый токен ≤ 2.5 с</text>
+  <line x1="728" y1="32" x2="728" y2="282" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <text x="734" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">первый токен 6.4 с</text>
+
+  <text x="24" y="56" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">POST /assist</text>
+  <text x="24" y="92" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">invoke_agent assist</text>
+  <text x="24" y="128" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">retrieval kb-consumer</text>
+  <text x="24" y="164" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">chat model-flash · 1</text>
+  <text x="24" y="200" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">execute_tool get_charges</text>
+  <text x="24" y="236" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">execute_tool · повтор</text>
+  <text x="24" y="272" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">chat model-flash · 2</text>
+
+  <rect x="216" y="44" width="624" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="226" y="56" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ответ готов на 7.8 с</text>
+  <rect x="224" y="80" width="616" height="16" rx="3" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <rect x="224" y="116" width="120" height="16" rx="3" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="284" y="128" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">очередь 1.5 с</text>
+  <rect x="344" y="116" width="24" height="16" rx="3" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <rect x="368" y="152" width="88" height="16" rx="3" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="436" y="164" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">1.1 с</text>
+  <rect x="456" y="188" width="160" height="16" rx="3" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="536" y="200" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">таймаут 2.0 с</text>
+  <path d="M616,204 V232 H624" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar13c)"/>
+  <text x="606" y="236" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">отсрочка 0.2 с</text>
+  <rect x="632" y="224" width="24" height="16" rx="3" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="662" y="236" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">0.3 с</text>
+  <rect x="656" y="260" width="184" height="16" rx="3" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <rect x="726" y="260" width="4" height="16" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <text x="691" y="272" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">0.9 с</text>
+  <text x="785" y="272" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">поток 1.4 с</text>
+
+  <line x1="216" y1="292" x2="866" y2="292" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar13c)"/>
+  <line x1="216" y1="288" x2="216" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="296" y1="288" x2="296" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="376" y1="288" x2="376" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="456" y1="288" x2="456" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="536" y1="288" x2="536" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="616" y1="288" x2="616" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="696" y1="288" x2="696" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="776" y1="288" x2="776" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="856" y1="288" x2="856" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <text x="216" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0</text>
+  <text x="296" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1</text>
+  <text x="376" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2</text>
+  <text x="456" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3</text>
+  <text x="536" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">4</text>
+  <text x="616" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">5</text>
+  <text x="696" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">6</text>
+  <text x="776" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">7</text>
+  <text x="856" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">8 с</text>
+
+  <text x="24" y="340" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Типичный первый токен: 2.4 с. Сверх него: очередь поиска +1.5 · таймаут и отсрочка +2.2 · промах кэша +0.3 с.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Хвост распределения задержки определяется ожиданиями и повторами. Сверх типичных 2.4 секунды до первого токена эта подсказка потратила ещё 4.0: полторы секунды в очереди поиска, 2.2 на таймаут инструмента с отсрочкой и 0.3 на промах кэша во втором вызове модели. Без отдельного спана на каждую операцию вся задержка этой подсказки была бы приписана модели.</figcaption>
+</figure>
+
+<p>Разбор трассы указывает на два исправления, и ни одно из них не затрагивает модель. Таймаут инструмента биллинга в две секунды составляет 80 % цели в 2.5 секунды, и его сокращают до 600 миллисекунд с переходом к ответу без начислений, если инструмент не ответил за это время. Очередь поиска возникает из-за пула соединений, общего с триажем инцидентов, и поиск подсказок получает собственный пул. Проверкой исправлений служит тот же SLO: скорость расходования бюджета задержки возвращается ниже единицы.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Ставить алерт на месячную сумму расходов. Он срабатывает, когда деньги уже потрачены, и не указывает на причину. Стоимость успешной задачи наблюдается так же, как задержка: гистограммой по функции и арендатору и правилом на скорость расходования бюджета. При таком наблюдении петля агента, удвоившая число шагов, обнаруживается в течение часа.</div>
+
+<h3 id="s-13-8" data-level="2"><span class="num">13.8</span>На Google Cloud: Cloud Trace и трассировка Agent Runtime</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Cloud Trace</span>
+  <span class="tag">Cloud Monitoring</span>
+  <span class="tag">Agent Runtime</span>
+  <span class="tag">BigQuery</span>
+</div>
+
+<p data-level="2">Модель трассы главы переносится на Google Cloud без преобразования, поскольку Cloud Trace принимает данные OpenTelemetry: трассировщик отправляет спаны по протоколу OTLP в Telemetry API, и хранятся они в формате, согласованном с OTLP. По документации на сентябрь 2026 года спаны хранятся в бакете <code>_Trace</code> тридцать дней; это совпадает со сроком хранения трасс в политике Orion и не совпадает со сроком книги затрат, которую поэтому нельзя хранить в хранилище трасс.<a class="src" href="https://docs.cloud.google.com/trace/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, обзор Cloud Trace</a> Записи Cloud Logging несут поля <code>trace</code> и <code>spanId</code>, по которым строка журнала связывается со спаном.<a class="src" href="https://docs.cloud.google.com/logging/docs/reference/v2/rest/v2/LogEntry" target="_blank" rel="noreferrer">cloud.google.com, LogEntry</a> Cloud Monitoring поддерживает SLO и алерты на скорость расходования бюджета: документация советует начинать с правила быстрого расхода с порогом в десять раз выше базового и окном в один-два часа и правила медленного расхода с двукратным порогом и окном в сутки, а окно таких правил не может превышать 24 часа.<a class="src" href="https://docs.cloud.google.com/stackdriver/docs/solutions/slo-monitoring/alerting-on-budget-burn-rate" target="_blank" rel="noreferrer">cloud.google.com, алерты по burn rate</a> Трёхсуточное правило Orion поэтому вычисляется вне Cloud Monitoring, по тем же поминутным счётчикам запусков.</p>
+
+<p data-level="2">ADK создаёт спаны OpenTelemetry для вызовов агента, модели и инструментов, с именами <code>invoke_agent</code>, <code>call_llm</code>, <code>generate_content</code> и <code>execute_tool</code>, и экспортирует их в Cloud Trace.<a class="src" href="https://adk.dev/integrations/cloud-trace/" target="_blank" rel="noreferrer">adk.dev, Cloud Trace</a> В Gemini Enterprise Agent Platform (ранее Vertex AI) документация 2026 года называет управляемую среду исполнения агентов Agent Runtime, а переменные окружения и команда развёртывания сохраняют прежнее имя Agent Engine. Для агента ADK телеметрия включается при развёртывании переменной <code>GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY</code>, актуальные семантические соглашения для генеративного AI переменной <code>OTEL_SEMCONV_STABILITY_OPT_IN</code>, а запись промптов, ответов и идентификаторов пользователей отдельной переменной <code>OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT</code>; без неё трассы не содержат ни промптов, ни ответов.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/tracing" target="_blank" rel="noreferrer">cloud.google.com, трассировка агентов</a> Для Orion решение принимается один раз: запись содержимого средой исполнения в production выключена, а выборка из <a href="#s-13-6" data-secref="13.6">раздела 13.6</a> делается собственным процессором коллектора. Управляемая среда не записывает атрибуты арендатора и функции, и платформа добавляет их своим процессором спанов на входе в агента.</p>
+
+<p data-level="2">Счёт поставщика доступен как выгрузка Cloud Billing в BigQuery, и стандартная выгрузка содержит метки ресурса, метки проекта и системные метки.<a class="src" href="https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-tables/standard-usage" target="_blank" rel="noreferrer">cloud.google.com, выгрузка биллинга</a> К вызовам <code>generateContent</code> и <code>streamGenerateContent</code> прикрепляются собственные метки, которые передаются в биллинг и позволяют группировать расходы в отчётах и в выгрузке. Ограничения меток определяют их место в архитектуре: до 64 меток на вызов, ключи и значения до 63 символов в нижнем регистре, не больше тысячи уникальных значений одного ключа за всё время жизни платёжного аккаунта, после чего ключ может быть отброшен без уведомления, и никаких персональных данных. Метки передаются в биллинг только при оплате по факту потребления, а запросы с provisioned throughput из <a href="#ch-14" data-secref="14">главы 14</a> их игнорируют без уведомления.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/add-labels-to-api-calls" target="_blank" rel="noreferrer">cloud.google.com, метки вызовов</a> Поэтому метки содержат только арендатора и функцию и служат для сверки книги затрат с выгрузкой по дню, а пользователь и шаг агента записываются только в книгу затрат.</p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими инструментами</b>Langfuse и Phoenix принимают те же данные OpenTelemetry, разворачиваются внутри периметра заказчика и добавляют к трассам то, чего нет в Cloud Trace: просмотр промптов и ответов, разметку и оценки на спанах.<a class="src" href="https://arize.com/docs/phoenix" target="_blank" rel="noreferrer">arize.com, Phoenix</a> При их использовании меняются два решения. Инструмент, который хранит промпты и ответы, становится хранилищем персональных данных из раздела 13.6 со всеми его сроками и правами, и решение о его размещении команда платформы принимает вместе с офицером по защите данных. Langfuse вычисляет стоимость по собственным описаниям моделей с ценами, отдельно учитывая чтение из кэша, поэтому для chargeback источником истины остаётся книга затрат, сверенная со счётом, а стоимость в инструменте служит отладке.<a class="src" href="https://langfuse.com/docs/observability/features/token-and-cost-tracking" target="_blank" rel="noreferrer">langfuse.com, учёт токенов и стоимости</a></div>
+
+<h3 id="s-13-9" data-level="3"><span class="num">13.9</span>Вглубь: амортизация кэша, спаны через границы, выборка и стоимость</h3>
+
+<h4 data-level="3">Кто платит за запись в кэш</h4>
+
+<p data-level="3">Префиксы всех пяти бизнес-единиц Orion начинаются с общей части: политики безопасности, формата ответа и определений платформенных инструментов, всего около двух тысяч токенов. Запись кэша действительна только для той модели, которая её создала, поэтому общая часть кэшируется и амортизируется отдельно для каждой модели. Запись этого префикса в кэш оплачивает запрос, пришедший первым после истечения срока жизни записи, а дешёвые чтения достаются всем следующим. Если стоимость записи отнести на автора, счёт бизнес-единицы начинает зависеть от случайности: служба эксплуатации сети, чей ночной запрос первым обращается к той же модели после паузы, платит за кэш, которым затем пользуется массовый рынок.</p>
+
+<p data-level="3">Правило амортизации распределяет стоимость записи между читателями. Событие записи несёт хеш префикса, события чтения несут тот же хеш, и при закрытии окна жизни записи её стоимость распределяется между арендаторами пропорционально прочитанным токенам этого префикса. Стоимость записи, которую никто не прочитал, остаётся на авторе, и такие записи показывают, что срок жизни кэша не соответствует темпу запросов. Остальная часть префикса бизнес-единицы из <a href="#s-4-5" data-secref="4.5">раздела 4.5</a> в амортизации не нуждается, поскольку автор и читатели у неё совпадают.</p>
+
+<p data-level="3">Пример показывает масштаб. Запись префикса в 2 000 токенов по цене записи 0.15 доллара за миллион стоит 0.0003 доллара; за пять минут жизни записи массовый рынок читает его 400 раз, корпоративный блок 80 раз, служба эксплуатации 20 раз. Отнесение на автора делает долю службы эксплуатации в стоимости записи в двадцать пять раз больше её доли чтений, а амортизация отдаёт ей 4 %. В одном окне суммы составляют доли цента, но окон в сутки сотни, и каждая строка счёта, которую нельзя свести к событиям расхода, становится предметом спора между бизнес-единицами.</p>
+
+<h4 data-level="3">Спаны через границы процессов и организаций</h4>
+
+<p data-level="3">Внутри одной организации распространение контекста сводится к дисциплине: каждый процесс читает заголовки и передаёт их дальше. Через организационную границу, например к агенту партнёра по A2A из <a href="#s-8-7" data-secref="8.7">раздела 8.7</a>, соблюдение этого правила одной стороной не гарантирует продолжения трассы. Партнёр может принять <code>traceparent</code> и продолжить трассу у себя, но его спаны остаются в его хранилище, и Orion видит только собственный клиентский спан с длительностью и идентификатором задачи.</p>
+
+<p data-level="3">Внутренние шаги партнёра, его повторы и расход токенов Orion не видит: стоимость приходит счётом по договору. Сохраняются длительность вызова, статус, идентификатор удалённой задачи в атрибутах клиентского спана и цена задачи по договору, которую книга затрат записывает событием с моделью «партнёр». Baggage через границу не передаётся: имена бизнес-единиц и псевдонимы пользователей являются внутренними сведениями Orion, и шлюз исходящих вызовов удаляет baggage, оставляя только <code>traceparent</code>, чтобы при разборе общего инцидента стороны могли сослаться на одну трассу.</p>
+
+<h4 data-level="3">Выборка трасс искажает учёт стоимости</h4>
+
+<p data-level="3">Трассы дороги в хранении, и при полумиллионе запросов в сутки выборка неизбежна. Выборка на входе с долей 5 % сохраняет каждую двадцатую трассу, и книга затрат, построенная по сохранённым спанам, содержит 5 % расходов. Выборка по хвосту, сохраняющая ошибки и медленные запросы, смещена в сторону дорогих запусков, поэтому сумму по ней не восстанавливает никакой множитель.</p>
+
+<p data-level="3">Отсюда правило: выборке подлежат содержимое и журналы, а события расхода записываются все. Событие выпускается в той же точке, где закрывается спан, и идёт в книгу затрат отдельным потоком до решения о выборке. Есть и второе следствие: по соглашениям OpenTelemetry спан вызова модели покрывает логическую операцию со всеми автоматическими повторами клиента, а поставщик выставляет счёт за каждую попытку. Поэтому событие расхода выпускается на каждую попытку: иначе повторы клиента, не представленные в дереве отдельными спанами, не попадут и в книгу, и сверка разойдётся на их долю.</p>
+
+<h4 data-level="3">Токены в секунду между потоком и батчем</h4>
+
+<p data-level="3">Скорость в выходных токенах в секунду осмысленна только для потокового вызова, у которого есть момент первого токена. Для вызова без потока деление выходных токенов на полную длительность смешивает генерацию с обработкой входа и очередью, и модель с длинным входом получает заниженную скорость. В пакетном режиме величина неприменима: пакет возвращается через часы по сниженной цене, и его характеризуют пропускная способность в токенах за час и цена токена.</p>
+
+<p data-level="3">Два источника искажений остаются и внутри потоковых вызовов. Модели с рассуждением порождают токены рассуждения, которые засчитываются в выходные и оплачиваются, но не показываются в потоке, и видимая скорость падает при неизменной скорости генерации. Скорость, измеренная клиентом, включает сеть и буферизацию прокси, скорость, измеренная сервером, их не включает. Поэтому режим вызова, потоковый, непотоковый или пакетный, является обязательным измерением метрики, а скорости разных режимов между собой не сравниваются.</p>
+
+<h4 data-level="3">Хранилище трасс как хранилище персональных данных</h4>
+
+<p data-level="3">Даже при выключенной записи содержимого трасса содержит сведения о людях. Аргументы инструментов включают номера счетов, текст поискового запроса повторяет вопрос абонента, сообщение об ошибке цитирует входные данные, а идентификатор разговора связывает всё это с сессией. Соглашения OpenTelemetry помечают аргументы инструментов и текст поискового запроса как атрибуты, включаемые явно, но библиотеки инструментирования и разработчики нередко включают их ради удобства отладки.</p>
+
+<p data-level="3">Следствие для архитектуры: хранилище трасс проектируется как хранилище персональных данных с первого дня. Оно размещается в регионе, который допускает требования резидентности из досье, права на чтение трасс выдаются так же, как права на чтение CRM, срок хранения ограничен тридцатью днями, а псевдонимы строятся ключом, который ротируется. Выборочное сохранение полного текста, о котором говорит <a href="#s-4-8" data-secref="4.8">раздел 4.8</a>, ведётся отдельно от трасс: оно проходит политику раздела 13.6, хранится семь дней в хранилище с отдельными правами, и спан ссылается на него идентификатором. Запрос субъекта данных на удаление исполняется удалением записей по псевдониму в этом хранилище и истечением срока хранения в хранилище трасс.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему стоимость по бизнес-единицам нельзя восстановить в конце месяца из счёта поставщика и журналов, если атрибут арендатора не записан на спаны?</summary>
+<div class="ans"><p>Счёт поставщика содержит суммы по модели и дню, а журналы содержат строки без связи с запросом и арендатором. Связь между расходом токенов и потребителем существует только в момент вызова, когда известен контекст запроса; если тогда она не записана на спан и в событие расхода, выводить её потом не из чего.</p></div>
+</details>
+<details>
+<summary>Почему выборке подлежат содержимое и журналы, но никогда не события расхода?</summary>
+<div class="ans"><p>Книга затрат, построенная по выборке, содержит только долю расходов, а выборка по хвосту ещё и смещена к дорогим запускам, так что сумму не восстанавливает никакой множитель. Для отладки достаточно представительной выборки, для счёта нужна каждая единица расхода, включая каждую попытку повтора.</p></div>
+</details>
+<details>
+<summary>Зачем правилу по скорости расходования бюджета два окна?</summary>
+<div class="ans"><p>Длинное окно доказывает, что расход значим для бюджета, и не даёт единичным неудачам при малом трафике будить дежурного. Короткое окно подтверждает, что расход продолжается прямо сейчас, и снимает тревогу вскоре после исправления, хотя длинное окно ещё хранит след сбоя.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Агентный запрос является деревом операций, и доказательством его поведения служит трасса, в которой каждый вызов модели, инструмента и поиска и каждый шаг агента представлены спаном с длительностью, статусом и расходом токенов.</li>
+<li>Метрики, учитывающие природу языковых моделей, то есть TTFT, скорость потока, стоимость запроса, доля кэша и число шагов, хранятся гистограммами с общими границами и не сэмплируются, а перцентили вычисляются после слияния.</li>
+<li>Атрибут арендатора ставится на шлюзе из идентичности и распространяется с контекстом трассы; книга затрат считает стоимость событий по прайсу на дату события и сверяется со счётом поставщика.</li>
+<li>Журналы всегда хранят стоимость и задержку, номера и идентификаторы только в виде псевдонимов по ключу, содержимое только в отредактированной выборке трасс; алерты строятся на скорости расходования бюджета ошибок в двух окнах.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-3" data-secref="3">Глава 3: токены, задержка и прайс</a>
+<a href="#ch-12" data-secref="12">Глава 12: оценка, которой нужны эти трассы</a>
+<a href="#ch-14" data-secref="14">Глава 14: мощность и рычаги стоимости</a>
+</p>
+</div>
+</section>

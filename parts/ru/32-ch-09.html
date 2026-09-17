@@ -1,0 +1,1063 @@
+<!-- ────────────────────────── ГЛАВА 9 ────────────────────────── -->
+<section class="chapter" id="ch-9">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава девятая</p>
+    <span class="strata" role="img" aria-label="Слои B, C и E: модель и агент, инструменты, безопасность">
+      <i></i><i data-s="B"></i><i data-s="C"></i><i></i><i data-s="E"></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-9"><span class="num">9</span>Состояние, память и долгоживущие агенты</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>различать сессию, поток, запуск, checkpoint и событие и назначать каждому место и класс хранения;</li>
+<li>расставлять checkpoint вокруг побочного эффекта так, чтобы падение процесса не повторяло действия;</li>
+<li>проектировать одобрение человеком с токеном, привязанным к действию, сроком и перепроверкой предусловий;</li>
+<li>выбирать между управляемыми сессиями, checkpointer графа и движком рабочих процессов по их гарантиям;</li>
+<li>вести память и журнал событий так, чтобы аудит восстанавливался, а персональные данные стирались по запросу.</li>
+</ul>
+</div>
+
+<h3 id="s-9-1"><span class="num">9.1</span>Задача: KYC-ремедиация</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Досье CF1 · Nordbank Regional</a></span>
+  <span class="tag">KYC</span>
+  <span class="tag">50 000 досье</span>
+  <span class="tag">комплаенс</span>
+  <span>региональный банк</span>
+</div>
+
+<p>После проверки надзорного органа Nordbank обязан за двенадцать недель обновить сведения надлежащей проверки клиентов (KYC) в 50 000 досье. Для каждого досье нужно прочитать документы и историю обращений, сверить их с требованиями и предложить действие: закрыть досье, запросить у клиента документы или повысить уровень риска. Шесть офицеров комплаенса не успевают разобрать такой объём в этот срок, поэтому разбор поручается агенту, который работает с системами банка через MCP-сервер из <a href="#ch-6" data-secref="6">главы 6</a>.</p>
+
+<p>Два действия агента, добавленные на сервер для этой задачи, изменяют данные во внешних системах. Инструмент <code>request_documents</code> отправляет клиенту запрос через CRM, и повторный запрос клиент воспринимает как ошибку банка. Инструмент <code>set_risk_rating</code> записывает уровень риска в core banking, и повышение до высокого требует одобрения офицера, которое приходит через часы, а перед выходными через пять дней. Оба инструмента принимают ключ идемпотентности по правилам <a href="#s-6-8" data-secref="6.8">раздела 6.8</a>.</p>
+
+<p>Отсюда три требования, которых не было у агента <a href="#ch-7" data-secref="7">главы 7</a>. Процесс длится недели и продолжается после выкладок, отказов поставщика модели и ночного окна обслуживания core banking, не теряя досье и не повторяя действий. Ожидание одобрения не занимает ни процесса, ни потока исполнения. На вопрос надзорного органа о любом клиенте, что агент прочитал, что предложил и кто это одобрил, отвечают по журналу событий.</p>
+
+<h3 id="s-9-2"><span class="num">9.2</span>Почему агенты останавливаются, падают и возобновляются</h3>
+
+<p>Агент главы 7 работал в пределах одного запроса, и его состояние можно было хранить в памяти процесса, потому что запуск завершался раньше процесса. При ремедиации соотношение обратное: досье находится в работе от минут до недель, а процесс исполнителя работает до ближайшей выкладки. Причин остановки пять, и они различаются длительностью: еженедельная выкладка, лимиты вроде сорока запросов в секунду к core banking или квоты поставщика модели, ночное окно обслуживания core banking длиной в два часа, ожидание офицера длиной в дни и отказ поставщика модели длиной в часы.</p>
+
+<p>Процесс на время ожидания не удерживается: тысячи запусков, ждущих офицеров, занимали бы тысячи бездействующих потоков, которые завершаются при каждой выкладке или вытеснении узла. Поэтому запуск описывается данными о том, на каком он шаге, что сделал, чего ждёт и какие версии модели за ним закреплены. Исполнитель берёт запуск из хранилища, продвигает его и возвращает в хранилище, поэтому ожидание человека представлено записью в хранилище.</p>
+
+<dl class="def">
+<dt>Долговечное исполнение <span class="en">(durable execution)</span></dt>
+<dd>Способ исполнения программы, при котором её прогресс сохраняется во внешнем хранилище на границах шагов, и после остановки процесса любой другой процесс продолжает работу с последней сохранённой границы, не повторяя завершённых шагов. Процесс в этой схеме является заменимым исполнителем, а носителем запуска служит его сохранённое состояние.</dd>
+</dl>
+
+<h3 id="s-9-3"><span class="num">9.3</span>Модель состояния</h3>
+
+<p>Слово «состояние» в агентных фреймворках обозначает разные вещи, и их смешение приводит к ошибкам хранения: копия паспорта попадает в журнал, хранимый годами, а решение офицера в суточный кэш. Модель состояния разделяет пять сущностей со своим смыслом, временем жизни и местом хранения. Определения сформулированы независимо от API конкретного фреймворка.</p>
+
+<dl class="def">
+<dt>Сессия <span class="en">(session)</span></dt>
+<dd>Рамка работы агента над одним предметом от имени одного principal; в Nordbank это разбор досье одного клиента от постановки в очередь до итогового действия. Сессия фиксирует ответственного, цель и политики хранения и существует, пока существует предмет.</dd>
+<dt>Поток <span class="en">(thread)</span></dt>
+<dd>Упорядоченная история контекста внутри сессии, которую модель видит на следующем шаге. В одной сессии бывает несколько потоков, например первичный разбор досье и повторный после ответа клиента.</dd>
+<dt>Запуск <span class="en">(run)</span></dt>
+<dd>Одна попытка исполнения агента над потоком от старта до конечного состояния. Запуск закрепляет версии модели, промптов и набора инструментов и несёт статус, по которому его находит планировщик.</dd>
+<dt>Checkpoint, контрольная точка <span class="en">(checkpoint)</span></dt>
+<dd>Снимок запуска на границе шага: номер следующего шага, состояние, ожидающее действие и версия записи. Записывается с условием на версию и служит точкой, с которой начинается возобновление.</dd>
+<dt>Событие <span class="en">(event)</span></dt>
+<dd>Неизменяемая запись о том, что произошло: вызов модели или инструмента с результатом, прерывание, одобрение, возобновление. События только добавляются; checkpoint вычисляется свёрткой событий, а восстановить события по checkpoint нельзя.</dd>
+</dl>
+
+<p>Каждому полю этих сущностей назначается класс хранения, который определяет срок жизни записи и действие с ней при запросе клиента на стирание. Класс назначается при проектировании схемы данных. В Nordbank классов четыре.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Класс</th><th>Что входит</th><th>Срок</th><th>При запросе на стирание</th></tr></thead>
+<tbody>
+<tr><td>Операционный</td><td>checkpoint, потоки, рабочие копии</td><td>до конца запуска и 30 дней</td><td>удаляется</td></tr>
+<tr><td>Аудиторский</td><td>сессии, запуски и скелет событий: кто, что, когда, ссылки на записи, решения</td><td>годы, по закону о противодействии отмыванию денег</td><td>сохраняется</td></tr>
+<tr><td>Содержательный</td><td>результаты инструментов и ответы модели с персональными данными</td><td>как операционный</td><td>редактируется, скелет остаётся</td></tr>
+<tr><td>Память</td><td>сведения о клиенте между сессиями</td><td>срок записи, при согласии</td><td>удаляется с отзывом согласия</td></tr>
+</tbody></table></div>
+
+<p>Одно событие, таким образом, делится на части с разными классами: скелет хранится годами, а содержимое, например текст паспорта, хранится по сроку рабочих данных. Отсюда правило для схемы: состояние агента хранит ссылки на записи систем записи и версии этих записей. Копии документов в состояние не помещаются, потому что оригинал банк хранит по закону в системе записи, а копия в checkpoint создаёт лишний экземпляр персональных данных.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 390" role="img" aria-label="Модель данных состояния: сессия содержит потоки, поток содержит запуски, запуск порождает checkpoint и события; checkpoint выводится свёрткой событий, долговременная память связана с сессией через субъекта, и у каждой сущности указаны место хранения и класс хранения, а у события скелет и содержимое относятся к разным классам" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar9a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="111" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Сессия</text>
+  <text x="111" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">principal · цель · досье</text>
+  <text x="111" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">реляционная БД</text>
+  <rect x="38" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="111" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">аудит · годы</text>
+
+  <rect x="238" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="329" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Поток</text>
+  <text x="329" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">история контекста</text>
+  <text x="329" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">реляционная БД</text>
+  <rect x="256" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="329" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">операционный · 30 дн</text>
+
+  <rect x="456" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="547" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Запуск</text>
+  <text x="547" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">версии модели и промптов</text>
+  <text x="547" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">реляционная БД</text>
+  <rect x="474" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="547" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">аудит · годы</text>
+
+  <rect x="674" y="56" width="182" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="765" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Checkpoint</text>
+  <text x="765" y="102" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">шаг · состояние · версия</text>
+  <text x="765" y="120" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">условная запись</text>
+  <rect x="692" y="138" width="146" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="765" y="153" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">операционный · 30 дн</text>
+
+  <rect x="20" y="236" width="400" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="220" y="262" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Долговременная память</text>
+  <text x="220" y="282" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">субъект · провенанс · срок жизни</text>
+  <text x="220" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">банк памяти</text>
+  <rect x="130" y="318" width="180" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="220" y="333" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">срок жизни · согласие</text>
+
+  <rect x="456" y="236" width="400" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="656" y="262" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Событие</text>
+  <text x="656" y="282" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">вызов модели или инструмента · одобрение · возобновление</text>
+  <text x="656" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">журнал только на добавление</text>
+  <rect x="476" y="318" width="170" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="561" y="333" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">скелет: аудит · годы</text>
+  <rect x="666" y="318" width="170" height="22" rx="20" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="751" y="333" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">содержимое: до стирания</text>
+
+  <line x1="202" y1="110" x2="230" y2="110" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="220" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="420" y1="110" x2="448" y2="110" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="438" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="638" y1="110" x2="666" y2="110" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="656" y="100" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="547" y1="176" x2="547" y2="228" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9a)"/>
+  <text x="555" y="206" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1:n</text>
+  <line x1="765" y1="236" x2="765" y2="184" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar9a)"/>
+  <text x="773" y="214" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">свёртка событий</text>
+  <line x1="111" y1="176" x2="111" y2="228" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar9a)"/>
+  <text x="119" y="206" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">по субъекту</text>
+
+  <text x="440" y="380" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Пилюля обозначает класс хранения: срок жизни записи и действие с ней при запросе на стирание.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Checkpoint вычисляется свёрткой событий, а события по checkpoint не восстанавливаются, поэтому аудит и повтор опираются на журнал событий, а checkpoint сокращает время возобновления. Класс хранения назначается каждому полю, поскольку в одном событии скелет хранится годами, а содержимое стирается по запросу.</figcaption>
+</figure>
+
+<h3 id="s-9-4"><span class="num">9.4</span>Семантика checkpoint и resume</h3>
+
+<p>Между двумя checkpoint выполняется шаг, и после падения о нём известно только то, что он начался. Если процесс остановился после исполнения шага, но до записи следующего checkpoint, возобновлённый запуск выполнит шаг снова, поэтому каждый шаг исполняется по меньшей мере один раз. Повтор чтения увеличивает расходы, а повтор записи отправляет клиенту второе письмо, поэтому для шагов записи нужна более сильная гарантия.</p>
+
+<dl class="def">
+<dt>Эффективно однократный шаг <span class="en">(effectively-once step)</span></dt>
+<dd>Шаг, который может исполниться несколько раз, но внешний эффект которого наблюдается ровно один раз, потому что повторы распознаются получателем. Достигается сочетанием ключа идемпотентности у инструмента и журнала побочных эффектов у исполнителя.</dd>
+<dt>Журнал побочных эффектов <span class="en">(side-effect ledger)</span></dt>
+<dd>Долговечная таблица намерений и исходов побочных эффектов запуска по ключу идемпотентности. Намерение записывается до вызова, исход после; намерение без исхода означает, что результат неизвестен и должен быть получен повтором с тем же ключом или чтением у получателя.</dd>
+</dl>
+
+<p>Правило расстановки: checkpoint записывается до побочного эффекта, а исход записывается после него. До вызова в хранилище попадают шаг, аргументы и ключ, поэтому возобновлённый запуск вызовет инструмент с тем же ключом; после вызова исход записывается в журнал, и только затем checkpoint продвигается. Через журнал проходят шаги, отмеченные признаком побочного эффекта, которым цикл <a href="#s-7-3" data-secref="7.3">раздела 7.3</a> уже пользуется; здесь этот признак сохраняется в долговечном хранилище.</p>
+
+<p>Бюджет цикла из <a href="#s-7-5" data-secref="7.5">раздела 7.5</a> тоже является состоянием и хранится в checkpoint. Исполнитель, возобновивший запуск со сброшенными счётчиками, выдаёт ему новый бюджет после каждого падения, и запуск, стабильно падающий на одном шаге, расходует токены без предела. Бюджет времени по той же причине отсчитывается от старта запуска: отсчёт от старта процесса обнулялся бы при каждом падении. Время ожидания человека в этот бюджет не входит: у ожидания собственный срок, заданный в <a href="#s-9-5" data-secref="9.5">разделе 9.5</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 380" role="img" aria-label="Автомат состояний запуска: досье KYC попадает в состояние исполнения, внутри которого шаг с побочным эффектом проходит через checkpoint, вызов с ключом и запись исхода; прерывание переводит запуск в ожидание человека, одобрение с токеном переводит его в возобновление с перепроверкой предусловий и обратно в исполнение, по истечении семи дней ожидание завершается истечением, а из исполнения запуск приходит к завершению или сбою; падение процесса возвращает запуск к последнему checkpoint" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar9b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="160" width="110" height="40" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="75" y="185" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">досье KYC</text>
+
+  <rect x="160" y="120" width="340" height="120" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="330" y="146" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Выполняется</text>
+  <text x="486" y="146" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">running</text>
+  <rect x="176" y="162" width="88" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <text x="220" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">checkpoint</text>
+  <rect x="286" y="162" width="88" height="34" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="330" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">вызов, ключ</text>
+  <rect x="396" y="162" width="88" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <text x="440" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">запись</text>
+  <line x1="264" y1="179" x2="284" y2="179" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar9b)"/>
+  <line x1="374" y1="179" x2="394" y2="179" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar9b)"/>
+  <text x="330" y="222" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">до эффекта · эффект · после</text>
+
+  <rect x="560" y="40" width="180" height="60" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="650" y="66" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Ждёт человека</text>
+  <text x="650" y="86" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">waiting_for_human</text>
+
+  <rect x="560" y="150" width="180" height="60" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="650" y="176" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Возобновлён</text>
+  <text x="650" y="196" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">перепроверка предусловий</text>
+
+  <rect x="792" y="50" width="74" height="40" rx="20" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="829" y="75" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Истёк</text>
+  <rect x="176" y="290" width="130" height="40" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="241" y="315" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Завершён</text>
+  <rect x="354" y="290" width="130" height="40" rx="20" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="419" y="315" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">Сбой</text>
+
+  <line x1="130" y1="180" x2="152" y2="180" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <path d="M440,120 V70 H552" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="496" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">прерывание</text>
+  <line x1="650" y1="100" x2="650" y2="142" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="662" y="125" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">одобрение, токен</text>
+  <line x1="740" y1="70" x2="784" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="762" y="62" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">7 дней</text>
+  <line x1="560" y1="180" x2="508" y2="180" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <line x1="241" y1="240" x2="241" y2="282" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="251" y="268" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">итог записан</text>
+  <line x1="419" y1="240" x2="419" y2="282" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9b)"/>
+  <text x="429" y="268" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">ошибка без повтора</text>
+  <path d="M208,120 V96 H296 V112" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar9b)"/>
+  <text x="252" y="86" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">падение: продолжить с checkpoint</text>
+
+  <rect x="435" y="93" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <rect x="645" y="111" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <rect x="529" y="175" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <rect x="236" y="251" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+
+  <rect x="20" y="353" width="10" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.4"/>
+  <text x="40" y="362" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">checkpoint записывается при переходе; внутри шага с побочным эффектом он предшествует вызову</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Checkpoint записывается до побочного эффекта, а исход после него, поэтому запуск, упавший в любой точке, продолжается с последнего checkpoint, а ожидание человека хранится как запись в хранилище. Одобрение переводит запуск в перепроверку предусловий, и действие исполняется только после этой перепроверки.</figcaption>
+</figure>
+
+<p>Прерывание переводит запуск в ожидание человека и освобождает процесс, одобрение возвращает его к исполнению через перепроверку предусловий, а через семь дней без ответа запуск завершается истечением срока. Наивная версия хранит состояние в памяти процесса и теряет его вместе с процессом. Разница между версиями проявляется только при остановке процесса, поэтому продуманная версия проверяется внедрением отказов в двух точках шага с побочным эффектом.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Два способа хранить состояние запуска">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_state.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class Crm:
+    """Внешняя система: сохраняет данные после перезапуска исполнителя."""
+    letters: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Worker:
+    crm: Crm
+    runs: dict[str, dict[str, Any]] = field(default_factory=dict)   # хранится в памяти процесса
+
+    def advance(self, customer: str) -&gt; str:
+        run = self.runs.setdefault(customer, {"step": "assess"})
+        if run["step"] == "assess":
+            run["missing"] = ["proof_of_address"]
+            run["step"] = "request"
+        elif run["step"] == "request":
+            self.crm.letters.append(customer)          # запрос документов клиенту
+            run["step"] = "wait_for_customer"
+        return str(run["step"])
+
+
+if __name__ == "__main__":
+    crm = Crm()
+    worker = Worker(crm)
+    worker.advance("C-104233")
+    assert worker.advance("C-104233") == "wait_for_customer" and len(crm.letters) == 1
+
+    worker = Worker(crm)                               # выкладка: новый процесс
+    assert worker.runs == {}                           # досье в работе забыты
+    worker.advance("C-104233")
+    worker.advance("C-104233")
+    assert len(crm.letters) == 2                       # клиент получил второй запрос
+    print("перезапуск стёр состояние, и клиент получил запрос дважды")</code></pre>
+    </figure>
+    <p>Состояние запусков хранится в словаре процесса, и пока процесс работает, досье продвигаются без ошибок. Выкладка создаёт процесс с пустым словарём. У нового исполнителя нет сведений о том, какие досье были в работе, поэтому он начинает досье заново, и клиент получает второй запрос. Сведения о первом запросе хранились в том же словаре и были потеряны вместе с ним.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">checkpoint_store.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+
+class Crash(Exception):
+    """Процесс исполнителя остановлен: выкладка, вытеснение узла, нехватка памяти."""
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    run_id: str
+    next_step: int
+    state: dict[str, Any]
+    version: int
+
+
+class CheckpointStore(Protocol):
+    def load(self, run_id: str) -&gt; Checkpoint | None: ...
+    def save(self, checkpoint: Checkpoint) -&gt; None: ...
+
+
+@dataclass
+class InMemoryCheckpointStore:
+    rows: dict[str, Checkpoint] = field(default_factory=dict)
+
+    def load(self, run_id: str) -&gt; Checkpoint | None:
+        return self.rows.get(run_id)
+
+    def save(self, checkpoint: Checkpoint) -&gt; None:
+        current = self.rows.get(checkpoint.run_id)
+        if checkpoint.version != (current.version if current else 0) + 1:
+            raise RuntimeError("запуск уже продвинут другим исполнителем")
+        self.rows[checkpoint.run_id] = checkpoint
+
+
+@dataclass
+class SideEffectLedger:
+    """Намерения и исходы побочных эффектов по ключу идемпотентности."""
+    intents: dict[str, dict[str, Any]] = field(default_factory=dict)
+    outcomes: dict[str, str] = field(default_factory=dict)
+
+    def intend(self, key: str, tool: str, args: dict[str, Any]) -&gt; None:
+        self.intents.setdefault(key, {"tool": tool, "args": args})
+
+    def record(self, key: str, outcome: str) -&gt; None:
+        self.outcomes[key] = outcome
+
+    def pending(self) -&gt; list[str]:
+        return [k for k in self.intents if k not in self.outcomes]
+
+
+@dataclass
+class FakeCrm:
+    """Инструменты MCP-сервера из главы 6: запрос документов помнит ключи."""
+    letters: list[str] = field(default_factory=list)
+    by_key: dict[str, str] = field(default_factory=dict)
+    calls: int = 0
+    reads: int = 0
+
+    def documents(self, customer: str) -&gt; list[str]:
+        self.reads += 1
+        return ["passport"]
+
+    def request_documents(self, key: str, customer: str, missing: list[str]) -&gt; str:
+        self.calls += 1
+        if key not in self.by_key:
+            self.letters.append(customer)
+            self.by_key[key] = f"REQ-{len(self.letters)}"
+        return self.by_key[key]
+
+
+def effect_key(run_id: str, step: int, tool: str, args: dict[str, Any]) -&gt; str:
+    raw = json.dumps([run_id, step, tool, args], sort_keys=True, ensure_ascii=False)
+    return hashlib.blake2b(raw.encode("utf-8"), digest_size=12).hexdigest()
+
+
+Step = Callable[[str, int, dict[str, Any]], dict[str, Any]]
+REQUIRED = {"passport", "proof_of_address"}
+
+
+@dataclass
+class Runner:
+    store: CheckpointStore
+    ledger: SideEffectLedger
+    crm: FakeCrm
+    crash_at: str = ""                  # точка внедрения отказа для проверки
+
+    def run(self, run_id: str, customer: str) -&gt; dict[str, Any]:
+        steps: list[Step] = [self.read, self.assess, self.request, self.close]
+        cp = self.store.load(run_id) or Checkpoint(run_id, 0, {"customer": customer}, 0)
+        state, version = dict(cp.state), cp.version
+        for n in range(cp.next_step, len(steps)):
+            state = steps[n](run_id, n, state)
+            version += 1
+            self.store.save(Checkpoint(run_id, n + 1, state, version))
+        return state
+
+    def read(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        return {**state, "docs": self.crm.documents(state["customer"])}
+
+    def assess(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        return {**state, "missing": sorted(REQUIRED - set(state["docs"]))}
+
+    def request(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        args = {"customer": state["customer"], "missing": state["missing"]}
+        key = effect_key(run_id, n, "request_documents", args)
+        if key in self.ledger.outcomes:                      # исход записан: не вызывать
+            return {**state, "request": self.ledger.outcomes[key]}
+        self.ledger.intend(key, "request_documents", args)   # до побочного эффекта
+        outcome = self.crm.request_documents(key, args["customer"], args["missing"])
+        if self.crash_at == "after_call":
+            raise Crash("исход вызова не записан")
+        self.ledger.record(key, outcome)                     # после побочного эффекта
+        if self.crash_at == "after_record":
+            raise Crash("checkpoint не продвинут")
+        return {**state, "request": outcome}
+
+    def close(self, run_id: str, n: int, state: dict[str, Any]) -&gt; dict[str, Any]:
+        return {**state, "status": "waiting_for_customer"}
+
+
+if __name__ == "__main__":
+    for crash_at, calls in (("after_call", 2), ("after_record", 1)):
+        store, ledger, crm = InMemoryCheckpointStore(), SideEffectLedger(), FakeCrm()
+        try:
+            Runner(store, ledger, crm, crash_at=crash_at).run("run-1", "C-104233")
+            raise AssertionError("отказ обязан произойти")
+        except Crash:
+            pass
+        saved = store.load("run-1")
+        assert saved is not None and saved.next_step == 2       # чтение и оценка сохранены
+        assert len(ledger.pending()) == (1 if crash_at == "after_call" else 0)
+        final = Runner(store, ledger, crm).run("run-1", "C-104233")   # новый процесс
+        assert final["status"] == "waiting_for_customer" and final["request"] == "REQ-1"
+        assert crm.letters == ["C-104233"] and crm.calls == calls and crm.reads == 1
+        assert ledger.pending() == []
+    print("запуск продолжен с checkpoint, письмо клиенту отправлено один раз")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="if checkpoint.version != (current.version">строка 36</span><p>Checkpoint принимается только с версией на единицу больше сохранённой. Два исполнителя, взявшие один запуск, не перезапишут работу друг друга: второй получит отказ.</p></div>
+        <div><span class="at" data-anchor="def pending(self)">строка 53</span><p>Намерение без исхода отличает «вызова не было» от «исход неизвестен». Для инструмента без ключа неизвестный исход устанавливается чтением у получателя, а если чтение невозможно, досье передаётся человеку.</p></div>
+        <div><span class="at" data-anchor="raw = json.dumps([run_id, step, tool, args]">строка 78</span><p>Ключ выводится из запуска, шага и аргументов, взятых из checkpoint, поэтому возобновлённый процесс вычисляет тот же ключ, что и упавший.</p></div>
+        <div><span class="at" data-anchor="self.ledger.intend(key">строка 114</span><p>Намерение записывается до вызова и служит checkpoint перед побочным эффектом. Если исход уже записан (это проверяется перед записью намерения), повторный шаг сводится к чтению журнала.</p></div>
+        <div><span class="at" data-anchor="for crash_at, calls in">строка 128</span><p>Проверка перебирает обе точки отказа. После отказа до записи исхода CRM получает второй вызов и узнаёт ключ, после отказа до checkpoint второго вызова нет; письмо в обоих случаях одно, а документы прочитаны один раз.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается места хранения запуска. В наивной версии состояние запуска теряется вместе с процессом; в продуманной оно хранится во внешнем хранилище, и процесс можно заменить посреди шага.</p>
+    <p>Второе различие в гранулярности. Checkpoint на каждой границе шага позволяет при возобновлении не повторять чтения и оценки.</p>
+    <p>Третье различие касается обработки побочного эффекта. Когда намерение записано до вызова, а исход после, отказ в любой точке приводит либо к чтению журнала, либо к повтору, который получатель распознаёт по ключу.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Типичная ошибка</b>Записывать checkpoint только после вызова инструмента записи, «чтобы сохранить результат вместе с шагом». Падение между вызовом и записью оставляет хранилище в состоянии до шага, и если ключ зависит от времени или счётчика попыток, возобновлённый запуск выведет новый ключ, и получатель исполнит повтор как новое действие.</div>
+
+<div class="note" data-level="2">Хранилище и журнал в листинге хранятся в памяти процесса, чтобы листинг проверялся без внешних систем. В production запись исхода и продвижение checkpoint выполняются одной транзакцией с условием на версию; без транзакции между двумя записями возникает ещё одно окно отказа, для которого нужен отдельный тест.</div>
+
+<h3 id="s-9-5"><span class="num">9.5</span>Человек в цикле</h3>
+
+<p>Повышение уровня риска требует решения офицера, и между предложением агента и решением человека проходят дни. Механизм, связывающий два момента, отвечает на три вопроса: какое действие одобрено, до какого момента и верны ли основания предложения в момент исполнения. Ответы дают прерывание, токен одобрения и перепроверка предусловий.</p>
+
+<dl class="def">
+<dt>Прерывание с участием человека <span class="en">(human-in-the-loop interrupt)</span></dt>
+<dd>Переход запуска в ожидание, при котором исполнитель записывает checkpoint с предлагаемым действием, снимком предусловий и сроком ответа и освобождает процесс. Запуск продолжается только по внешнему событию: одобрению, отклонению или истечению срока.</dd>
+<dt>Токен одобрения <span class="en">(approval token)</span></dt>
+<dd>Подписанная запись решения человека, привязанная к запуску, к хешу имени и аргументов действия и к сроку. Токен разрешает только то действие, которое видел одобривший, и теряет силу при любом изменении аргументов.</dd>
+</dl>
+
+<p>Привязка к аргументам закрывает вариант уязвимости confused deputy из <a href="#s-6-10" data-secref="6.10">раздела 6.10</a>: одобрение офицера является правом, которого у агента нет, и без привязки агент применил бы это право к другому действию. Офицер одобряет действие вместе с аргументами: «уровень high клиенту C-104233 по совпадению с перечнем политически значимых лиц», и если после возобновления модель предложит ограничить счёт, токен это действие не разрешит. Срок выбирается по скорости устаревания оснований: в Nordbank это семь дней, после которых запуск завершается истечением срока, а досье возвращается в очередь. Интерфейс, в котором офицер видит аргументы, основания и срок, разбирается в <a href="#s-11-4" data-secref="11.4">разделе 11.4</a>.</p>
+
+<p>Действительного токена недостаточно для исполнения: за пять дней клиент мог загрузить новый паспорт, а другой процесс мог изменить уровень риска. Поэтому при возобновлении исполнитель заново читает предусловия, записанные в прерывании. Совпадение разрешает действие, расхождение возвращает запуск к разбору, потому что одобрение относится к основаниям, которые видел офицер.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">hitl_interrupt.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Any
+
+DAY = 86_400.0
+SIGNING_KEY = b"demo-only"              # в production ключ подписи хранится в KMS
+
+
+@dataclass(frozen=True)
+class Action:
+    tool: str
+    args: dict[str, Any]
+
+    def digest(self) -&gt; str:
+        raw = json.dumps({"tool": self.tool, "args": self.args}, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class Interrupt:
+    run_id: str
+    action: Action
+    preconditions: dict[str, Any]       # то, на чём основано предложение
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class ApprovalToken:
+    run_id: str
+    action_digest: str
+    approver: str
+    expires_at: float
+    signature: str
+
+
+def sign(run_id: str, digest: str, approver: str, expires_at: float) -&gt; str:
+    message = f"{run_id}|{digest}|{approver}|{expires_at}".encode()
+    return hmac.new(SIGNING_KEY, message, hashlib.sha256).hexdigest()
+
+
+def approve(interrupt: Interrupt, approver: str) -&gt; ApprovalToken:
+    digest = interrupt.action.digest()
+    return ApprovalToken(interrupt.run_id, digest, approver, interrupt.expires_at,
+                         sign(interrupt.run_id, digest, approver, interrupt.expires_at))
+
+
+class ResumeRefused(Exception):
+    def __init__(self, code: str) -&gt; None:
+        super().__init__(code)
+        self.code = code
+
+
+def resume(interrupt: Interrupt, token: ApprovalToken, action: Action, now: float,
+           read_preconditions: Callable[[], dict[str, Any]]) -&gt; Action:
+    """Разрешает действие, только если одобрено именно оно, в срок и на тех же основаниях."""
+    expected = sign(token.run_id, token.action_digest, token.approver, token.expires_at)
+    if not hmac.compare_digest(expected, token.signature):
+        raise ResumeRefused("bad_signature")
+    if token.run_id != interrupt.run_id or token.action_digest != action.digest():
+        raise ResumeRefused("action_changed")
+    if now &gt;= token.expires_at:
+        raise ResumeRefused("expired")
+    if read_preconditions() != interrupt.preconditions:
+        raise ResumeRefused("preconditions_changed")
+    return action
+
+
+if __name__ == "__main__":
+    bank = {"risk_rating": "medium", "account": "active", "kyc_docs_version": 3,
+            "screening_date": "2026-03-02"}
+    action = Action("set_risk_rating", {"customer": "C-104233", "rating": "high", "reason": "pep_match"})
+    interrupt = Interrupt("run-7", action, dict(bank), expires_at=7 * DAY)
+    token = approve(interrupt, approver="officer-12")
+
+    def outcome(act: Action, now: float, tok: ApprovalToken = token) -&gt; str:
+        try:
+            resume(interrupt, tok, act, now, lambda: dict(bank))
+        except ResumeRefused as refused:
+            return refused.code
+        return "allowed"
+
+    assert outcome(action, now=2 * DAY) == "allowed"
+    other = Action("restrict_account", {"customer": "C-104233"})
+    assert outcome(other, now=2 * DAY) == "action_changed"         # модель сменила действие
+    assert outcome(action, now=8 * DAY) == "expired"
+    assert outcome(action, 2 * DAY, replace(token, approver="agent")) == "bad_signature"
+    bank["kyc_docs_version"] = 4                                    # клиент загрузил документ
+    assert outcome(action, now=5 * DAY) == "preconditions_changed"
+    print("одобрение привязано к действию, истекает и не переживает смену оснований")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def digest(self)">строка 19</span><p>Хеш строится по имени и аргументам с сортировкой ключей, поэтому он не зависит от порядка полей и меняется при изменении любого аргумента.</p></div>
+  <div><span class="at" data-anchor="preconditions: dict[str, Any]">строка 28</span><p>В снимок входят только сведения, от которых зависит предложение: уровень риска, статус счёта, версия комплекта документов.</p></div>
+  <div><span class="at" data-anchor="message = f">строка 42</span><p>Подпись связывает запуск, хеш действия, одобрившего и срок, поэтому токен можно хранить в checkpoint и передавать через очередь, не доверяя ни хранилищу checkpoint, ни очереди.</p></div>
+  <div><span class="at" data-anchor="if now">строка 66</span><p>Срок проверяется в момент исполнения по часам, переданным извне. Одобрение, исполняемое после выкладки на восьмой день, истекло, даже если получено вовремя.</p></div>
+  <div><span class="at" data-anchor="if read_preconditions() != interrupt.preconditions:">строка 68</span><p>Расхождение предусловий обрабатывается отдельно от ошибок токена: запуск возвращается к разбору, и новое предложение проходит новое прерывание.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Хранить одобрение флагом <code>approved: true</code> в состоянии запуска. Флаг не содержит сведений о том, что одобрено и когда, поэтому разрешает любое действие, которое модель предложит после возобновления, и не имеет срока.</div>
+
+<h3 id="s-9-6"><span class="num">9.6</span>Долговечное исполнение</h3>
+
+<p>Checkpoint, журнал и прерывания реализуются в коде приложения или предоставляются платформой. Платформы долговечного исполнения делятся на три семейства, которые различаются тем, какую часть гарантий берут на себя. Семейства сравниваются здесь по одному вопросу: что происходит, если процесс останавливается посреди вызова инструмента записи.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 420" role="img" aria-label="Диаграмма последовательности с четырьмя участниками: исполнитель, хранилище состояния, MCP-сервер и CRM; исполнитель записывает checkpoint и намерение с ключом, вызов создаёт письмо в CRM, но процесс останавливается выкладкой до записи исхода; новый процесс загружает checkpoint, видит намерение без исхода, повторяет вызов с тем же ключом, сервер возвращает сохранённый результат без обращения к CRM, и исполнитель записывает исход и продвигает checkpoint" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar9c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="20" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="105" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">исполнитель</text>
+  <rect x="250" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="335" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">хранилище состояния</text>
+  <rect x="480" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="565" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">MCP-сервер</text>
+  <rect x="700" y="14" width="170" height="34" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.6"/>
+  <text x="785" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CRM</text>
+  <line x1="105" y1="48" x2="105" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="335" y1="48" x2="335" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="565" y1="48" x2="565" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="785" y1="48" x2="785" y2="414" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="Перед побочным эффектом исполнитель сохраняет checkpoint и записывает в журнал намерение с ключом идемпотентности.">
+    <line x1="105" y1="78" x2="327" y2="78" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="71" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">checkpoint: шаг 2</text>
+    <line x1="105" y1="104" x2="327" y2="104" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="97" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">намерение k-7f3: pending</text>
+  </g>
+
+  <g data-step="2" data-caption="Вызов доходит до CRM и создаёт письмо, сервер запоминает ключ, но ответ теряется, и процесс останавливается выкладкой раньше, чем исход записан.">
+    <line x1="105" y1="132" x2="557" y2="132" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="450" y="125" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">request_documents(k-7f3)</text>
+    <line x1="565" y1="156" x2="777" y2="156" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <rect x="770" y="162" width="30" height="16" rx="3" fill="var(--sA)" opacity="0.85"/>
+    <text x="808" y="175" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">письмо № 1</text>
+    <line x1="777" y1="192" x2="573" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="675" y="186" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">REQ-1</text>
+    <rect x="550" y="198" width="30" height="16" rx="3" fill="var(--sC)" opacity="0.85"/>
+    <text x="588" y="211" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">k-7f3 → REQ-1</text>
+    <line x1="557" y1="230" x2="113" y2="230" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="450" y="224" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ответ потерян</text>
+    <rect x="90" y="238" width="30" height="16" rx="3" fill="currentColor" opacity="0.85"/>
+    <text x="128" y="251" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">процесс A остановлен выкладкой</text>
+  </g>
+
+  <g data-step="3" data-caption="Новый процесс загружает checkpoint и находит в журнале намерение без исхода: результат вызова неизвестен.">
+    <line x1="20" y1="266" x2="860" y2="266" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="675" y="260" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">процесс B берёт запуск</text>
+    <line x1="105" y1="290" x2="327" y2="290" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="283" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">загрузить run-1</text>
+    <line x1="335" y1="316" x2="113" y2="316" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="309" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">шаг 2 · k-7f3: pending</text>
+  </g>
+
+  <g data-step="4" data-caption="Повтор с тем же ключом сервер узнаёт и возвращает сохранённый результат, не обращаясь к CRM; исполнитель записывает исход и продвигает checkpoint.">
+    <line x1="105" y1="344" x2="557" y2="344" stroke="var(--sC)" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="450" y="337" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sC)">повтор с k-7f3</text>
+    <rect x="550" y="350" width="30" height="16" rx="3" fill="var(--sC)" opacity="0.85"/>
+    <text x="588" y="363" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ключ известен, CRM не вызван</text>
+    <line x1="557" y1="382" x2="113" y2="382" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="450" y="375" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">REQ-1</text>
+    <line x1="105" y1="406" x2="327" y2="406" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar9c)"/>
+    <text x="220" y="399" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">исход · checkpoint: шаг 3</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> По данным хранилища состояния или движка нельзя определить, выполнился ли вызов, ответ на который потерян. Однократность эффекта обеспечивают намерение в журнале исполнителя и ключ идемпотентности у получателя: на повтор после падения получатель возвращает сохранённый результат. Кнопки под диаграммой раскрывают её по шагам.</figcaption>
+</figure>
+
+<p>Гарантии любой платформы ограничены вызовом инструмента: записи в своём хранилище платформа делает атомарными, а действия в CRM не контролирует. Поэтому ни одно семейство не обеспечивает однократность внешнего эффекта без ключа идемпотентности у получателя. Семейства различаются тем, какую остальную работу они выполняют, как показано в таблице.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Семейство</th><th>Что сохраняется</th><th>Что гарантирует</th><th>Что остаётся инженеру</th></tr></thead>
+<tbody>
+<tr><td>Управляемые сессии</td><td>события и состояние сессии</td><td>историю и состояние между процессами</td><td>границы шагов, журнал эффектов, прерывания</td></tr>
+<tr><td>Checkpointer графа (LangGraph)</td><td>снимок графа после каждого шага</td><td>возобновление с последнего шага, прерывания</td><td>идемпотентность узлов</td></tr>
+<tr><td>Движок рабочих процессов (Temporal)</td><td>история событий с результатами действий</td><td>повтор кода без повтора завершённых действий, таймеры на дни</td><td>детерминизм кода, идемпотентность действий, версии кода</td></tr>
+</tbody></table></div>
+
+<p>Управляемые сессии хранят события, записанные приложением, и не определяют, с какого места продолжать запуск: событие вызова без результата обрабатывает код приложения. Checkpointer графа сохраняет снимок состояния после каждого шага и возобновляет поток с последнего завершённого шага.<a class="src" href="https://docs.langchain.com/oss/python/langgraph/checkpointers" target="_blank" rel="noreferrer">docs.langchain.com, LangGraph checkpointers</a> Узел, вызвавший прерывание, при возобновлении исполняется с начала, поэтому побочный эффект, расположенный в узле до вызова <code>interrupt</code>, повторяется при каждом возобновлении.<a class="src" href="https://docs.langchain.com/oss/python/langgraph/interrupts" target="_blank" rel="noreferrer">docs.langchain.com, LangGraph interrupts</a> Движок рабочих процессов повторяет код процесса по истории событий и подставляет записанные результаты завершённых действий вместо новых вызовов, поэтому код процесса должен быть детерминированным.<a class="src" href="https://docs.temporal.io/workflow-definition" target="_blank" rel="noreferrer">docs.temporal.io, Workflow Definition</a> Действие, завершение которого не попало в историю, исполняется повторно, то есть одно действие может исполниться более одного раза.<a class="src" href="https://docs.temporal.io/activity-definition" target="_blank" rel="noreferrer">docs.temporal.io, Activity Definition</a></p>
+
+<p>Механизм повтора используется и для аудита из <a href="#s-9-8" data-secref="9.8">раздела 9.8</a>; листинг показывает этот механизм в минимальной форме. Код агента обращается к модели и инструментам через интерфейс с двумя реализациями: исполняющей, которая вызывает и записывает каждый исход, и повторяющей, которая только читает журнал.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">replay.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class Event:
+    seq: int
+    kind: str                           # "model" или "tool"
+    name: str
+    args: dict[str, Any]
+    result: str
+
+
+class ReplayDivergence(Exception):
+    """Код на повторе запросил не то, что записано в журнале."""
+
+
+class AgentIO(Protocol):
+    def call_model(self, prompt: str) -&gt; str: ...
+    def call_tool(self, name: str, args: dict[str, Any]) -&gt; str: ...
+
+
+@dataclass
+class LiveIO:
+    """Исполнение: вызывает модель и инструменты и записывает каждый исход."""
+    model: Callable[[str], str]
+    tools: dict[str, Callable[[dict[str, Any]], str]]
+    log: list[Event] = field(default_factory=list)
+
+    def _append(self, kind: str, name: str, args: dict[str, Any], result: str) -&gt; str:
+        self.log.append(Event(len(self.log), kind, name, args, result))
+        return result
+
+    def call_model(self, prompt: str) -&gt; str:
+        return self._append("model", "generate", {"prompt": prompt}, self.model(prompt))
+
+    def call_tool(self, name: str, args: dict[str, Any]) -&gt; str:
+        return self._append("tool", name, args, self.tools[name](args))
+
+
+@dataclass
+class ReplayIO:
+    """Повтор: отдаёт записанные исходы по порядку и ничего не вызывает."""
+    log: list[Event]
+    position: int = 0
+
+    def _next(self, kind: str, name: str, args: dict[str, Any]) -&gt; str:
+        if self.position &gt;= len(self.log):
+            raise ReplayDivergence(f"журнал кончился на событии {self.position}")
+        event = self.log[self.position]
+        if (event.kind, event.name, event.args) != (kind, name, args):
+            raise ReplayDivergence(f"событие {self.position}: записан {event.name}, запрошен {name}")
+        self.position += 1
+        return event.result
+
+    def call_model(self, prompt: str) -&gt; str:
+        return self._next("model", "generate", {"prompt": prompt})
+
+    def call_tool(self, name: str, args: dict[str, Any]) -&gt; str:
+        return self._next("tool", name, args)
+
+
+def assess_file(io: AgentIO, customer: str) -&gt; dict[str, str]:
+    """Код агента: один и тот же при исполнении и при повторе."""
+    docs = io.call_tool("search_documents", {"customer": customer})
+    screening = io.call_tool("screen_sanctions", {"customer": customer})
+    decision = io.call_model(f"documents: {docs}\nscreening: {screening}")
+    return {"customer": customer, "decision": decision}
+
+
+if __name__ == "__main__":
+    documents = {"C-104233": "паспорт 2019, подтверждения адреса нет"}
+    sanctions = {"C-104233": "совпадений нет"}
+    calls = {"tools": 0, "model": 0}
+
+    def table_tool(table: dict[str, str]) -&gt; Callable[[dict[str, Any]], str]:
+        def handler(args: dict[str, Any]) -&gt; str:
+            calls["tools"] += 1
+            return table[args["customer"]]
+        return handler
+
+    def sampled_model(prompt: str) -&gt; str:
+        calls["model"] += 1
+        return f"request_proof_of_address (выборка {calls['model']})"
+
+    live = LiveIO(sampled_model, {"search_documents": table_tool(documents),
+                                  "screen_sanctions": table_tool(sanctions)})
+    decided = assess_file(live, "C-104233")
+    stored = json.dumps([asdict(e) for e in live.log], ensure_ascii=False)
+
+    documents["C-104233"] = "паспорт 2026, счёт за электричество"   # данные изменились
+    sanctions["C-104233"] = "возможное совпадение"
+    log = [Event(**row) for row in json.loads(stored)]
+    assert assess_file(ReplayIO(log), "C-104233") == decided
+    assert calls == {"tools": 2, "model": 1}                        # повтор ничего не вызвал
+
+    def changed_agent(io: AgentIO, customer: str) -&gt; dict[str, str]:
+        io.call_tool("get_account", {"customer": customer})          # шаг новой версии кода
+        return assess_file(io, customer)
+
+    try:
+        changed_agent(ReplayIO(log), "C-104233")
+        raise AssertionError("расхождение кода с журналом обязано обнаружиться")
+    except ReplayDivergence:
+        pass
+    print("решение восстановлено из журнала без вызова модели и инструментов")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="class AgentIO(Protocol):">строка 22</span><p>Код агента обращается к внешним системам только через этот интерфейс, поэтому всё недетерминированное попадает в журнал. Обращение к сети или часам в обход интерфейса сделало бы повтор неверным.</p></div>
+  <div><span class="at" data-anchor="if (event.kind, event.name, event.args) != (kind, name, args):">строка 55</span><p>Повтор сверяет запрос с записью. Без сверки изменённый код получал бы по порядку результаты других запросов и без сообщения об ошибке строил бы из прошлых данных другое решение.</p></div>
+  <div><span class="at" data-anchor="assert calls ==">строка 99</span><p>Счётчики вызовов не изменились, хотя документы и скрининг к моменту повтора другие: повтор восстановил решение, принятое на данных момента исполнения.</p></div>
+  <div><span class="at" data-anchor="except ReplayDivergence:">строка 108</span><p>Версия кода с дополнительным шагом расходится с журналом на первом событии, и повтор завершается исключением <code>ReplayDivergence</code>.</p></div>
+</div>
+</figure>
+
+<h3 id="s-9-7"><span class="num">9.7</span>Долговременная память</h3>
+
+<p>Некоторые сведения нужны после завершения запуска и сессии: при плановом пересмотре через год агенту нужны сведения о том, что клиент сообщал о переезде, а офицер отклонил повышение риска. Виды памяти описаны в <a href="#s-4-6" data-secref="4.6">разделе 4.6</a>. Этот раздел посвящён хранению: происхождению записи, сроку её хранения и правовому основанию хранения.</p>
+
+<p>Каждая запись памяти несёт провенанс, то есть источник и ссылку на запись в нём, и источник определяет вид записи. Сведения из систем записи и решения офицера хранятся как факты, на которые агент вправе опираться при действии. Слова клиента хранятся как утверждения: «переехал в Осло в марте» остаётся утверждением, пока адрес не подтверждён документом, и не может стать предусловием действия, сколько бы раз клиент его ни повторил.</p>
+
+<p>Срок жизни назначается по скорости устаревания: неподтверждённое утверждение хранится несколько дней, решение офицера до следующего пересмотра. Правовым основанием обработки данных для KYC служит обязанность банка по закону, а память между сессиями этой обязанностью не предусмотрена. Поэтому в Nordbank память ведётся только с согласия клиента, и отзыв согласия удаляет её записи.</p>
+
+<p>Некоторые сведения не запоминаются никогда, независимо от согласия. Подозрение в отмывании денег не записывается в хранилища, из которых оно может попасть в разговор с клиентом, потому что законодательство о противодействии отмыванию денег запрещает сообщать клиенту о передаче сведений о подозрительной операции.<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32015L0849" target="_blank" rel="noreferrer">eur-lex.europa.eu, Directive (EU) 2015/849, Art. 39</a> Специальные категории персональных данных, учётные данные и номера документов также не запоминаются. Запрет выражен перечнем тем, который код проверяет до записи, и поэтому не зависит от того, выполняет ли модель инструкции.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">memory_bank.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+DAY = 86_400.0
+NEVER_REMEMBER = frozenset({"suspicious_activity", "special_category", "credentials", "document_number"})
+
+
+class Source(StrEnum):
+    SYSTEM_OF_RECORD = "system_of_record"
+    OFFICER = "officer"
+    CUSTOMER = "customer"
+
+
+@dataclass(frozen=True)
+class Record:
+    subject: str
+    topic: str
+    text: str
+    source: Source
+    source_ref: str                     # запись в источнике или событие журнала
+    created_at: float
+    ttl_s: float
+
+    @property
+    def is_claim(self) -&gt; bool:
+        return self.source is Source.CUSTOMER          # слова клиента: утверждение, не факт
+
+
+class ForbiddenTopic(Exception):
+    """Эта тема не запоминается ни при каком согласии."""
+
+
+@dataclass
+class MemoryBank:
+    now: Callable[[], float]
+    consent: dict[str, bool] = field(default_factory=dict)
+    rows: list[Record] = field(default_factory=list)
+
+    def remember(self, record: Record) -&gt; bool:
+        if record.topic in NEVER_REMEMBER:
+            raise ForbiddenTopic(record.topic)
+        if not self.consent.get(record.subject, False):
+            return False
+        self.rows.append(record)
+        return True
+
+    def recall(self, subject: str) -&gt; list[Record]:
+        t = self.now()
+        return [r for r in self.rows if r.subject == subject and t - r.created_at &lt; r.ttl_s]
+
+    def facts_for_action(self, subject: str) -&gt; list[Record]:
+        return [r for r in self.recall(subject) if not r.is_claim]
+
+    def render(self, subject: str) -&gt; list[str]:
+        return [f"клиент утверждает ({r.source_ref}): {r.text}" if r.is_claim
+                else f"факт ({r.source.value}, {r.source_ref}): {r.text}"
+                for r in self.recall(subject)]
+
+    def withdraw_consent(self, subject: str) -&gt; int:
+        self.consent[subject] = False
+        before = len(self.rows)
+        self.rows = [r for r in self.rows if r.subject != subject]
+        return before - len(self.rows)
+
+
+if __name__ == "__main__":
+    clock = {"t": 0.0}
+    bank = MemoryBank(now=lambda: clock["t"])
+    moved = Record("C-104233", "address", "переехал в Осло в марте", Source.CUSTOMER,
+                   "event:run-1/14", created_at=0.0, ttl_s=7 * DAY)
+    assert not bank.remember(moved) and bank.rows == []           # согласия нет: не храним
+
+    bank.consent["C-104233"] = True
+    decision = Record("C-104233", "risk_decision", "повышение риска отклонено", Source.OFFICER,
+                      "approval:run-1/officer-12", created_at=0.0, ttl_s=365 * DAY)
+    assert bank.remember(moved) and bank.remember(decision)
+    clock["t"] = 2 * DAY
+    assert [r.topic for r in bank.facts_for_action("C-104233")] == ["risk_decision"]
+    assert bank.render("C-104233")[0].startswith("клиент утверждает")
+    clock["t"] = 10 * DAY
+    assert [r.topic for r in bank.recall("C-104233")] == ["risk_decision"]   # утверждение истекло
+    try:
+        bank.remember(Record("C-104233", "suspicious_activity", "…", Source.OFFICER, "sar:17", 0.0, DAY))
+        raise AssertionError("подозрение не запоминается")
+    except ForbiddenTopic:
+        pass
+    assert bank.withdraw_consent("C-104233") == 2 and bank.recall("C-104233") == []
+    print("память различает факты и утверждения, истекает и уважает согласие")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="NEVER_REMEMBER = frozenset(">строка 8</span><p>Запрещённые темы проверяются до согласия и не зависят от него. Попытка записать такую тему является ошибкой вызывающего кода и потому выражена исключением.</p></div>
+  <div><span class="at" data-anchor="def is_claim(self)">строка 28</span><p>Вид записи вычисляется по источнику, поэтому пишущий код не может объявить слова клиента фактом.</p></div>
+  <div><span class="at" data-anchor="r.created_at &lt; r.ttl_s">строка 52</span><p>Истёкшие записи не возвращаются, даже если ещё не удалены физически, и корректность чтения не зависит от расписания задачи удаления.</p></div>
+  <div><span class="at" data-anchor="def withdraw_consent(self">строка 62</span><p>Отзыв согласия удаляет записи из памяти, а в системах записи сведения остаются: решение офицера хранится в core banking, и запись памяти была его копией.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Записывать в долговременную память выводы агента о подозрительности клиента, «чтобы следующий разговор был информированным». Память добавляется в контекст любого агента, работающего с клиентом, включая ассистента контакт-центра, и вывод о подозрении может прозвучать в разговоре с самим клиентом.</div>
+
+<h3 id="s-9-8"><span class="num">9.8</span>Аудит и replay</h3>
+
+<p>Надзорный орган спрашивает, почему в марте клиенту C-104233 повышен уровень риска. Ответ состоит из событий запуска: прочитанные документы, скрининг, предложение, офицер, время одобрения, совпадение предусловий. Аудит сводится к чтению журнала, если журнала хватает для восстановления решения без обращения к системам, которые с тех пор изменились.</p>
+
+<p>Отсюда правило: журнал хранит и аргументы, и результаты вызовов, хотя это увеличивает объём журнала. Повторный вызов через полгода вернёт текущую версию документов и текущий перечень санкций, и по таким данным получится решение, которое агент принял бы сегодня. Поэтому replay читает результаты из журнала и никогда не вызывает инструментов, как в листинге <code>replay.py</code>.</p>
+
+<p>Модель при повторе тоже не вызывается: повторная выборка не гарантирует того же текста даже при нулевой температуре. Вызов модели на прежних данных применяется в контрфактическом прогоне новой версии, который относится к оценке и описан в <a href="#s-12-7" data-secref="12.7">разделе 12.7</a>. Аудит, пересчитывающий решения, получает результат нового вычисления, который может отличаться от принятого решения.</p>
+
+<p>Журнал с результатами инструментов содержит персональные данные, и требование хранить журнал для аудита вступает в конфликт с правом субъекта данных на стирание.<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679" target="_blank" rel="noreferrer">eur-lex.europa.eu, GDPR, Art. 17</a> Конфликт разрешают классы хранения <a href="#s-9-3" data-secref="9.3">раздела 9.3</a>: скелет события остаётся на срок, установленный законом,<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32015L0849" target="_blank" rel="noreferrer">eur-lex.europa.eu, Directive (EU) 2015/849, Art. 40</a> а содержимое редактируется. Если клиент находится под расследованием, стирание откладывается, и отложенный запрос также записывается в аудит.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">retention.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+DAY = 86_400.0
+REDACTED = "[стёрто]"
+
+
+@dataclass
+class Record:
+    run_id: str
+    subject: str
+    kind: str                           # "event": аудит; "checkpoint": операционный класс
+    skeleton: dict[str, str]            # что, кто, когда, ссылки на системы записи
+    content: dict[str, str]             # копии персональных данных
+    run_ended_at: float | None = None
+
+
+@dataclass
+class RetentionEnforcer:
+    records: list[Record]
+    legal_hold: set[str] = field(default_factory=set)
+    operational_ttl_s: float = 30 * DAY
+    audit: list[dict[str, str]] = field(default_factory=list)
+
+    def erase(self, subject: str, request_id: str, now: float) -&gt; str:
+        if subject in self.legal_hold:
+            self.audit.append({"request": request_id, "subject": subject, "outcome": "deferred"})
+            return "deferred"
+        erased = 0
+        for r in self.records:
+            if r.subject == subject and any(v != REDACTED for v in r.content.values()):
+                r.content = dict.fromkeys(r.content, REDACTED)
+                r.skeleton = {**r.skeleton, "erased_by": request_id}
+                erased += 1
+        self.audit.append({"request": request_id, "subject": subject, "outcome": "erased",
+                           "records": str(erased), "at": str(now)})
+        return "erased"
+
+    def purge_operational(self, now: float) -&gt; int:
+        def expired(r: Record) -&gt; bool:
+            return (r.kind == "checkpoint" and r.run_ended_at is not None
+                    and now - r.run_ended_at &gt; self.operational_ttl_s)
+        before = len(self.records)
+        self.records = [r for r in self.records if not expired(r)]
+        return before - len(self.records)
+
+
+if __name__ == "__main__":
+    records = [
+        Record("run-1", "C-104233", "event",
+               {"tool": "search_documents", "doc_ref": "DMS-88121/v3", "at": "2026-03-02T10:14"},
+               {"result": "паспорт NB-000123, адрес Storgatan 5"}),
+        Record("run-1", "C-104233", "event",
+               {"tool": "set_risk_rating", "decision": "high", "approved_by": "officer-12"},
+               {"reason_text": "совпадение с перечнем PEP: родственник"}),
+        Record("run-1", "C-104233", "checkpoint", {"next_step": "5"},
+               {"state": "клиент сообщил о переезде в Осло"}, run_ended_at=2 * DAY),
+        Record("run-2", "C-200871", "event", {"tool": "screen_sanctions"},
+               {"result": "возможное совпадение"}),
+    ]
+    enforcer = RetentionEnforcer(records, legal_hold={"C-200871"})
+    assert enforcer.erase("C-104233", "ER-311", now=3 * DAY) == "erased"
+    erased = [r for r in enforcer.records if r.subject == "C-104233"]
+    assert all(v == REDACTED for r in erased for v in r.content.values())
+    assert erased[1].skeleton["approved_by"] == "officer-12"         # скелет аудита цел
+    assert enforcer.erase("C-200871", "ER-312", now=3 * DAY) == "deferred"
+    assert enforcer.records[3].content["result"] == "возможное совпадение"
+    assert enforcer.purge_operational(now=40 * DAY) == 1              # истёк только checkpoint
+    assert [r.kind for r in enforcer.records] == ["event", "event", "event"]
+    assert [a["outcome"] for a in enforcer.audit] == ["erased", "deferred"]
+    print("персональные данные стёрты, скелет аудита сохранён, удержание учтено")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="skeleton: dict[str, str]">строка 14</span><p>Скелет содержит только нужное для доказательства: инструмент, ссылки на записи с версиями, решение, одобрившего, время. Идентификатор клиента остаётся, иначе запись не найти по запросу надзорного органа.</p></div>
+  <div><span class="at" data-anchor="if subject in self.legal_hold:">строка 27</span><p>Удержание на время расследования откладывает стирание: запрос записывается в аудит и исполняется после снятия удержания.</p></div>
+  <div><span class="at" data-anchor="erased_by">строка 34</span><p>Стирание оставляет в скелете номер запроса, и аудитор через год видит основание, по которому содержимое удалено.</p></div>
+  <div><span class="at" data-anchor="def purge_operational(self">строка 40</span><p>Срок операционных записей отсчитывается от завершения запуска. При отсчёте от записи checkpoint запуск, долго ждущий офицера или клиента, терял бы состояние по истечении срока.</p></div>
+</div>
+</figure>
+
+<div class="note" data-level="2">После редактирования содержимого повтор такого запуска невозможен. Для аудита достаточно скелета: он доказывает, что решение принято, кем и по каким записям систем записи. Если регулятор требует воспроизводимости каждого решения, содержимое относится к аудиторскому классу, и этот выбор фиксирует юрист при проектировании схемы.</div>
+
+<h3 id="s-9-9" data-level="2"><span class="num">9.9</span>На Google Cloud: Agent Platform Sessions и Memory Bank</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Agent Platform Sessions</span>
+  <span class="tag">Agent Platform Memory Bank</span>
+  <span class="tag">ADK</span>
+  <span class="tag">Firestore</span>
+  <span class="tag">Workflows</span>
+</div>
+
+<p data-level="2">В Gemini Enterprise Agent Platform (ранее Vertex AI) строкам модели состояния соответствуют два сервиса, до переименования входившие в Vertex AI Agent Engine.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes" target="_blank" rel="noreferrer">cloud.google.com, Agent Platform name changes</a> Agent Platform Sessions хранит сессию как хронологическую последовательность событий взаимодействия пользователя с агентом, включая вызовы функций, и состояние текущего разговора.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/sessions" target="_blank" rel="noreferrer">cloud.google.com, Agent Platform Sessions</a> Agent Platform Memory Bank с помощью языковой модели извлекает из разговоров сведения, объединяет их с существующими записями памяти, хранит записи между сессиями отдельно для каждой области, например для идентификатора пользователя, и удаляет их по истечении заданного срока жизни.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank" target="_blank" rel="noreferrer">cloud.google.com, Agent Platform Memory Bank</a> В ADK служба сессий имеет реализации в памяти процесса, в реляционной базе данных и в Agent Platform Sessions, а служба памяти имеет реализации, в том числе в памяти процесса и в Memory Bank.<a class="src" href="https://adk.dev/sessions/session/" target="_blank" rel="noreferrer">adk.dev, Session</a><a class="src" href="https://adk.dev/sessions/memory/" target="_blank" rel="noreferrer">adk.dev, Memory</a> Служба передаётся объекту <code>Runner</code>, поэтому переход от прототипа к управляемому хранилищу меняет код запуска и не затрагивает определение агента.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/sessions/manage-with-adk" target="_blank" rel="noreferrer">cloud.google.com, Manage sessions with ADK</a></p>
+
+<p data-level="2">Agent Platform Sessions хранит поток и события; журнал побочных эффектов и checkpoint с условной записью по версии в перечень функций сервиса не входят. Эти таблицы размещаются в Firestore, где исход и продвижение checkpoint записываются одной транзакцией,<a class="src" href="https://docs.cloud.google.com/firestore/native/docs/manage-data/transactions" target="_blank" rel="noreferrer">cloud.google.com, Firestore transactions</a> либо в Cloud SQL для PostgreSQL с условным обновлением по версии строки. Скелет аудита хранится отдельно, например в бакете Cloud Storage с политикой хранения, при которой объект можно удалить или заменить только после истечения срока хранения.<a class="src" href="https://docs.cloud.google.com/storage/docs/bucket-lock" target="_blank" rel="noreferrer">cloud.google.com, Bucket Lock</a> Memory Bank позволяет прикреплять к записям метаданные, например источник; провенанс, вид записи по источнику и запрещённые темы памяти проверяет код приложения.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank/generate-memories" target="_blank" rel="noreferrer">cloud.google.com, Generate memories</a></p>
+
+<p data-level="2">Ожидание офицера выносится в сервис Workflows. Рабочий процесс вызывает сервис агента на Cloud Run, создаёт конечную точку обратного вызова и ждёт запроса на неё с таймаутом в семь дней; таймаут задаётся явно, потому что по умолчанию он равен 12 часам, а исполнение рабочего процесса ограничено одним годом.<a class="src" href="https://docs.cloud.google.com/workflows/docs/creating-callback-endpoints" target="_blank" rel="noreferrer">cloud.google.com, Workflows callbacks</a><a class="src" href="https://docs.cloud.google.com/workflows/quotas" target="_blank" rel="noreferrer">cloud.google.com, Workflows quotas</a> По таймауту запуск завершается истечением срока, а при обратном вызове токен передаётся агенту на перепроверку предусловий. Досье подаются через очередь Cloud Tasks, максимальная скорость отправки которой задана по лимиту core banking.<a class="src" href="https://docs.cloud.google.com/tasks/docs/configuring-queues" target="_blank" rel="noreferrer">cloud.google.com, Cloud Tasks queues</a> Названия и возможности сервисов приведены по документации Google Cloud на сентябрь 2026 года.</p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Решение отличается от LangGraph и Temporal местом, где реализовано ожидание. В LangGraph это прерывание внутри графа с checkpointer в PostgreSQL, в Temporal сигнал с таймером в коде рабочего процесса,<a class="src" href="https://docs.temporal.io/workflow-execution/timers-delays" target="_blank" rel="noreferrer">docs.temporal.io, Timers</a><a class="src" href="https://docs.temporal.io/sending-messages" target="_blank" rel="noreferrer">docs.temporal.io, Signals</a> а в варианте Nordbank оркестратор вне агента, который исполняет короткие запуски между ожиданиями. В первых двух вариантах ожидание и логика агента находятся в одном коде и сопровождаются одной командой. В третьем варианте процесс одобрения отделён от агента и сохраняется при замене агента, поэтому он выбирается, когда процессом одобрения управляет банк.</div>
+
+<h3 id="s-9-10" data-level="3"><span class="num">9.10</span>Вглубь: окно двойного исполнения, смена модели, PII в checkpoint</h3>
+
+<h4 data-level="3">Окно двойного исполнения</h4>
+
+<p data-level="3">Окно начинается, когда инструмент выполнил действие, и заканчивается, когда исполнитель записал исход; транзакцией окно не закрывается, потому что CRM не участвует в транзакциях хранилища. Повтор в этом окне безопасен при трёх условиях. Первое: получатель хранит ключ дольше самого длинного простоя запуска, поэтому ключ со сроком в сутки из <a href="#s-6-8" data-secref="6.8">раздела 6.8</a> не защищает запуск, который пять дней ждал офицера и упал после возобновления. Второе: получатель сохраняет ключ атомарно с действием, иначе такое же окно возникает у самого получателя. Третье: если инструмент ключа не принимает, возобновлённый запуск сначала читает состояние получателя, а при невозможности чтения передаёт досье человеку, как в разборе двойного побочного эффекта в <a href="#s-7-10" data-secref="7.10">разделе 7.10</a>.</p>
+
+<h4 data-level="3">Смена версии модели посреди запуска</h4>
+
+<p data-level="3">Запуск, начатый на одной версии модели и продолженный после выкладки на другой, принимает решения в сочетании версий, которое не проверял ни один оценочный набор: новая модель продолжает работу по сводкам, составленным прежней. Поэтому запуск закрепляет версии модели, промптов и инструментов при старте, и исполнитель читает версии из записи запуска; текущая конфигурация развёртывания на начатые запуски не влияет. Закрепление ограничено сроком поддержки версии: поставщик публикует дату вывода версии из эксплуатации,<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions" target="_blank" rel="noreferrer">cloud.google.com, Model versions</a> и запуск, ждущий дольше этой даты, не может завершиться на закреплённой версии. Правило Nordbank: запуски, не дошедшие до побочного эффекта, перезапускаются на новой версии, а дошедшие завершаются на старой или передаются человеку; смена версии проходит ворота <a href="#ch-12" data-secref="12">главы 12</a> на наборе, содержащем возобновлённые запуски.</p>
+
+<h4 data-level="3">Checkpoint как хранилище персональных данных</h4>
+
+<p data-level="3">Checkpoint копирует состояние целиком, и пятьдесят тысяч досье по двадцать шагов дают миллион снимков, в каждом из которых может содержаться текст паспорта. Защита складывается из трёх мер: ссылки на документы вместо содержимого, хранение в операционном классе только последнего checkpoint запуска и шифрование содержимого, которое нельзя заменить ссылкой, ключом субъекта; после уничтожения ключа это содержимое нельзя прочитать, в том числе в резервных копиях. Конфликт со стиранием разрешается классификацией. Право на стирание не применяется в той мере, в какой обработка необходима для исполнения обязанности по закону,<a class="src" href="https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32016R0679" target="_blank" rel="noreferrer">eur-lex.europa.eu, GDPR, Art. 17(3)(b)</a> поэтому обязанность хранить сведения надлежащей проверки позволяет отказать в стирании только в её объёме и только в системе записи, где эта обязанность исполняется; копии в checkpoint, потоках и памяти этой обязанностью не покрываются.</p>
+
+<h4 data-level="3">Устаревшие предусловия после пяти дней ожидания</h4>
+
+<p data-level="3">В пилоте Nordbank около трёх процентов одобренных повышений риска имели к моменту возобновления изменённые предусловия. Перепроверка обнаруживает такие случаи, только если прочитанные данные новее одобрения: уровень риска в core banking становится виден другим системам после ночного батча, как описано в <a href="#s-6-10" data-secref="6.10">разделе 6.10</a>, поэтому предусловия читаются с отметкой свежести. Состав предусловий выводится из действия. При сравнении всего состояния клиента смена телефона потребует от офицера повторно одобрить то же решение, а частые повторные одобрения приучают подтверждать без проверки; при слишком узком наборе перепроверка пропускает изменения, от которых зависит решение. Для уровня риска в набор входят текущий уровень, статус счёта, версия документов и дата скрининга.</p>
+
+<h4 data-level="3">Детерминизм повтора</h4>
+
+<p data-level="3">Повтор детерминирован, только если записано всё недетерминированное: результаты инструментов, ответы модели, время, случайные числа, порождённые идентификаторы. Код, читающий часы напрямую, на повторе получит другое время и может решить, что срок одобрения истёк, поэтому часы передаются через тот же интерфейс, что и инструменты. Записанный ответ модели делает повтор точным, пока код после ответа не изменился. Изменённый код расходится с журналом, и <code>replay.py</code> сообщает об этом исключением; в Temporal команды рабочего процесса нельзя переупорядочивать, добавлять или удалять без механизмов версионирования кода.<a class="src" href="https://docs.temporal.io/workflow-definition" target="_blank" rel="noreferrer">docs.temporal.io, Workflow Definition</a></p>
+
+<div class="warn" data-level="3"><b>Повтор с чтением «для свежести»</b>Вызывать при повторе инструменты чтения на том основании, что чтение не изменяет данных во внешних системах. Повтор с сегодняшним перечнем санкций объясняет мартовское решение данными, которых в марте не было, поэтому повтор не обращается ни к каким инструментам, включая инструменты чтения.</div>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему шаг долговечного исполнения исполняется по меньшей мере один раз и что делает побочный эффект эффективно однократным?</summary>
+<div class="ans"><p>Падение между исполнением шага и записью checkpoint заставляет возобновлённый запуск повторить шаг, а окно не закрывается транзакцией, потому что действие происходит во внешней системе. Однократность эффекта обеспечивают намерение с ключом, записанное в журнал до вызова, и ключ идемпотентности у получателя: на повтор получатель возвращает сохранённый результат.</p></div>
+</details>
+<details>
+<summary>Офицер одобрил повышение риска, токен действителен, но за пять дней клиент загрузил новый документ. Что делает запуск?</summary>
+<div class="ans"><p>Перечитывает предусловия, записанные в прерывании, видит новую версию документов и возвращается к разбору, не исполняя действия. Новое предложение пройдёт новое прерывание, потому что одобрение относится к основаниям, которые видел офицер.</p></div>
+</details>
+<details>
+<summary>Почему replay не вызывает даже инструменты чтения?</summary>
+<div class="ans"><p>Повторное чтение вернёт текущие данные, и повтор объяснит прошлое решение сведениями, которых тогда не было. Журнал хранит результаты вызовов и ответы модели, и повтор берёт их оттуда, сверяя порядок запросов с записью.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Запуск длится дольше процесса исполнителя, поэтому состояние запуска хранится во внешнем хранилище, а процесс является заменимым исполнителем.</li>
+<li>Сессия, поток, запуск, checkpoint и событие хранятся раздельно и по разным классам: checkpoint вычисляется из событий, скелет события хранится годами, а содержимое стирается по запросу субъекта.</li>
+<li>Checkpoint записывается до побочного эффекта, а исход после него; журнал намерений и исходов вместе с ключом идемпотентности у получателя делает эффект эффективно однократным.</li>
+<li>Одобрение выражается токеном, привязанным к аргументам и сроку, и исполняется после перепроверки предусловий; replay читает журнал и не вызывает ни модели, ни инструментов.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-6" data-secref="6">Глава 6: инструменты и ключи идемпотентности</a>
+<a href="#ch-7" data-secref="7">Глава 7: цикл, бюджеты и признак записи</a>
+<a href="#ch-12" data-secref="12">Глава 12: ворота релиза для смены версий</a>
+</p>
+</div>
+</section>

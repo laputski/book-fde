@@ -1,0 +1,587 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forward Deployed Engineering: учебник</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* ══ Токены ═══════════════════════════════════════════════════════════════
+   Идентичность наследуется от серии ragworld.org: манера научного издания,
+   разделение волосяной линейкой вместо карточек, три гарнитуры по ролям,
+   палитра Okabe и Ito. Насыщенный цвет означает один из семи слоёв системы
+   у заказчика (A — системы и данные заказчика, B — модель и агентный слой,
+   C — инструменты и действия, D — оценка и наблюдаемость, E — безопасность
+   и управление, F — люди и процесс, G — продукт и обратная связь) и ничего иного. */
+:root{
+  --bg:#FCFCFD; --paper:#FFFFFF; --sunk:#F5F6F8;
+  --text:#16181D; --muted:#5B616E; --faint:#8A8F98;
+  --line:#E4E6EB; --line-strong:#CFD3DA;
+  --accent:#1A56B0; --accent-bg:#EAF0FA;
+  --sA:#0072B2; --sB:#009E73; --sC:#D55E00; --sD:#CC79A7;
+  --sE:#E69F00; --sF:#56B4E9; --sG:#8B6F00;
+  /* The layer colours as used by diagram labels (t) and by lines and fills (g):
+     the same hues, darkened on light grounds until labels reach 4.5:1 and
+     graphics 3:1 (WCAG 1.4.3 and 1.4.11); tools/check_contrast.py verifies. */
+  --tA:#0072B2; --tB:#007F5D; --tC:#B65000; --tD:#B64584;
+  --tE:#946700; --tF:#1676AC; --tG:#866B00;
+  --gA:#0072B2; --gB:#009E73; --gC:#D55E00; --gD:#C86EA0;
+  --gE:#BB8100; --gF:#1C93D7; --gG:#8B6F00;
+  --code-kw:#8B2C7A; --code-str:#1F6F3F; --code-com:#7A8089;
+  --code-num:#8B5A00; --code-fn:#1A56B0; --code-dec:#A34A00; --code-bi:#0B6E86;
+  --serif:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
+  --measure:68ch; --rail:19rem; --note:15rem;
+  --shadow:0 1px 2px rgba(16,18,22,.06),0 8px 24px rgba(16,18,22,.08);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1013; --paper:#15181D; --sunk:#191D23;
+    --text:#E8EAED; --muted:#9BA1AC; --faint:#767C86;
+    --line:#262A31; --line-strong:#39404A;
+    --accent:#6FA8DC; --accent-bg:#16243440;
+    --sA:#4EA3DC; --sB:#3DBF97; --sC:#F07B2E; --sD:#E29BC1;
+    --sE:#F0B33C; --sF:#7FC8F0; --sG:#E3D34B;
+    --tA:#4EA3DC; --tB:#3DBF97; --tC:#F07B2E; --tD:#E29BC1;
+    --tE:#F0B33C; --tF:#7FC8F0; --tG:#E3D34B;
+    --gA:#4EA3DC; --gB:#3DBF97; --gC:#F07B2E; --gD:#E29BC1;
+    --gE:#F0B33C; --gF:#7FC8F0; --gG:#E3D34B;
+    --code-kw:#E29BC1; --code-str:#3DBF97; --code-com:#767C86;
+    --code-num:#F0B33C; --code-fn:#7FC8F0; --code-dec:#F07B2E; --code-bi:#63C6D8;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 28px rgba(0,0,0,.45);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1013; --paper:#15181D; --sunk:#191D23;
+  --text:#E8EAED; --muted:#9BA1AC; --faint:#767C86;
+  --line:#262A31; --line-strong:#39404A;
+  --accent:#6FA8DC; --accent-bg:#16243440;
+  --sA:#4EA3DC; --sB:#3DBF97; --sC:#F07B2E; --sD:#E29BC1;
+  --sE:#F0B33C; --sF:#7FC8F0; --sG:#E3D34B;
+  --tA:#4EA3DC; --tB:#3DBF97; --tC:#F07B2E; --tD:#E29BC1;
+  --tE:#F0B33C; --tF:#7FC8F0; --tG:#E3D34B;
+  --gA:#4EA3DC; --gB:#3DBF97; --gC:#F07B2E; --gD:#E29BC1;
+  --gE:#F0B33C; --gF:#7FC8F0; --gG:#E3D34B;
+  --code-kw:#E29BC1; --code-str:#3DBF97; --code-com:#767C86;
+  --code-num:#F0B33C; --code-fn:#7FC8F0; --code-dec:#F07B2E; --code-bi:#63C6D8;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 28px rgba(0,0,0,.45);
+}
+
+/* ══ Основание ═══════════════════════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:var(--serif); font-size:17px; line-height:1.68;
+  font-optical-sizing:auto; text-rendering:optimizeLegibility;
+  -webkit-font-smoothing:antialiased;
+}
+.is-hidden{display:none !important}
+:where(a){color:var(--accent); text-decoration-thickness:.06em; text-underline-offset:.18em}
+:where(a):hover{text-decoration-thickness:.12em}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+::selection{background:var(--accent-bg); color:var(--text)}
+@media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important; scroll-behavior:auto !important}}
+html{scroll-behavior:smooth; scroll-padding-top:5rem}
+
+.locale{display:none}
+html[data-lang="ru"] .locale[data-locale="ru"]{display:block}
+html[data-lang="en"] .locale[data-locale="en"]{display:block}
+html[lang="en"] .src::before{content:"source: "}
+
+.skip{position:absolute; left:-9999px; top:0; z-index:200; background:var(--paper);
+  border:1px solid var(--line-strong); padding:.6rem 1rem; font-family:var(--sans); font-size:.85rem}
+.skip:focus{left:.75rem; top:.75rem}
+
+/* ══ Оболочка ════════════════════════════════════════════════════════════ */
+.shell{display:grid; grid-template-columns:var(--rail) minmax(0,1fr); min-height:100vh}
+@media (max-width:1023px){ .shell{grid-template-columns:minmax(0,1fr)} }
+
+/* ── Верхняя полоса ── */
+.topbar{
+  position:sticky; top:0; z-index:60; grid-column:1/-1;
+  display:flex; align-items:center; gap:1rem;
+  height:3.25rem; padding:0 1rem;
+  background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:saturate(1.6) blur(10px);
+  border-bottom:1px solid var(--line);
+  font-family:var(--sans); font-size:.82rem;
+}
+.brand{display:flex; align-items:center; gap:.6rem; font-weight:600; letter-spacing:-.01em; white-space:nowrap}
+.brand .mark{display:grid; grid-template-columns:repeat(4,4px); grid-auto-rows:4px; gap:1.5px}
+.brand .mark i{background:var(--faint); border-radius:.5px}
+.brand .mark i.on{background:var(--sA)}
+.brand .mark i.on2{background:var(--sC)}
+.brand .mark i.on3{background:var(--sG)}
+.topbar .spacer{flex:1}
+.progress{position:absolute; left:0; bottom:-1px; height:2px; background:var(--accent); width:0; transition:width .15s linear}
+
+.ctl{
+  display:inline-flex; align-items:center; gap:.35rem; height:2rem; padding:0 .7rem;
+  border:1px solid var(--line-strong); border-radius:5px; background:var(--paper);
+  color:var(--text); font:inherit; font-size:.8rem; cursor:pointer; white-space:nowrap;
+}
+.ctl:hover{border-color:var(--accent); color:var(--accent)}
+.ctl kbd{font-family:var(--mono); font-size:.68rem; color:var(--faint); border:1px solid var(--line);
+  border-radius:3px; padding:0 .25rem; line-height:1.4}
+.seg{display:inline-flex; border:1px solid var(--line-strong); border-radius:5px; overflow:hidden; background:var(--paper)}
+.seg button{
+  appearance:none; border:0; background:transparent; color:var(--muted);
+  font:inherit; font-size:.78rem; padding:.32rem .68rem; cursor:pointer; border-left:1px solid var(--line);
+}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"]{background:var(--accent-bg); color:var(--accent); font-weight:600}
+.seg button:hover{color:var(--text)}
+.only-wide{display:inline-flex}
+.only-narrow{display:none}
+.seglabel{font-size:.72rem; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); font-weight:600}
+@media (max-width:1150px){ .seglabel{display:none} }
+@media (max-width:900px){ .only-wide{display:none} .only-narrow{display:inline-flex} }
+@media (max-width:620px){
+  h1{font-size:1.85rem}
+  .chead h2{font-size:1.45rem}
+  h2{font-size:1.35rem}
+  h3{font-size:1.1rem}
+  h1,h2,h3,h4{overflow-wrap:break-word; hyphens:auto}
+  .part h2{font-size:1.5rem}
+  code{white-space:normal; overflow-wrap:anywhere}
+  .gloss > div{grid-template-columns:1fr; gap:.15rem}
+  .gloss .at{padding-top:0}
+  .topbar{gap:.5rem; padding:0 .6rem}
+  .brand .bt{display:none}
+  #find kbd{display:none}
+  .ctl{padding:0 .55rem}
+}
+.burger{display:none}
+@media (max-width:1023px){ .burger{display:inline-flex} }
+
+/* ── Оглавление ── */
+.rail{
+  grid-row:2; border-right:1px solid var(--line); background:var(--bg);
+  position:sticky; top:3.25rem; height:calc(100vh - 3.25rem); overflow-y:auto; overscroll-behavior:contain;
+  font-family:var(--sans); font-size:.82rem; padding:1.25rem 0 4rem;
+}
+.rail h2{font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--faint);
+  font-family:var(--sans); font-weight:600; margin:1.5rem 1.25rem .5rem}
+.rail h2:first-child{margin-top:0}
+.rail ol{list-style:none; margin:0; padding:0}
+.rail a{display:flex; gap:.55rem; padding:.3rem 1.25rem .3rem 1.1rem; color:var(--muted);
+  text-decoration:none; border-left:2px solid transparent; line-height:1.4}
+.rail a:hover{color:var(--text); background:var(--sunk)}
+.rail a.here{color:var(--text); font-weight:500; border-left-color:var(--accent); background:var(--accent-bg)}
+.rail a .n{font-family:var(--mono); font-size:.72rem; color:var(--faint); min-width:1.9em;
+  white-space:nowrap; font-variant-numeric:tabular-nums; flex:none}
+.rail a.here .n{color:var(--accent)}
+.rail a.done .n::after{content:"✓"; color:var(--sB); margin-left:.2em}
+.rail .sub a{padding-left:2.9rem; font-size:.78rem}
+@media (max-width:1023px){
+  .rail{position:fixed; top:3.25rem; left:0; width:min(20rem,86vw); z-index:70; background:var(--paper);
+    box-shadow:var(--shadow); transform:translateX(-102%); transition:transform .2s ease}
+  .rail[data-open="true"]{transform:none}
+  .scrim{position:fixed; inset:3.25rem 0 0; background:rgba(0,0,0,.35); z-index:65}
+}
+
+/* ── Лента текста ── */
+.ribbon{grid-row:2; min-width:0; padding:0 clamp(1rem,4vw,3rem) 8rem;
+  display:grid; grid-template-columns:minmax(0,var(--measure)); justify-content:center}
+.aside{font-family:var(--sans); font-size:.78rem; line-height:1.55; color:var(--muted);
+  border-left:2px solid var(--line-strong); padding:.15rem 0 .15rem .9rem; margin:1.1rem 0}
+.aside b{display:block; color:var(--text); font-weight:600; margin-bottom:.15rem}
+
+/* ══ Типографика содержания ═══════════════════════════════════════════════ */
+h1,h2,h3,h4{font-family:var(--serif); font-weight:600; text-wrap:balance; letter-spacing:-.015em; margin:0}
+h1{font-size:2.5rem; line-height:1.12; margin:.4rem 0 .6rem}
+h2{font-size:1.75rem; line-height:1.2; margin:3.2rem 0 .9rem; padding-top:1.4rem; border-top:1px solid var(--line)}
+h3{font-size:1.22rem; line-height:1.3; margin:2.1rem 0 .6rem}
+h4{font-size:1.02rem; line-height:1.35; margin:1.5rem 0 .4rem; font-family:var(--sans); font-weight:600}
+p{margin:0 0 1.05em}
+p,li,dd,dt,td,th,figcaption,.ans,.recap,.note,.warn,.aside{overflow-wrap:break-word}
+.lead{font-size:1.18rem; line-height:1.6; color:var(--muted)}
+.num{font-family:var(--mono); font-weight:500; font-size:.62em; color:var(--faint);
+  letter-spacing:.02em; margin-right:.7em; font-variant-numeric:tabular-nums; vertical-align:.12em}
+h2 .num{color:var(--accent)}
+.eyebrow{font-family:var(--sans); font-size:.7rem; font-weight:600; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--faint); margin:0 0 .4rem}
+ul,ol{margin:0 0 1.05em; padding-left:1.35em}
+li{margin:.3em 0}
+li::marker{color:var(--faint)}
+code{font-family:var(--mono); font-size:.86em; background:var(--sunk); border:1px solid var(--line);
+  border-radius:3px; padding:.06em .3em; white-space:nowrap}
+strong{font-weight:600}
+abbr{text-decoration:none; border-bottom:1px dotted var(--faint); cursor:help}
+
+/* ── Титул и обложка ── */
+.cover{padding:3.5rem 0 2rem; border-bottom:1px solid var(--line)}
+.cover .matrix{margin:0 0 1.8rem}
+.matrix{display:grid; grid-template-columns:repeat(7,1fr); gap:3px; max-width:17rem}
+.matrix i{aspect-ratio:1; background:var(--line); border-radius:1px}
+.matrix i[data-s="A"]{background:var(--sA)} .matrix i[data-s="B"]{background:var(--sB)}
+.matrix i[data-s="C"]{background:var(--sC)} .matrix i[data-s="D"]{background:var(--sD)}
+.matrix i[data-s="E"]{background:var(--sE)} .matrix i[data-s="F"]{background:var(--sF)}
+.matrix i[data-s="G"]{background:var(--sG)}
+.meta{font-family:var(--sans); font-size:.82rem; color:var(--muted); display:flex; flex-wrap:wrap; gap:.4rem 1.4rem; margin-top:1.4rem}
+.meta span{display:inline-flex; gap:.4rem}
+.meta b{color:var(--text); font-weight:500}
+
+/* ── Заголовок главы ── */
+.chapter{scroll-margin-top:4.5rem}
+.chead{margin:4.5rem 0 1.6rem; padding-top:2rem; border-top:2px solid var(--text)}
+.chead:first-of-type{margin-top:2.5rem}
+.chead .row{display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap}
+.chead h2{border:0; padding:0; margin:.15rem 0 .5rem; font-size:2rem}
+.strata{display:inline-grid; grid-template-columns:repeat(7,10px); grid-auto-rows:10px; gap:2px}
+.strata i{background:var(--line); border-radius:1px}
+.strata i[data-s="A"]{background:var(--sA)} .strata i[data-s="B"]{background:var(--sB)}
+.strata i[data-s="C"]{background:var(--sC)} .strata i[data-s="D"]{background:var(--sD)}
+.strata i[data-s="E"]{background:var(--sE)} .strata i[data-s="F"]{background:var(--sF)}
+.strata i[data-s="G"]{background:var(--sG)}
+
+/* ── Части ── */
+.part{margin:6rem 0 0; padding:2.2rem 0 0; border-top:3px double var(--line-strong); text-align:center}
+.part .eyebrow{color:var(--accent)}
+.part h2{border:0; padding:0; margin:.2rem 0 .5rem; font-size:2.1rem}
+.part p{color:var(--muted); max-width:46ch; margin:0 auto}
+
+/* ══ Блоки ════════════════════════════════════════════════════════════════ */
+.def{border-left:3px solid var(--accent); background:var(--sunk); padding:.85rem 1.1rem; margin:1.5rem 0; border-radius:0 4px 4px 0}
+.def dt{font-family:var(--sans); font-weight:600; font-size:.95rem; margin:0 0 .2rem}
+.def dt .en{font-weight:400; color:var(--faint); font-style:italic}
+.def dd{margin:0; font-size:.97rem}
+.def + .def{margin-top:-.7rem}
+
+.note{border-left:3px solid var(--line-strong); padding:.75rem 1.1rem; margin:1.5rem 0;
+  font-size:.95rem; color:var(--muted); background:var(--sunk); border-radius:0 4px 4px 0}
+.note b{color:var(--text)}
+.warn{
+  margin:1.5rem 0; padding:.75rem 1.1rem .75rem 1.35rem; font-size:.95rem; background:var(--sunk);
+  border-radius:0 4px 4px 0; border-left:3px solid var(--text);
+  background-image:repeating-linear-gradient(135deg,transparent 0 5px,color-mix(in srgb,var(--text) 7%,transparent) 5px 7px);
+}
+.warn b{font-family:var(--sans); font-size:.72rem; letter-spacing:.1em; text-transform:uppercase;
+  display:block; margin-bottom:.25rem}
+
+.goals{border:1px solid var(--line); border-radius:6px; padding:1rem 1.2rem; margin:1.6rem 0; background:var(--paper)}
+.goals .eyebrow{margin-bottom:.5rem}
+.goals ul{margin:0; padding-left:1.2em; font-size:.96rem}
+
+/* ── Чек-лист (состояние хранится в браузере читателя) ── */
+.checklist{border:1px solid var(--line); border-radius:6px; margin:1.6rem 0; background:var(--paper); overflow:hidden}
+.checklist > .eyebrow{padding:.55rem .9rem; margin:0; background:var(--sunk); border-bottom:1px solid var(--line);
+  display:flex; justify-content:space-between; align-items:center}
+.checklist .reset{appearance:none; border:0; background:transparent; color:var(--faint); font:inherit;
+  font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; cursor:pointer}
+.checklist .reset:hover{color:var(--accent)}
+.checklist label{display:flex; gap:.7rem; align-items:baseline; padding:.5rem .9rem; border-bottom:1px solid var(--line);
+  font-size:.95rem; cursor:pointer}
+.checklist label:last-child{border-bottom:0}
+.checklist input{accent-color:var(--accent); transform:translateY(2px); flex:none}
+.checklist input:checked + span{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--line-strong)}
+
+/* ── Код ── */
+figure.code{margin:1.6rem 0; border:1px solid var(--line); border-radius:6px; background:var(--paper); overflow:hidden}
+figure.code figcaption{
+  display:flex; align-items:center; gap:.6rem; padding:.45rem .8rem; border-bottom:1px solid var(--line);
+  background:var(--sunk); font-family:var(--sans); font-size:.74rem; color:var(--muted);
+}
+figure.code figcaption .file{font-family:var(--mono); color:var(--text)}
+figure.code figcaption .norun{margin-left:auto; font-family:var(--mono); font-size:.68rem; color:var(--faint);
+  border:1px solid var(--line-strong); border-radius:3px; padding:0 .3rem}
+figure.code .btn{appearance:none; border:1px solid var(--line-strong); background:var(--paper); color:var(--muted);
+  font:inherit; font-size:.7rem; border-radius:4px; padding:.1rem .45rem; cursor:pointer}
+figure.code .btn:hover{color:var(--accent); border-color:var(--accent)}
+pre{margin:0; padding:.9rem 0; overflow-x:auto; font-family:var(--mono); font-size:.8rem; line-height:1.65; tab-size:4}
+pre code{background:none; border:0; padding:0; font-size:inherit; white-space:pre}
+code,pre,.tag,.lvl,.num,.at{font-variant-ligatures:none; font-feature-settings:"calt" 0}
+.ln{display:block; padding:0 .9rem 0 3.2rem; position:relative; white-space:pre}
+.ln::before{content:attr(data-n); position:absolute; left:0; width:2.5rem; text-align:right;
+  color:var(--faint); font-size:.72rem; user-select:none; font-variant-numeric:tabular-nums}
+.ln.mark{background:var(--accent-bg)}
+.ln.fold{display:none}
+figure.code[data-open="true"] .ln.fold{display:block}
+.foldbar{display:block; width:100%; text-align:left; appearance:none; border:0; border-top:1px dashed var(--line);
+  background:var(--sunk); color:var(--muted); font-family:var(--sans); font-size:.74rem; padding:.4rem .9rem; cursor:pointer}
+.foldbar:hover{color:var(--accent)}
+figure.code[data-open="true"] .foldbar .more{display:none}
+figure.code:not([data-open="true"]) .foldbar .less{display:none}
+.k{color:var(--code-kw)} .s{color:var(--code-str)} .c{color:var(--code-com); font-style:italic}
+.n0{color:var(--code-num)} .f{color:var(--code-fn)} .d{color:var(--code-dec)} .b{color:var(--code-bi)}
+.o{color:var(--muted)}
+
+/* ── Построчные пояснения ── */
+.gloss{border-top:1px solid var(--line); background:var(--sunk); font-size:.9rem}
+.gloss > div{display:grid; grid-template-columns:5rem minmax(0,1fr); gap:.7rem; padding:.5rem .9rem; border-bottom:1px solid var(--line)}
+.gloss > div:last-child{border-bottom:0}
+.gloss .at{font-family:var(--mono); font-size:.72rem; color:var(--accent); font-variant-numeric:tabular-nums; padding-top:.15rem}
+.gloss p{margin:0}
+
+/* ── Вкладки ── */
+.tabs{margin:1.6rem 0; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:var(--paper)}
+.tabs [role="tablist"]{display:flex; background:var(--sunk); border-bottom:1px solid var(--line)}
+.tabs [role="tab"]{appearance:none; border:0; background:transparent; font:inherit; font-family:var(--sans);
+  font-size:.78rem; color:var(--muted); padding:.5rem .9rem; cursor:pointer; border-right:1px solid var(--line);
+  border-bottom:2px solid transparent}
+.tabs [role="tab"][aria-selected="true"]{color:var(--text); font-weight:600; background:var(--paper); border-bottom-color:var(--accent)}
+.tabs [role="tabpanel"]{padding:.2rem 1rem .8rem}
+.tabs [role="tabpanel"] figure.code{border:0; margin:.6rem -1rem}
+.tabs [role="tabpanel"] p:last-child{margin-bottom:.6rem}
+
+/* ── Самопроверка ── */
+.quiz{margin:1.8rem 0; border:1px solid var(--line); border-radius:6px; overflow:hidden}
+.quiz > .eyebrow{padding:.55rem .9rem; margin:0; background:var(--sunk); border-bottom:1px solid var(--line)}
+.quiz details{border-bottom:1px solid var(--line)}
+.quiz details:last-child{border-bottom:0}
+.quiz summary{cursor:pointer; padding:.6rem .9rem .6rem 2.1rem; font-size:.96rem; list-style:none;
+  display:block; position:relative}
+.quiz summary::-webkit-details-marker{display:none}
+.quiz summary::before{content:"?"; position:absolute; left:.9rem; top:.6rem;
+  font-family:var(--mono); color:var(--accent); font-weight:700}
+.quiz summary:hover{background:var(--sunk)}
+.quiz details[open] summary{background:var(--sunk); font-weight:500}
+.quiz .ans{padding:.2rem .9rem .8rem 2.1rem; font-size:.95rem; color:var(--muted)}
+.quiz .ans p:last-child{margin-bottom:0}
+
+/* ── Итоги и связи ── */
+.recap{margin:2.2rem 0 0; padding:1.1rem 1.2rem; border:1px solid var(--line); border-radius:6px; background:var(--sunk)}
+.recap ul{margin:.4rem 0 0; padding-left:1.2em; font-size:.96rem}
+.seealso{font-family:var(--sans); font-size:.84rem; margin:1.2rem 0 0; color:var(--muted)}
+.seealso b{color:var(--text); font-weight:600; display:block; margin-bottom:.3rem;
+  font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; color:var(--faint)}
+.seealso a{margin-right:1rem; display:inline-block}
+
+/* ── Таблицы ── */
+.tw{overflow-x:auto; margin:1.6rem 0; border:1px solid var(--line); border-radius:6px}
+table{border-collapse:collapse; width:100%; font-family:var(--sans); font-size:.84rem; background:var(--paper)}
+th,td{text-align:left; padding:.5rem .75rem; border-bottom:1px solid var(--line); vertical-align:top}
+thead th{background:var(--sunk); font-weight:600; font-size:.74rem; letter-spacing:.04em;
+  text-transform:uppercase; color:var(--muted); white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+td code{white-space:nowrap; font-size:.82em}
+.tag{font-family:var(--mono); font-size:.72rem; border:1px solid var(--line-strong); border-radius:3px;
+  padding:.02em .3em; color:var(--muted); white-space:nowrap}
+.lvl{font-family:var(--mono); font-size:.72rem; font-weight:700; color:var(--text)}
+
+/* ── Бейдж досье заказчика и трека Google Cloud ── */
+.rec{display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; font-family:var(--sans);
+  font-size:.78rem; color:var(--muted); margin:.4rem 0 1rem}
+.rec .name{font-weight:600; color:var(--text); font-size:.86rem}
+.rec .name a{color:inherit; text-decoration:none; border-bottom:1px dotted var(--faint)}
+.rec .name a:hover{color:var(--accent); border-bottom-color:currentColor}
+
+/* ── Диаграммы ── */
+figure.dia{
+  --dia-w:max(100%, min(calc(100vw - var(--rail) - 7rem), 62rem));
+  width:var(--dia-w); margin:2.4rem 0; margin-inline:calc((100% - var(--dia-w)) / 2);
+  text-align:center;
+}
+@media (max-width:1023px){ figure.dia{--dia-w:100%} }
+figure.dia svg{max-width:100%; height:auto; color:var(--text)}
+figure.dia svg text[fill="var(--sA)"]{fill:var(--tA)}
+figure.dia svg text[fill="var(--sB)"]{fill:var(--tB)}
+figure.dia svg text[fill="var(--sC)"]{fill:var(--tC)}
+figure.dia svg text[fill="var(--sD)"]{fill:var(--tD)}
+figure.dia svg text[fill="var(--sE)"]{fill:var(--tE)}
+figure.dia svg text[fill="var(--sF)"]{fill:var(--tF)}
+figure.dia svg text[fill="var(--sG)"]{fill:var(--tG)}
+figure.dia svg [stroke="var(--sA)"]{stroke:var(--gA)}
+figure.dia svg [stroke="var(--sB)"]{stroke:var(--gB)}
+figure.dia svg [stroke="var(--sC)"]{stroke:var(--gC)}
+figure.dia svg [stroke="var(--sD)"]{stroke:var(--gD)}
+figure.dia svg [stroke="var(--sE)"]{stroke:var(--gE)}
+figure.dia svg [stroke="var(--sF)"]{stroke:var(--gF)}
+figure.dia svg [stroke="var(--sG)"]{stroke:var(--gG)}
+figure.dia svg :not(text)[fill="var(--sA)"]{fill:var(--gA)}
+figure.dia svg :not(text)[fill="var(--sB)"]{fill:var(--gB)}
+figure.dia svg :not(text)[fill="var(--sC)"]{fill:var(--gC)}
+figure.dia svg :not(text)[fill="var(--sD)"]{fill:var(--gD)}
+figure.dia svg :not(text)[fill="var(--sE)"]{fill:var(--gE)}
+figure.dia svg :not(text)[fill="var(--sF)"]{fill:var(--gF)}
+figure.dia svg :not(text)[fill="var(--sG)"]{fill:var(--gG)}
+figure.dia figcaption{font-family:var(--sans); font-size:.79rem; color:var(--muted); margin-top:.7rem;
+  text-align:left; max-width:60ch; margin-inline:auto}
+figure.dia figcaption b{color:var(--text); font-weight:600}
+.svg-wrap{overflow-x:auto; padding-bottom:.3rem}
+/* Пошаговые диаграммы: группы с data-step раскрываются по очереди */
+figure.dia[data-steps] svg g[data-step]{transition:opacity .25s ease}
+figure.dia[data-steps] svg g[data-step].dim{opacity:.16}
+.stepbar{display:inline-flex; align-items:center; gap:.4rem; margin:.5rem auto 0; font-family:var(--sans); font-size:.74rem; color:var(--muted)}
+.stepbar button{appearance:none; border:1px solid var(--line-strong); background:var(--paper); color:var(--muted);
+  font:inherit; font-size:.72rem; border-radius:4px; padding:.15rem .55rem; cursor:pointer}
+.stepbar button:hover{color:var(--accent); border-color:var(--accent)}
+.stepbar button[disabled]{opacity:.4; cursor:default}
+.stepbar .pos{font-family:var(--mono); font-variant-numeric:tabular-nums; min-width:3.2em; text-align:center}
+.stepbar .cap{max-width:34ch; text-align:left; color:var(--text)}
+
+/* ── Термины и подсказки ── */
+.term{border-bottom:1px dashed var(--accent); cursor:help; text-decoration:none; color:inherit}
+.pop{
+  position:absolute; z-index:120; max-width:min(26rem, calc(100vw - 1.5rem)); background:var(--paper); color:var(--text);
+  border:1px solid var(--line-strong); border-radius:7px; box-shadow:var(--shadow);
+  padding:.7rem .9rem; font-family:var(--sans); font-size:.83rem; line-height:1.5;
+}
+.pop .h{font-weight:600; margin-bottom:.2rem}
+.pop .go{display:inline-block; margin-top:.5rem; font-size:.78rem}
+.pop p{margin:0}
+
+/* ── Ссылки на первоисточники ── */
+.src{display:block; margin-top:.45rem; font-family:var(--sans); font-size:.72rem;
+  color:var(--faint); text-decoration:none; border-bottom:1px dotted transparent; width:fit-content}
+.src::before{content:"источник: "}
+.src:hover{color:var(--accent); border-bottom-color:currentColor}
+.def .src{margin-top:.5rem}
+
+/* ── Поиск ── */
+.dlg{position:fixed; inset:0; z-index:150; display:none; padding:8vh 1rem 1rem; background:rgba(10,12,15,.45)}
+.dlg[data-open="true"]{display:block}
+.dlg .box{max-width:38rem; margin:0 auto; background:var(--paper); border:1px solid var(--line-strong);
+  border-radius:9px; box-shadow:var(--shadow); overflow:hidden}
+.dlg input[type="search"]{width:100%; border:0; border-bottom:1px solid var(--line); padding:.9rem 1rem;
+  font:inherit; font-family:var(--sans); font-size:1rem; background:transparent; color:var(--text)}
+.dlg input[type="search"]:focus{outline:0}
+.dlg .res{max-height:52vh; overflow-y:auto; font-family:var(--sans)}
+.dlg .res a{display:block; padding:.55rem 1rem; border-bottom:1px solid var(--line); text-decoration:none; color:var(--text)}
+.dlg .res a:last-child{border-bottom:0}
+.dlg .res a.sel,.dlg .res a:hover{background:var(--accent-bg)}
+.dlg .res .t{font-size:.9rem}
+.dlg .res .p{font-size:.74rem; color:var(--faint); display:flex; gap:.5rem; margin-top:.1rem}
+.dlg .foot{padding:.45rem 1rem; border-top:1px solid var(--line); font-family:var(--sans);
+  font-size:.72rem; color:var(--faint); display:flex; gap:1rem}
+.dlg .empty{padding:1.2rem 1rem; font-family:var(--sans); font-size:.85rem; color:var(--muted)}
+
+/* ── Диалог печати ── */
+.dlg.print .box{max-width:27rem; padding:1.3rem 1.4rem 1.1rem}
+.dlg.print h3{margin:0 0 .2rem; font-size:1.15rem; font-family:var(--serif)}
+.dlg.print .sub{font-family:var(--sans); font-size:.8rem; color:var(--muted); margin:0 0 1.1rem}
+.dlg.print fieldset{border:0; padding:0; margin:0 0 1.1rem}
+.dlg.print legend{font-family:var(--sans); font-size:.68rem; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--faint); font-weight:600; padding:0 0 .45rem}
+.dlg.print .opt{display:flex; align-items:baseline; gap:.6rem; cursor:pointer;
+  font-family:var(--sans); font-size:.87rem; padding:.5rem .65rem; border-radius:6px;
+  border:1px solid var(--line); margin-bottom:.35rem; background:var(--paper)}
+.dlg.print .opt:last-child{margin-bottom:0}
+.dlg.print .opt:hover{border-color:var(--line-strong)}
+.dlg.print .opt:has(input:checked){border-color:var(--accent); background:var(--accent-bg)}
+.dlg.print .opt:has(input:focus-visible){outline:2px solid var(--accent); outline-offset:2px}
+.dlg.print .opt input{flex:none; width:auto; margin:0; accent-color:var(--accent); transform:translateY(1px)}
+.dlg.print .opt .what{color:var(--text)}
+.dlg.print .opt .which{margin-left:auto; text-align:right; font-size:.75rem; color:var(--faint);
+  max-width:11rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dlg.print .hint{font-family:var(--sans); font-size:.78rem; line-height:1.5; color:var(--muted);
+  margin:0 0 1rem; padding-left:.9rem; border-left:2px solid var(--line-strong)}
+.dlg.print .row{display:flex; gap:.6rem; justify-content:flex-end; border-top:1px solid var(--line); padding-top:.9rem}
+.dlg.print .row .ctl.primary{border-color:var(--accent); color:var(--accent); font-weight:600}
+
+/* ── Уведомление ── */
+.toast{position:fixed; left:50%; bottom:1.5rem; transform:translateX(-50%); z-index:160;
+  background:var(--text); color:var(--bg); font-family:var(--sans); font-size:.82rem;
+  padding:.6rem .9rem; border-radius:6px; box-shadow:var(--shadow); display:flex; gap:.8rem; align-items:center}
+.toast button{appearance:none; border:1px solid currentColor; background:transparent; color:inherit;
+  font:inherit; font-size:.76rem; border-radius:4px; padding:.1rem .45rem; cursor:pointer}
+
+/* ── Приложения, собираемые из содержания ── */
+.gl{border-left:3px solid var(--line-strong); background:var(--sunk); padding:.7rem 1rem;
+  margin:0 0 .5rem; border-radius:0 4px 4px 0}
+.gl .t{font-family:var(--sans); font-weight:600; font-size:.95rem}
+.gl .en{color:var(--faint); font-style:italic; font-weight:400}
+.gl p{margin:.2rem 0 .35rem; font-size:.95rem}
+.gl .where,.ap .where,.q .where{font-family:var(--sans); font-size:.78rem}
+.ap{border-left:3px solid var(--line-strong); background:var(--sunk); padding:.6rem 1rem;
+  margin:0 0 .5rem; border-radius:0 4px 4px 0}
+.ap .k{font-family:var(--sans); font-size:.68rem; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--faint); font-weight:600}
+.ap p{margin:.15rem 0 .35rem; font-size:.95rem}
+.applist{margin:1.4rem 0}
+/* Вопросы для банка вопросов: помечаются data-round в главах */
+.q{border-left:3px solid var(--sF); background:var(--sunk); padding:.6rem 1rem; margin:.9rem 0; border-radius:0 4px 4px 0; font-size:.95rem}
+.q .k{font-family:var(--sans); font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:600; display:block; margin-bottom:.15rem}
+.q p{margin:.15rem 0 .35rem}
+.q p:last-child{margin-bottom:0}
+.qbank h3{margin-top:1.8rem}
+
+/* ══ Печать ═══════════════════════════════════════════════════════════════ */
+@page{size:A4; margin:18mm 16mm}
+@media print{
+  /* Перечислены все селекторы темы: печатная палитра обязана победить экранную
+     и при прямой печати из браузера, минуя диалог пособия. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"],
+  :root:not([data-theme="light"]){
+        --bg:#fff; --paper:#fff; --sunk:#fff; --text:#000; --muted:#333; --faint:#666;
+        --line:#bbb; --line-strong:#888; --accent:#000; --accent-bg:#fff;
+        --code-kw:#8B2C7A; --code-str:#1F6F3F; --code-com:#6B7280; --code-num:#8B5A00;
+        --code-fn:#1A56B0; --code-dec:#A34A00; --code-bi:#0B6E86;
+        --sA:#0072B2; --sB:#009E73; --sC:#D55E00; --sD:#CC79A7;
+        --sE:#B87A00; --sF:#2E86C1; --sG:#8B6F00;
+        --tA:#0072B2; --tB:#007F5D; --tC:#B65000; --tD:#B64584; --tE:#946700; --tF:#1676AC; --tG:#866B00;
+        --gA:#0072B2; --gB:#009E73; --gC:#D55E00; --gD:#C86EA0; --gE:#BB8100; --gF:#1C93D7; --gG:#8B6F00}
+  body{font-size:10.5pt; line-height:1.5; background:#fff}
+  .topbar,.rail,.scrim,.dlg,.toast,.pop,.skip,figure.code .btn,.foldbar,.seg,.ctl,.stepbar,.checklist .reset{display:none !important}
+  .shell{display:block}
+  .ribbon{display:block; padding:0; max-width:none}
+  .ribbon .aside{border:0; border-left:2px solid #bbb; padding:0 0 0 .8rem; margin:.8rem 0; page-break-inside:avoid}
+  figure.dia{width:auto; margin-inline:0}
+  figure.dia[data-steps] svg g[data-step].dim{opacity:1}
+  .chapter{break-before:page}
+  .part{break-before:page}
+  h1,h2,h3,h4{break-after:avoid-page}
+  figure,table,.def,.warn,.note,.goals,.recap,.quiz details,.gloss > div,.checklist,.q{break-inside:avoid}
+  pre{break-inside:avoid; font-size:8.6pt}
+  .ln.fold{display:block !important}
+  .tabs [role="tablist"]{display:none}
+  .tabs [role="tabpanel"]{display:block !important; border-top:1px solid #bbb; padding-top:.4rem}
+  .tabs [role="tabpanel"]::before{content:attr(data-title); font-family:var(--sans); font-size:8pt;
+    letter-spacing:.1em; text-transform:uppercase; color:#666; display:block; margin:.4rem 0 .2rem}
+  .quiz details{display:block}
+  .quiz .ans{display:block !important}
+  .checklist input:checked + span{text-decoration:none; color:#000}
+  a[href^="#"]::after{content:" (" attr(data-secref) ")"; font-family:var(--mono); font-size:.85em; color:#555}
+  a[href^="http"]::after{content:" (" attr(href) ")"; font-size:.8em; color:#555; word-break:break-all}
+  .term{border:0}
+  .print-only{display:block !important}
+  body[data-scope="chapter"] .chapter:not(.printing),
+  body[data-scope="chapter"] .part,
+  body[data-scope="chapter"] .cover,
+  body[data-scope="part"] .chapter:not(.printing),
+  body[data-scope="part"] .part:not(.printing),
+  body[data-scope="part"] .cover{display:none !important}
+}
+.print-only{display:none}
+</style>
+
+<script>
+(function () {
+  var lang = "ru";
+  try { lang = localStorage.getItem("lang") || "ru"; } catch (e) {}
+  if (lang !== "en") lang = "ru";
+  document.documentElement.setAttribute("data-lang", lang);
+  document.documentElement.lang = lang;
+})();
+</script>
+
+<a class="skip" href="#main" data-en="Skip navigation">Пропустить навигацию</a>
+
+<div class="shell">
+<header class="topbar">
+  <button class="ctl burger" id="burger" aria-label="Оглавление" data-en-aria-label="Table of contents" aria-expanded="false">☰</button>
+  <span class="brand">
+    <span class="mark" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i><i class="on"></i><i class="on2"></i><i></i><i></i><i></i><i class="on2"></i><i class="on3"></i><i class="on3"></i></span>
+    <span class="bt" data-en="Forward Deployed Engineering">Forward Deployed Engineering</span>
+  </span>
+  <span class="spacer"></span>
+  <span class="seglabel" data-en="Detail">Подробность</span>
+  <div class="seg only-wide" role="group" aria-label="Уровень подробности изложения" data-en-aria-label="Detail level">
+    <button data-lvl="1" aria-pressed="false" title="Только определения, изложение механизма, диаграммы и итоги" data-en="Overview" data-en-title="Definitions, core exposition, diagrams, and takeaways only">Обзор</button>
+    <button data-lvl="2" aria-pressed="true" title="Дополнительно: разбор наивных решений, пояснения к строкам кода, трек Google Cloud, вопросы" data-en="Standard" data-en-title="Adds naive-solution walkthroughs, line annotations, the Google Cloud track, and self-check questions">Стандарт</button>
+    <button data-lvl="3" aria-pressed="false" title="Дополнительно: обоснования, неочевидные кейсы, внутренняя механика" data-en="Full" data-en-title="Adds justifications, non-obvious cases, and the internal mechanics">Полный</button>
+  </div>
+  <button class="ctl only-narrow" id="lvlcycle" title="Уровень подробности изложения" data-en-title="Detail level">Стандарт</button>
+  <button class="ctl" id="find" aria-label="Поиск по учебнику" data-en-aria-label="Search the book"><span data-en="Search">Поиск</span> <kbd>/</kbd></button>
+  <button class="ctl only-wide" id="printbtn" data-en="Print">Печать</button>
+  <button class="ctl" id="langbtn" aria-label="Switch language">EN</button>
+  <button class="ctl" id="theme" aria-label="Переключить тему">◐</button>
+  <div class="progress" id="progress"></div>
+</header>
+
+<nav class="rail" id="rail" aria-label="Оглавление" data-en-aria-label="Table of contents"></nav>
+
+<main class="ribbon" id="main">

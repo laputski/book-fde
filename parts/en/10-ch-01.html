@@ -1,0 +1,756 @@
+<!-- ────────────────────────── CHAPTER 1 ────────────────────────── -->
+<section class="chapter" id="ch-1">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter one</p>
+    <span class="strata" role="img" aria-label="Layers F and G: people and process, product and feedback">
+      <i></i><i></i><i></i><i></i><i></i><i data-s="F"></i><i data-s="G"></i>
+    </span>
+  </div>
+  <h2 id="s-1"><span class="num">1</span>The Engineer-Diplomat</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>tell the work of an FDE from that of a solutions engineer and a consultant by what stays with the customer after signature;</li>
+<li>decompose an engagement into phases whose gates carry a measurable exit criterion and a named owner;</li>
+<li>run discovery so that every conversation leaves an artefact with a source, a confidence and a next step;</li>
+<li>ship a thin vertical slice on day one, while data access is still pending;</li>
+<li>tell a request an FDE accepts from a request that turns the FDE into a systems integrator.</li>
+</ul>
+</div>
+
+<h3 id="s-1-1"><span class="num">1.1</span>The task: day one at Nordbank</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Case file CF1 · Nordbank Regional</a></span>
+  <span class="tag">12 weeks</span>
+  <span class="tag">sponsor: chief technology officer</span>
+  <span class="tag">no access yet</span>
+  <span>a regional bank</span>
+</div>
+
+<p>The account team closed the Nordbank deal with the phrase "AI for the contact centre". The deal covers four hundred operators, two million customers and a budget the board approved for the year. The engineer arrives on site on Monday: the term of the engagement is twelve weeks, the sponsor is the chief technology officer, and there is no access to any system of the bank. Call transcripts are promised "after the DLP review", and nobody names a date for that review.</p>
+
+<p>On day one the term, the sponsor, the industry and the direction of the work are known; at the start of an engagement this amount of information is typical. The data and its quality, the procedure operators actually follow, the full list of approvers and which of the contact centre's four queues will yield a measurable effect first are unknown. The bank's chief information security officer doubts that the project will succeed and gives the reason: the previous vendor demonstrated twice on invented data and never took a system into operation.</p>
+
+<p>Two artefacts are due by the Friday of week one. The first is a plan for the week in which every item has an owner, a date and a condition for being done. The second is the engagement operating model: phases with gates, a meeting cadence, a decision log and a risk register. This chapter builds both artefacts and shows why the second remains in force longer than the first. The substance of discovery, requirements and scoping is covered in <a href="#ch-2" data-secref="2">Chapter 2</a>; what is built here is the mechanics of the role.</p>
+
+<h3 id="s-1-2"><span class="num">1.2</span>Why the consulting scheme does not complete the last mile</h3>
+
+<p>The last mile is the work that separates a frontier model from a working service at a customer; the volume of that work does not decrease as the quality of the model improves. The work has three components. The first is integration: protocols dating from the mainframe era, identity schemes, rate limits, maintenance windows and failure modes. The second is data readiness: missing labels, duplicates, fields that are filled in against the manual, and exports that lag by a day. The third is state management: an operator's session, a case queue and an attempted write have to persist through restarts and retries.</p>
+
+<dl class="def">
+<dt>Engagement</dt>
+<dd>A time-boxed period of an engineer's work inside the customer's organisation, eight to sixteen weeks long, with a named sponsor, phases, gates and an exit condition. The result of an engagement is measured by the state of the system in the customer's production; in this it differs from a project, whose result is measured by the volume of work performed. It differs from support in having an end date agreed in advance.</dd>
+</dl>
+
+<p>In the consulting scheme the result of this work is a document: an analyst describes the target state and another organisation builds the system. The weakness of the scheme is that the knowledge that makes a system work is acquired while building it and is not transferred by text. For example, the document does not state that the <code>segment_code</code> field holds values left over from a 2014 migration for a quarter of the customers, or that the shift supervisor rejects any interface that gives the operator a second screen. When such knowledge is passed across an organisational boundary it is lost, and the receiving side builds the system from a document that lacks these facts.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Role</th><th>Output of the work</th><th>Moment it ends</th><th>What measures it</th></tr></thead>
+<tbody>
+<tr><td>Solutions engineer</td><td>a demo, an architecture diagram, answers to procurement</td><td>signature of the contract</td><td>share of deals won</td></tr>
+<tr><td>Consultant</td><td>recommendations, a target architecture, a roadmap</td><td>delivery of the report</td><td>hours and customer satisfaction</td></tr>
+<tr><td>FDE</td><td>working code in the customer's environment with an owner after departure</td><td>crossing the handover gate</td><td>a process metric that moved in production</td></tr>
+</tbody></table></div>
+
+<p>Hence the working definition of the role: an FDE is judged by the system that works in production inside the customer's constraints. Data residency, the approval chain through the chief information security officer and the mainframe's night window are part of the statement of the problem alongside the users' requirements. Organisational constraints determine the technical solution, so in this role they are part of the engineering work.</p>
+
+<div class="warn"><b>Common mistake</b>Opening with a two-week analysis and a presentation of the target architecture. A customer who has already seen presentations counts those weeks as lost, and the sponsor has nothing to present to the board in defence of the budget. The first demonstration shows a working slice, even on synthetic data, and it takes place in the first week.</div>
+
+<h3 id="s-1-3"><span class="num">1.3</span>Anatomy of an engagement</h3>
+
+<p>This book takes the term of an engagement to lie between eight and sixteen weeks, and each bound has a reason. Under eight weeks there is not enough time for access to be granted, and everything done before it is granted has to be redone on real data. Over sixteen weeks the mechanism of the role breaks down: the engineer stops being an external participant and in effect becomes a member of the customer's staff, the customer stops preparing its own people to own the code, and the product team stops receiving field patterns. A pattern is identified by comparing several engagements, so a single long engagement does not reveal it.</p>
+
+<p>Inside the term, time is marked out by gates. A gate is a checkable condition for crossing: a short list of statements, each of which on the day of the check is either true or not. A gate has an owner, that is, a person with a name who runs the check and signs it off. Dates follow from the crossing of gates: an unmet condition shifts the scale to the right and remains in force.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 330" role="img" aria-label="The calendar of a twelve-week engagement: three lanes, the customer, the FDE squad and the product team, crossed by six gates, from the thin slice in week one to the handover in week twelve, with the production gate crossed in week eight" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="140" y="30" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">week</text>
+  <text x="179" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">1</text>
+  <text x="238" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">2</text>
+  <text x="297" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">3</text>
+  <text x="356" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">4</text>
+  <text x="415" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">5</text>
+  <text x="474" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">6</text>
+  <text x="533" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">7</text>
+  <text x="592" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">8</text>
+  <text x="651" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">9</text>
+  <text x="710" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">10</text>
+  <text x="769" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">11</text>
+  <text x="828" y="30" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">12</text>
+  <line x1="150" y1="38" x2="858" y2="38" stroke="var(--line)" stroke-width="1"/>
+
+  <rect x="150" y="66" width="708" height="44" rx="5" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="150" y="122" width="708" height="44" rx="5" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <rect x="150" y="178" width="708" height="44" rx="5" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="140" y="92" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">customer</text>
+  <text x="140" y="148" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">FDE squad</text>
+  <text x="140" y="204" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">product team</text>
+
+  <g data-step="1" data-caption="The customer lane: access requests are filed from day one, operators enter the pilot, the code owner accepts the work.">
+    <rect x="150" y="74" width="177" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="238" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">IAM and DLP requests</text>
+    <rect x="386" y="74" width="177" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="474" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">operators in the pilot</text>
+    <rect x="681" y="74" width="177" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="769" y="92" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">the owner accepts the code</text>
+  </g>
+
+  <g data-step="2" data-caption="The FDE squad lane: a slice in week one, integrations and the eval set, production, then the handover.">
+    <rect x="150" y="130" width="118" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+    <text x="209" y="148" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">thin slice</text>
+    <rect x="268" y="130" width="236" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+    <text x="386" y="148" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">integrations and the eval set</text>
+    <rect x="504" y="130" width="177" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+    <text x="592" y="148" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">production and on-call</text>
+    <rect x="681" y="130" width="177" height="28" rx="4" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+    <text x="769" y="148" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">handover and documentation</text>
+  </g>
+
+  <g data-step="3" data-caption="The product lane: field patterns are collected from week two, requests are passed on with evidence, recurring functionality is moved into a module.">
+    <rect x="209" y="186" width="177" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+    <text x="297" y="204" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">field patterns</text>
+    <rect x="445" y="186" width="236" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+    <text x="563" y="204" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">feature requests with data</text>
+    <rect x="740" y="186" width="118" height="28" rx="4" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+    <text x="799" y="204" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">module</text>
+  </g>
+
+  <g data-step="4" data-caption="Six gates mark out the term: production is crossed in week eight, and the last four weeks go to handing ownership over.">
+    <line x1="209" y1="61" x2="209" y2="236" stroke="var(--line-strong)" stroke-width="1.3"/>
+    <line x1="327" y1="61" x2="327" y2="236" stroke="var(--line-strong)" stroke-width="1.3"/>
+    <line x1="445" y1="61" x2="445" y2="236" stroke="var(--line-strong)" stroke-width="1.3"/>
+    <line x1="563" y1="61" x2="563" y2="236" stroke="var(--line-strong)" stroke-width="1.3"/>
+    <line x1="622" y1="61" x2="622" y2="236" stroke="var(--line-strong)" stroke-width="1.3"/>
+    <line x1="858" y1="61" x2="858" y2="236" stroke="var(--line-strong)" stroke-width="1.3"/>
+    <circle cx="209" cy="52" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="209" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">1</text>
+    <circle cx="327" cy="52" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="327" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">2</text>
+    <circle cx="445" cy="52" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="445" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">3</text>
+    <circle cx="563" cy="52" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="563" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">4</text>
+    <circle cx="622" cy="52" r="9" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+    <text x="622" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">5</text>
+    <circle cx="858" cy="52" r="9" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+    <text x="858" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">6</text>
+    <text x="14" y="268" font-family="Inter,sans-serif" font-size="11" fill="currentColor">1 · slice on synthetic data</text>
+    <text x="300" y="268" font-family="Inter,sans-serif" font-size="11" fill="currentColor">2 · data access granted</text>
+    <text x="586" y="268" font-family="Inter,sans-serif" font-size="11" fill="currentColor">3 · pilot: twenty operators</text>
+    <text x="14" y="292" font-family="Inter,sans-serif" font-size="11" fill="currentColor">4 · evaluation gate passed</text>
+    <text x="300" y="292" font-family="Inter,sans-serif" font-size="11" fill="currentColor">5 · production for one queue</text>
+    <text x="586" y="292" font-family="Inter,sans-serif" font-size="11" fill="currentColor">6 · handover to the owner</text>
+  </g>
+
+  <text x="440" y="318" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">An unmet condition shifts the scale to the right; a gate cannot be cancelled, only renegotiated by a decision.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The production gate is crossed around week eight, and the last four weeks are allotted to handing ownership over. If production is scheduled for week twelve, no time remains for the handover, and the engagement ends in code nobody answers for.</figcaption>
+</figure>
+
+<p>The three lanes of the diagram correspond to the three parties whose work makes up an engagement. The customer grants access, assigns operators and accepts the code at the end; the engineer can do none of those on its behalf. The FDE squad builds the slice, the integrations and the eval set and sets up the on-call rota. The product team receives field patterns, that is, combinations of a problem, a constraint and a solution that recurred across several engagements, and releases product features that replace the corresponding engagement code. A plan item assigned to no lane has no one to perform it.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to write down an engagement plan">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="0">
+      <figcaption><span class="file">naive_plan.py</span></figcaption>
+      <pre><code>"""A naive engagement plan: a to-do list in a dict."""
+
+PLAN = {
+    "week 1": ["meet the stakeholders", "ask for data access"],
+    "week 2": ["clarify the requirements", "pick a model"],
+    "weeks 3-10": ["development", "a demo every two weeks"],
+    "weeks 11-12": ["final demo", "handover"],
+}
+
+if __name__ == "__main__":
+    tasks = [t for group in PLAN.values() for t in group]
+    assert len(tasks) == 8
+    assert all(isinstance(t, str) for t in tasks)   # a string with no owner or condition
+    print(len(tasks), "items: no owner, no exit criterion, no gate")</code></pre>
+    </figure>
+    <p>A to-do list has no exit conditions, owners or gates. The item "clarify the requirements" carries no condition under which it counts as done, so it can be worked on until the end of the engagement. The eight weeks between the second and the eleventh are labelled with the single word "development", and a slip inside that interval cannot be detected before week ten. No item has an owner, and the first item that requires action from the bank is left without an addressee.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">engagement.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+
+MAX_WEEKS = 16
+
+
+class Gate(BaseModel):
+    """A gate: a checkable condition for crossing, with a week and an owner."""
+
+    name: str
+    week: int = Field(ge=1, le=MAX_WEEKS)
+    owner: str = Field(min_length=3)          # the name of a specific person
+    exit_criteria: list[str] = Field(min_length=1)
+
+    @field_validator("exit_criteria")
+    @classmethod
+    def measurable(cls, criteria: list[str]) -&gt; list[str]:
+        for line in criteria:
+            if not any(ch.isdigit() for ch in line):
+                raise ValueError(f"a criterion without a number is uncheckable: {line}")
+        return criteria
+
+
+class Phase(BaseModel):
+    name: str
+    first_week: int = Field(ge=1, le=MAX_WEEKS)
+    last_week: int = Field(ge=1, le=MAX_WEEKS)
+    gate: Gate | None = None
+
+    @model_validator(mode="after")
+    def gate_required(self) -&gt; Phase:
+        if self.gate is None:
+            raise ValueError(f"phase {self.name} has no gate")
+        if not self.first_week &lt;= self.gate.week &lt;= self.last_week:
+            raise ValueError(f"gate {self.gate.name} lies outside its phase")
+        return self
+
+
+class RiskEntry(BaseModel):
+    risk: str
+    probability: float = Field(ge=0.0, le=1.0)
+    delay_weeks: int = Field(ge=0)
+    owner: str
+    mitigation: str
+
+    @property
+    def expected_delay(self) -&gt; float:
+        return self.probability * self.delay_weeks
+
+
+class Engagement(BaseModel):
+    customer: str
+    weeks: int = Field(ge=8, le=MAX_WEEKS)
+    sponsor: str
+    phases: list[Phase]
+    risks: list[RiskEntry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def phases_cover_the_term(self) -&gt; Engagement:
+        week = 1
+        for phase in self.phases:
+            if phase.first_week != week:
+                raise ValueError(f"a gap in the calendar before phase {phase.name}")
+            week = phase.last_week + 1
+        if week != self.weeks + 1:
+            raise ValueError("the phases do not cover the term of the engagement")
+        return self
+
+    def gate(self, name: str) -&gt; Gate:
+        for phase in self.phases:
+            if phase.gate is not None and phase.gate.name == name:
+                return phase.gate
+        raise KeyError(name)
+
+    def expected_delay(self) -&gt; float:
+        return sum(r.expected_delay for r in self.risks)
+
+
+def nordbank() -&gt; Engagement:
+    """Twelve weeks at Nordbank: six phases, six gates, three risks."""
+    return Engagement(
+        customer="Nordbank Regional",
+        weeks=12,
+        sponsor="Martin Hagen, chief technology officer",
+        phases=[
+            Phase(name="thin slice", first_week=1, last_week=1, gate=Gate(
+                name="slice on synthetic data", week=1, owner="Martin Hagen",
+                exit_criteria=["3 end-to-end answers on synthetic transcripts",
+                               "1 demo to the sponsor on the first Friday"])),
+            Phase(name="access and discovery", first_week=2, last_week=3, gate=Gate(
+                name="access granted", week=3, owner="Eva Lann",
+                exit_criteria=["2 accounts in the test environment",
+                               "an export of 30 days of transcripts"])),
+            Phase(name="integration", first_week=4, last_week=5, gate=Gate(
+                name="pilot", week=5, owner="Per Ulsen",
+                exit_criteria=["20 operators working in the pilot",
+                               "p95 answer latency under 4 seconds"])),
+            Phase(name="evaluation", first_week=6, last_week=7, gate=Gate(
+                name="evaluation gate", week=7, owner="Siv Berg",
+                exit_criteria=["a set of 200 labelled cases",
+                               "share of correct source citations at least 0.9"])),
+            Phase(name="production", first_week=8, last_week=9, gate=Gate(
+                name="production", week=8, owner="Martin Hagen",
+                exit_criteria=["1 queue served in production",
+                               "on-call accepted by 2 of the bank's engineers"])),
+            Phase(name="handover", first_week=10, last_week=12, gate=Gate(
+                name="handover", week=12, owner="Per Ulsen",
+                exit_criteria=["2 of the bank's engineers release on their own",
+                               "0 open items in the decision log"])),
+        ],
+        risks=[
+            RiskEntry(risk="the DLP review drags on", probability=0.5, delay_weeks=3,
+                      owner="Eva Lann", mitigation="file on day 1, work on synthetic data"),
+            RiskEntry(risk="the mainframe night window blocks the export", probability=0.3,
+                      delay_weeks=1, owner="Siv Berg", mitigation="a 30-day mirror"),
+            RiskEntry(risk="the sponsor changes the pilot queue", probability=0.2, delay_weeks=2,
+                      owner="Martin Hagen", mitigation="decision log, review in week 2"),
+        ],
+    )
+
+
+if __name__ == "__main__":
+    plan = nordbank()
+    assert plan.gate("production").week == 8          # production arrives before the end
+    assert [p.gate.week for p in plan.phases if p.gate is not None] == [1, 3, 5, 7, 8, 12]
+    assert round(plan.expected_delay(), 2) == 2.2     # expected delay in weeks
+    try:
+        Phase(name="demos", first_week=4, last_week=9)
+        raise AssertionError("a phase without a gate must be rejected")
+    except ValidationError as err:
+        assert "has no gate" in str(err)
+    try:
+        Gate(name="success", week=5, owner="Per Ulsen", exit_criteria=["the agent works well"])
+        raise AssertionError("a criterion without a number must be rejected")
+    except ValidationError as err:
+        assert "uncheckable" in str(err)
+    print(len(plan.phases), "phases, each with its own gate; expected delay",
+          round(plan.expected_delay(), 1), "weeks")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="owner: str = Field(min_length=3)">line 13</span><p>The owner of a gate is a specific person. A department as owner does not answer email and does not turn up for the check, while a surname in the owner field makes the gate a particular person's task. The same rule applies to the risk register and the decision log.</p></div>
+        <div><span class="at" data-anchor="if not any(ch.isdigit() for ch in line):">line 20</span><p>Requiring a number in the exit criterion is a simple filter for uncheckable wording. The truth of the wording "the agent works well" cannot be established unambiguously, while the criterion "p95 answer latency under 4 seconds" is checked unambiguously. The validator rejects the first wording while the plan is being assembled, that is, before the gate check at which it would have to be interpreted.</p></div>
+        <div><span class="at" data-anchor="if self.gate is None:">line 33</span><p>A phase without a gate is forbidden by the model. This is what distinguishes a plan from a to-do list: a stretch of time with no checkable exit expands to fill the rest of the term, because nothing signals that it is over.</p></div>
+        <div><span class="at" data-anchor="return self.probability * self.delay_weeks">line 49</span><p>A risk is expressed as an expected delay in weeks, that is, the product of the probability and the length of the delay. Unlike a colour mark in a table cell, such quantities add up: the sum of the expected delays over the register gives the reserve that either exists in the calendar or has to be discussed with the sponsor in the first week.</p></div>
+        <div><span class="at" data-anchor="if phase.first_week != week:">line 63</span><p>Phases must cover the term without gaps or overlaps. A gap in the calendar means weeks nobody reports on; the check detects it while the plan is being assembled, when the fix costs one line.</p></div>
+        <div><span class="at" data-anchor="week=8, owner=">line 104</span><p>The production gate stands in week eight of a twelve-week engagement. The four weeks after it go to on-call, documentation and training the bank's engineers. A plan that puts production in the last week contains no handover.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference is checkability. A to-do list consists of strings, while an engagement model consists of statements whose truth can be established on a named day. The validator that rejects a criterion without a number moves the argument about the meaning of "done" from week twelve to week one.</p>
+    <p>The second difference is addressing. An item on a list has no owner, so items that require action from the bank are done by the engineer or not done at all. A gate has an owner with a name, and granting access becomes a specific person's commitment.</p>
+    <p>The third difference is the treatment of time. A list sets dates and says nothing about what happens when they are missed. The model sets gates, a risk register and an expected delay, so a slip is discussed in advance and measured in weeks.</p>
+  </div>
+</div>
+
+<div class="note" data-level="2">Eight-week engagements occur where the customer's systems are already open through APIs and access is granted within days. Sixteen-week ones occur in regulated industries where the security review alone can take a month. The term is chosen by the time it takes to grant access. The volume of functionality is unsuitable as the basis for the term: the volume is fitted to the term, while the time it takes to grant access does not depend on the engagement team.</div>
+
+<h3 id="s-1-4"><span class="num">1.4</span>Discovery as engineering</h3>
+
+<p>A conversation is an instrument for collecting data, and its result is recorded in the same way as the result of an export from a database. In the active phase of the Nordbank engagement there are five to fifteen conversations a week: operators, shift supervisors, system administrators, the compliance officer, the bank's architect. A conversation after which no artefact remains counts as not held: two weeks later only an impression remains, and an impression can neither be checked nor handed to a colleague.</p>
+
+<p>A conversation leaves an artefact of one of two kinds. It either closes a question, and then a decision appears, or opens a claim that needs verification, and then a requirement candidate appears. Both artefacts have the same structure: a source, the content, the consequence and a next step with an owner. The decision log is built first, because decisions are taken from day one and some of them are superseded later.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">decision_log.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Decision:
+    """A log entry: taken once and never edited afterwards."""
+
+    id: str
+    week: int
+    question: str
+    choice: str
+    because: str
+    supersedes: str | None = None
+
+
+class DecisionLog:
+    """An append-only log: status is computed from the links."""
+
+    def __init__(self) -&gt; None:
+        self._rows: list[Decision] = []
+        self._by_id: dict[str, Decision] = {}
+
+    def append(self, row: Decision) -&gt; Decision:
+        if row.id in self._by_id:
+            raise ValueError(f"identifier {row.id} is already taken")
+        if self._rows and row.week &lt; self._rows[-1].week:
+            raise ValueError(f"a backdated entry: week {row.week}")
+        if row.supersedes is not None:
+            old = self._by_id.get(row.supersedes)
+            if old is None:
+                raise ValueError(f"decision {row.supersedes} is not in the log")
+            if old.week &gt; row.week:
+                raise ValueError("a decision from the future cannot be superseded")
+        self._rows.append(row)
+        self._by_id[row.id] = row
+        return row
+
+    def __len__(self) -&gt; int:
+        return len(self._rows)
+
+    def superseded_by(self, decision_id: str) -&gt; str | None:
+        return next((r.id for r in self._rows if r.supersedes == decision_id), None)
+
+    def status(self, decision_id: str) -&gt; str:
+        return "superseded" if self.superseded_by(decision_id) else "in force"
+
+    def in_force(self) -&gt; list[Decision]:
+        return [r for r in self._rows if self.superseded_by(r.id) is None]
+
+    def problems(self) -&gt; list[str]:
+        """Consistency: no self-references, no dangling links, no double supersession."""
+        found: list[str] = []
+        replaced: dict[str, int] = {}
+        for row in self._rows:
+            if row.supersedes is None:
+                continue
+            replaced[row.supersedes] = replaced.get(row.supersedes, 0) + 1
+            if row.supersedes == row.id:
+                found.append(f"{row.id} supersedes itself")
+            if row.supersedes not in self._by_id:
+                found.append(f"{row.id} refers to unknown {row.supersedes}")
+        found += [f"{k} is superseded more than once" for k, n in replaced.items() if n &gt; 1]
+        return found
+
+
+if __name__ == "__main__":
+    log = DecisionLog()
+    log.append(Decision("D-1", 1, "what to build the slice on before access",
+                        "synthetic transcripts", "access is expected by week 3"))
+    log.append(Decision("D-2", 2, "scope of the pilot",
+                        "one queue: cards", "other queues need a different ontology"))
+    log.append(Decision("D-3", 5, "scope of the pilot",
+                        "two queues: cards and card blocks", "the second queue takes the same tools",
+                        supersedes="D-2"))
+    assert log.status("D-2") == "superseded" and log.status("D-3") == "in force"
+    assert [d.id for d in log.in_force()] == ["D-1", "D-3"]
+    assert log.problems() == []
+    try:
+        log.append(Decision("D-4", 4, "scope of the pilot", "back to one queue",
+                            "that is what the SOW said", supersedes="D-1"))
+        raise AssertionError("a backdated entry must be rejected")
+    except ValueError:
+        pass
+    print(len(log.in_force()), "decisions in force out of", len(log), "log entries")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="row.week &lt; self._rows[-1].week">line 28</span><p>Backdated entries are forbidden, so the order of entries matches the order of events. Two months later such a log shows what was known at the moment of each decision.</p></div>
+  <div><span class="at" data-anchor="if old.week &gt; row.week:">line 34</span><p>Only a decision taken earlier can be superseded. A reference to a decision from the future means the history was altered after the fact, and from then on the log cannot serve as evidence in a conversation with the sponsor.</p></div>
+  <div><span class="at" data-anchor="def status(self, decision_id: str)">line 46</span><p>Status is computed from the links. If status were stored in a field, that field would have to be changed, that is, an existing entry would have to be edited, and the log would stop being append-only.</p></div>
+  <div><span class="at" data-anchor="found += [f">line 64</span><p>Two decisions superseding the same one mean a divergence: the log holds two branches of decisions, each recorded as current. The consistency check runs before every meeting with the sponsor and takes milliseconds.</p></div>
+</div>
+</figure>
+
+<p>A decision is written down together with its reason, because the reason is what is checked when the decision is revisited. Six weeks later the circumstances change and the question "why did we take one queue and not two" is asked again, usually by a new participant. If the line "because other queues need a different ontology" still holds, the question is settled in a minute. If it has stopped holding, the decision is superseded by a new decision, and the old entry is not edited.</p>
+
+<p>The second artefact arises from claims that are stated as facts in conversation. Some of them are measured, some are stated from memory, and some are a speaker's guess about how a neighbouring department works. They must not be mixed: a requirement derived from a guess reaches acceptance and, once it proves wrong, lowers trust in the whole list. A requirement candidate therefore carries a source, a level of confidence and an owner of the verification.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">conversation_to_artifact.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from pydantic import BaseModel, Field, model_validator
+
+CONFIDENCE = {"+": 0.9, "!": 0.5, "?": 0.2}   # measured, stated from memory, assumed
+
+NOTE = """
+source: Per Ulsen, head of the contact centre, week 1, day 2
+
+A conversation about why an operator keeps three windows open at once.
+
++ 412 operators work across three shifts
+! an operator spends up to 4 minutes collecting history from three systems
+? average handling time equals 6 minutes 40 seconds @ AHT export for a quarter | Siv Berg
+? half of the cases close without core banking @ labelling of 200 cases | Siv Berg
+"""
+
+
+class RequirementCandidate(BaseModel):
+    """A requirement candidate: a claim with a source and a next step."""
+
+    text: str = Field(min_length=8)
+    source: str = Field(min_length=3)         # who said it and when
+    confidence: float = Field(ge=0.0, le=1.0)
+    follow_up: str = ""
+    follow_up_owner: str = ""
+
+    @model_validator(mode="after")
+    def weak_claims_need_an_owner(self) -&gt; RequirementCandidate:
+        if self.confidence &lt; 0.5 and not self.follow_up_owner:
+            raise ValueError(f"a weak claim without a verification owner: {self.text}")
+        return self
+
+
+def read_note(note: str) -&gt; list[RequirementCandidate]:
+    """Parse the note: a "source:" line, then claims marked with + ! or ?."""
+    source = ""
+    rows: list[RequirementCandidate] = []
+    for raw in note.strip().splitlines():
+        line = raw.strip()
+        if line.startswith("source:"):
+            source = line.removeprefix("source:").strip()
+            continue
+        marker, _, rest = line.partition(" ")
+        if marker not in CONFIDENCE:
+            continue                          # the prose of the note yields no artifact
+        claim, _, tail = rest.partition("@")
+        follow_up, _, owner = tail.partition("|")
+        rows.append(RequirementCandidate(
+            text=claim.strip(),
+            source=source,
+            confidence=CONFIDENCE[marker],
+            follow_up=follow_up.strip(),
+            follow_up_owner=owner.strip(),
+        ))
+    return rows
+
+
+if __name__ == "__main__":
+    rows = read_note(NOTE)
+    assert len(rows) == 4                     # four claims, the prose skipped
+    assert all(r.source.startswith("Per Ulsen") for r in rows)
+    assert [r.confidence for r in rows] == [0.9, 0.5, 0.2, 0.2]
+    assert all(r.follow_up_owner == "Siv Berg" for r in rows if r.confidence &lt; 0.5)
+    try:
+        RequirementCandidate(text="the operators dislike their tools",
+                             source="a corridor conversation, week 1", confidence=0.2)
+        raise AssertionError("a weak claim must be given a verification owner")
+    except ValueError:
+        pass
+    print(len(rows), "requirement candidates: each with a source and a next step")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="CONFIDENCE = {">line 5</span><p>Three markers separate the measured, the stated from memory and the assumed. The marking is done during the conversation with a single character, because after the conversation it is, as a rule, no longer done.</p></div>
+  <div><span class="at" data-anchor="if self.confidence &lt; 0.5 and not self.follow_up_owner:">line 30</span><p>A weak claim without an owner for its verification is rejected by the model. The rule converts uncertainty into a task with an addressee: either the claim acquires a way of being checked, or it does not enter the list of requirements.</p></div>
+  <div><span class="at" data-anchor="source = line.removeprefix">line 42</span><p>The source is attached to every candidate automatically from the header of the note. A claim without a source cannot be re-checked, and a month later cannot even be traced back to whoever made it.</p></div>
+  <div><span class="at" data-anchor="if marker not in CONFIDENCE:">line 45</span><p>The prose of the note yields no artefact. The note stays a free-form record of the conversation, and extraction works only on marked lines, so the length of the note does not inflate the list of requirements.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Collecting conversation notes in a shared document and processing them "once enough material accumulates". Material accumulates faster than it is processed, and by week three the document holds contradictory claims without sources. The artefact is created within an hour of the conversation, while it is still known who said what and in answer to which question.</div>
+
+<h3 id="s-1-5"><span class="num">1.5</span>Shipping on day one</h3>
+
+<dl class="def">
+<dt>Thin vertical slice</dt>
+<dd>A working path through every layer of the future system for one narrow case: the user's input, a call on the data, the model's work, an action or an answer, a log entry. A slice differs from a prototype in that each of its layers is part of the future system and stays in it, and from a demo in that a user of the customer runs it.</dd>
+</dl>
+
+<p>If shipping is taken to mean a volume of functionality, shipping on day one is impossible, so what ships on day one is a path through the system. For Nordbank the path runs from an operator's question through a search of the knowledge base and the generation of an answer to a card with a citation of the source, and in the first week it works on three synthetic cases. The contact centre does not yet use that slice in its work. The slice is useful to the engagement because a conversation about a future system becomes a conversation about a specific, if very small, system.</p>
+
+<p>The slice solves three problems. It makes the subject concrete: a shift supervisor who has seen the card talks about the fields it is missing. It exposes obstacles while removing them is still cheap: an attempt to call the test environment on day two reveals that access to it is granted through a separate request with a two-week lead time. And it gives the sponsor a working result to present at the next committee in defence of the budget.</p>
+
+<p>Data for the slice comes from three sources as they become available. Synthetic cases are written by hand from the description of the procedure and serve only for the first week. A mirror, that is, an anonymised export over a short period, requires one approval instead of full access and is often granted sooner. Real data arrives after the access gate and at once refutes some of the slice's assumptions, which is its main use at this stage.</p>
+
+<div class="note" data-level="2">Synthetic data is written by the same person who writes the system, so the system works on it by construction. Such data is fit for checking the path and unfit for measuring quality. Evaluation sets are built only from field data; how they are built is covered in <a href="#ch-12" data-secref="12">Chapter 12</a>.</div>
+
+<h3 id="s-1-6"><span class="num">1.6</span>Three loyalties and the loop into product</h3>
+
+<p>An engineer at the customer's site carries three obligations, and they can contradict one another. The first is to the customer, who pays and expects a working system. The second is to the product, which the FDE represents and whose long-term shape the FDE's decisions influence. The third is to the facts, that is, to the measured behaviour of the model on the customer's data. The third loyalty serves as the criterion when the first two conflict, so in disputed cases the decision follows the facts.</p>
+
+<p>Conflicts arise in ordinary working situations. The customer asks for a rule in the prompt that will cover an awkward case at the demo; the rule improves one example and degrades ten, which the evaluation set shows. The product team asks for a new module to be deployed which, in this environment, does not satisfy the data residency requirement. In both cases the engineer moves the conversation into a checkable form: a measurement on the evaluation set, a constraint in writing, a decision in the log. Without measurements the engineer has to choose between loyalties with no data to base the choice on.</p>
+
+<p>The loop into product is a mechanism with an acceptance rule. A pattern met at three customers is treated as a requirement on the product, and the product team accepts it on evidence: at how many customers it occurred, how many engineer-weeks the workaround costs in each, what breaks if the workaround stays. The mechanics of turning patterns into modules and requests are described in <a href="#s-16-5" data-secref="16.5">Section 16.5</a>; what matters for this chapter is that the evidence is gathered from the first week of the engagement.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 380" role="img" aria-label="An ownership map: the customer perimeter with data and infrastructure on top, the engagement zone with the code and the exit model in the middle, the vendor with the product and the request queue below, and four arrows of artefacts between them" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="100" y="20" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sA)">Customer perimeter</text>
+  <text x="780" y="20" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">owned by the customer</text>
+  <rect x="100" y="26" width="680" height="78" rx="8" fill="none" stroke="var(--sA)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="120" y="40" width="310" height="50" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="275" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">customer data</text>
+  <text x="275" y="78" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ACL · residency · regulator</text>
+  <rect x="450" y="40" width="310" height="50" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="605" y="60" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">customer infrastructure</text>
+  <text x="605" y="78" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">VPC · release · on-call rota</text>
+
+  <text x="100" y="152" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sF)">Engagement zone</text>
+  <text x="780" y="152" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">owner named in week 1</text>
+  <rect x="100" y="158" width="680" height="78" rx="8" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="120" y="172" width="310" height="50" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="275" y="192" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">engagement code</text>
+  <text x="275" y="210" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">adapters · prompts · eval set</text>
+  <rect x="450" y="172" width="310" height="50" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.5"/>
+  <text x="605" y="192" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">exit model</text>
+  <text x="605" y="210" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">customer · product · deletion</text>
+
+  <text x="100" y="284" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sG)">Vendor</text>
+  <text x="780" y="284" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">owned by the product team</text>
+  <rect x="100" y="290" width="680" height="78" rx="8" fill="none" stroke="var(--sG)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="120" y="304" width="310" height="50" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="275" y="324" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">vendor product</text>
+  <text x="275" y="342" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">SDK · modules · roadmap</text>
+  <rect x="450" y="304" width="310" height="50" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="605" y="324" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">request queue</text>
+  <text x="605" y="342" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">frequency · workaround cost</text>
+
+  <line x1="275" y1="90" x2="275" y2="152" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar1b)"/>
+  <text x="290" y="128" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">reads under the customer's ACL</text>
+  <line x1="605" y1="172" x2="605" y2="98" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar1b)"/>
+  <text x="620" y="128" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">handover gate: the owner accepts the code</text>
+  <line x1="230" y1="222" x2="230" y2="284" stroke="var(--sG)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar1b)"/>
+  <text x="220" y="262" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">field patterns</text>
+  <line x1="320" y1="304" x2="320" y2="228" stroke="var(--sG)" stroke-width="1.4" marker-end="url(#ar1b)"/>
+  <text x="334" y="262" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">product features</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Engagement code that has no owner after the handover gate becomes a liability: the customer's team cannot change it, the product team does not maintain it, and the engineer is already working at another site. The exit model is chosen in week one and determines how that code is written.</figcaption>
+</figure>
+
+<p>The diagram shows why the question "who will own this code" is asked in week one: the answer changes decisions immediately. Code the customer will take is written in its language, in its repository and under its release rules; code the product will take is written against the product's interfaces and with generalisation; code that will be deleted is written as an experiment and marked as temporary. The three exit models are described in <a href="#s-1-9" data-secref="1.9">Section 1.9</a>.</p>
+
+<h3 id="s-1-7"><span class="num">1.7</span>Refusing the systems-integrator role</h3>
+
+<dl class="def">
+<dt>Systems integrator</dt>
+<dd>A contractor that connects a customer's existing systems to the customer's specification and is paid for the time spent. Its work differs from an FDE's work in two respects: it does not touch the AI product and it does not recur at other customers, so it produces neither modules nor requirements on the product.</dd>
+</dl>
+
+<p>Two or three weeks into an engagement the engineer often turns out to be the only person who understands both the bank's systems and the new technology. From that moment on, requests unrelated to the task start arriving: fix the export into the warehouse, write an integration between the CRM and telephony, help the reporting department. Each such request is justified and takes about a day. Together they fill twelve weeks with integration work after which neither a module nor a metric in production remains.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 340" role="img" aria-label="A decision tree for an incoming request: three questions in a row about whether the request touches the AI product, whether it has an owner at the customer and whether it will recur at other customers, and four outcomes, from declining to accepting and queueing it for product" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar1c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="60" y="26" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">STAKEHOLDER REQUEST</text>
+  <text x="520" y="26" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">DECISION</text>
+
+  <rect x="60" y="40" width="320" height="50" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="76" y="62" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Does it touch the AI product?</text>
+  <text x="76" y="80" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">model · tools · evaluation</text>
+  <rect x="60" y="130" width="320" height="50" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="76" y="152" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Is there an owner at the customer?</text>
+  <text x="76" y="170" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">a named person</text>
+  <rect x="60" y="220" width="320" height="50" rx="5" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="76" y="242" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Will it recur elsewhere?</text>
+  <text x="76" y="260" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">two or more engagements</text>
+
+  <line x1="380" y1="65" x2="512" y2="65" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar1c)"/>
+  <text x="446" y="57" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <line x1="380" y1="155" x2="512" y2="155" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar1c)"/>
+  <text x="446" y="147" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <line x1="380" y1="245" x2="512" y2="245" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar1c)"/>
+  <text x="446" y="237" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no</text>
+  <line x1="220" y1="90" x2="220" y2="124" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar1c)"/>
+  <text x="232" y="112" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+  <line x1="220" y1="180" x2="220" y2="214" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar1c)"/>
+  <text x="232" y="202" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+  <line x1="220" y1="270" x2="220" y2="284" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar1c)"/>
+  <text x="232" y="284" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">yes</text>
+
+  <rect x="520" y="45" width="330" height="40" rx="20" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="685" y="69" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">decline: integrator work</text>
+  <rect x="520" y="135" width="330" height="40" rx="20" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="685" y="159" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">reframe: find the owner first</text>
+  <rect x="520" y="225" width="330" height="40" rx="20" fill="none" stroke="var(--sF)" stroke-width="1.6"/>
+  <text x="685" y="249" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">accept: one-off engagement work</text>
+  <rect x="60" y="290" width="320" height="40" rx="20" fill="none" stroke="var(--sG)" stroke-width="1.8"/>
+  <text x="220" y="314" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" fill="currentColor">accept and queue it for product</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Three checkable signs determine the decision on a request: without a link to the AI product it is declined as integrator work, without an owner at the customer it goes back for reframing, and an accepted request enters the product queue only if it recurs at other customers.</figcaption>
+</figure>
+
+<p>The engineer declines the role of systems integrator and at the same time offers a way to resolve the request itself. The wording "that is not in the SOW", that is, in the statement of work attached to the contract, damages the relationship and explains nothing; the wording "that is two weeks of work, and then the pilot gate moves to week seven, which would you prefer" moves the conversation into the calendar, where the sponsor decides. A useful request that turns out to be integrator work is passed to whoever does such work, together with a description of the task. Courtesy is required here for a practical reason: the engineer stays in the organisation for several more weeks and depends on the people who have just been refused.</p>
+
+<div class="warn"><b>Common mistake</b>Accepting small unrelated tasks for the sake of the relationship with the customer's team. The first task takes a day; by the fifth the engineer has become the bank's duty developer, and the pilot gate remains uncrossed. The relationship does not improve either, because the customer's team judges the engineer by the unfinished task for which the sponsor released the budget.</div>
+
+<h3 id="s-1-8"><span class="num">1.8</span>The engagement operating model</h3>
+
+<dl class="def">
+<dt>Decision log</dt>
+<dd>A time-ordered record of the decisions taken, each holding the question, the choice, the reason and a link to the decision it supersedes. The log grows only by appending: an existing entry is neither edited nor deleted, and a decision is superseded by a new entry. The format is close to the architecture decision records of <a href="#s-17-8" data-secref="17.8">Section 17.8</a>; such a log is kept at the scale of an engagement and includes decisions about scope and access.</dd>
+</dl>
+
+<p>The operating model consists of a meeting cadence, a log and a risk register. The cadence determines when information passes from one party to another, so the frequency of each meeting is chosen by the required response time. A fifteen-minute team meeting every morning detects a blocker on the day it appears. A half-hour meeting with the sponsor once a week exists for decisions the engineer is not entitled to take: access, priorities, people. The committee that meets every two weeks is held for the bank's management, and its material is one page with the state of the gates.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Event</th><th>Frequency</th><th>Participants</th><th>What it produces</th></tr></thead>
+<tbody>
+<tr><td>Team sync</td><td>daily, 15 minutes</td><td>FDE squad, the bank's engineer</td><td>blockers removed, the risk register updated</td></tr>
+<tr><td>Sponsor meeting</td><td>weekly, 30 minutes</td><td>chief technology officer, head of the contact centre</td><td>decisions about scope and access, into the log</td></tr>
+<tr><td>Gate check</td><td>on the phase calendar</td><td>the owner of the gate</td><td>a record: the exit criteria are true or they are not</td></tr>
+<tr><td>Committee</td><td>every two weeks</td><td>chief information security officer, compliance, sponsor</td><td>constraints lifted or confirmed</td></tr>
+</tbody></table></div>
+
+<p>The risk register is kept in the form shown in the listing <code>engagement.py</code>: an entry carries a probability, a delay in weeks, an owner and a mitigation. That form yields the expected delay across the register, that is, a number to be discussed with the sponsor as early as week one. A risk entry without an owner and without a mitigation leads to no action and in content does not differ from a complaint.</p>
+
+<div class="aside" data-level="2"><b>When a partner leads the engagement</b>Some deliveries are carried out through a partner organisation, and then the vendor's engineer works together with the partner's team. The cadence and the log stay the same, while the risk register gains a column stating which side is responsible for the mitigation. The handover gate is crossed twice in such a scheme, since the code is accepted first by the partner and then by the customer, and both acceptors have to be named in week one.</div>
+
+<h3 id="s-1-9" data-level="3"><span class="num">1.9</span>In depth: the shadow SOW, access, exit models</h3>
+
+<h4 data-level="3">The shadow SOW: sold scope against feasible scope</h4>
+
+<p data-level="3">The scope the account team sold and the scope feasible in twelve weeks as a rule diverge, and the divergence surfaces in week two, when the state of the data becomes visible. Both silently accepting the sold scope and declaring it unrealistic are mistakes. The first leads to failure in week ten; the second weakens the position of the sponsor who defended that scope before the board.</p>
+
+<p data-level="3">The procedure for agreeing the scope has three steps and takes one meeting. First a measured observation is presented without judgement: "labels exist for 12% of the cases, and for the blocking queue there are none at all". Then the sponsor is offered a choice between two options: one queue with production in week eight, or four queues with a demo in week twelve and production after the engagement. Finally the decision goes into the log with a link to the original promise. The sponsor's position is preserved, because the choice is theirs and rests on data the account team did not have at the time of the sale.</p>
+
+<h4 data-level="3">Access latency as the critical path</h4>
+
+<p data-level="3">Granting access is a task with a duration, and in regulated industries it defines the critical path of the engagement. In the Nordbank plan the IAM request for accounts clears in three days, access to the test environment is granted in two weeks, and the DLP review is allotted two to four weeks; the vendor security questionnaire, which goes to the legal department for approval and comes back a month later, and the consent to process personal data for a new use case, which requires a decision from the data protection officer, were completed at the contract stage. The durations add up in sequence, because each approver needs the decision of the previous one.</p>
+
+<p data-level="3">Three consequences follow for the first week. Every request is filed on day one, including those whose necessity is not yet proven: withdrawing a request is cheaper than filing it in week four. Every request receives an owner on the bank's side and enters the risk register with an expected delay. The work is planned so that a path exists on synthetic data and on a mirror until access is granted, otherwise the wait turns into idleness that the customer sees and remembers.</p>
+
+<h4 data-level="3">Three exit models for engagement code</h4>
+
+<p data-level="3">For code written over twelve weeks the book distinguishes three exit models, and the choice between them is made in week one. The first: the customer takes the code. It is then kept in the bank's repository, passes its review, is written in the language of its team and comes with release instructions; it has a named engineer of the bank who made at least one change in it themselves before the handover. The second: the product takes the code. The customer's specifics then move into configuration, the interfaces are agreed with the product team in advance, and the generalisation is tested on at least a second customer, or the module will fit only one customer.</p>
+
+<p data-level="3">The third exit model is deletion, and it applies to exploratory code. Such code is written to answer the question "is there a signal in this data", and once the answer is obtained the code is no longer needed. It should be marked as temporary from day one, kept apart from what ships and deleted at the handover gate. If no exit model was chosen, all the code is written as temporary yet stays in the system, and the customer discovers this at the first incident after the engineer leaves.</p>
+
+<h4 data-level="3">The feedback loop as a prioritised queue</h4>
+
+<p data-level="3">A field request competes in the product queue with requests from other sources, and the decision to accept it is determined by the completeness of its data. A product manager needs four quantities. Frequency: at how many customers the pattern occurred and in which industries. Cost of the workaround: how many engineer-weeks the workaround costs in one engagement and whether the cost recurs on every update. Risk of not building it: what breaks or goes unsold if the workaround stays. Shape of the solution: the minimal change to the product that closes the pattern, with a description of what it breaks.</p>
+
+<p data-level="3">A practice for the first week follows. Every workaround written around a limitation of the product is marked in the code and in the decision log together with an estimate of the time it took. By week ten a list of workarounds with actual hours has accumulated, and the request is compiled from these data in an hour. An engineer recalling workarounds from memory in the last week gives the product manager an estimate without data, and the request stays in the queue until the next engagement, where the same conversation repeats. Assembling a module out of accumulated patterns is described in <a href="#ch-16" data-secref="16">Chapter 16</a>.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why does the production gate stand in week eight of a twelve-week engagement rather than in week twelve?</summary>
+<div class="ans"><p>Because after going into production there have to be weeks for on-call, documentation and training the customer's engineers, that is, for handing ownership over. A plan with production in the last week contains no handover, and the code is left without an owner on the day the engineer departs.</p></div>
+</details>
+<details>
+<summary>What distinguishes a requirement candidate from a claim heard in conversation?</summary>
+<div class="ans"><p>A source, a level of confidence and an owner of the verification. A claim stated from memory or assumed does not enter the list of requirements without an owner for its verification: otherwise a requirement derived from a guess reaches acceptance and, once it proves wrong, lowers trust in the whole list.</p></div>
+</details>
+<details>
+<summary>By which signs is a stakeholder's request classed as the work of a systems integrator?</summary>
+<div class="ans"><p>The request does not touch the AI product and does not recur at other customers, so it produces neither a metric in production nor a module. Such a request is passed to whoever performs integration work, and the sponsor decides its priority in terms of gates moving.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>The result of an FDE's work is measured by code that works in the customer's environment and has an owner after the engineer departs.</li>
+<li>An engagement is marked out by gates with measurable exit criteria and named owners; the production gate is crossed around week eight of twelve, so that the remaining weeks go to the handover to the owner.</li>
+<li>Every conversation leaves an artefact: a decision in an append-only log, or a requirement candidate with a source, a confidence and an owner of the verification.</li>
+<li>The exit model for engagement code is chosen in week one, because it determines how the code is written; evidence for field patterns is gathered from the first week.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-2" data-secref="2">Chapter 2: discovery, requirements and scoping</a>
+<a href="#ch-16" data-secref="16">Chapter 16: field patterns, modules and business value</a>
+<a href="#ch-18" data-secref="18">Chapter 18: leading an FDE team</a>
+</p>
+</div>
+</section>

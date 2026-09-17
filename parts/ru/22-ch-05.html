@@ -1,0 +1,933 @@
+<!-- ────────────────────────── ГЛАВА 5 ────────────────────────── -->
+<section class="chapter" id="ch-5">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава пятая</p>
+    <span class="strata" role="img" aria-label="Слои A, B и E: системы заказчика, модель и агент, безопасность">
+      <i data-s="A"></i><i data-s="B"></i><i></i><i></i><i data-s="E"></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-5"><span class="num">5</span>Пайплайны данных и retrieval</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>отделять задачу подготовки данных от задачи поиска и планировать подготовку данных первой;</li>
+<li>построить приём документов, сохраняющий структуру, права и версию каждого фрагмента;</li>
+<li>выбрать хранилище по объёму, сложности фильтров, свежести и наличию дежурной команды;</li>
+<li>поставить проверку прав до ранжирования и подтвердить её пост-проверкой;</li>
+<li>измерить качество поиска числами и назвать стадию, на которой теряется ответ.</li>
+</ul>
+</div>
+
+<h3 id="s-5-1"><span class="num">5.1</span>Задача: поиск по руководствам Meridian</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-2" data-secref="G.2">Досье CF2 · Meridian Health Network</a></span>
+  <span class="tag">12 клиник</span>
+  <span class="tag">ACL по отделениям</span>
+  <span class="tag">PHI on-prem</span>
+  <span>сеть клиник</span>
+</div>
+
+<p>Клиницисты двенадцати клиник Meridian задают вопросы, ответы на которые записаны в клинических руководствах, приказах и протоколах: какая доза антибиотика назначается при подозрении на сепсис, кто подписывает согласие на процедуру у несовершеннолетнего, с какого срока действует новая редакция протокола. Сегодня ответ ищется в корпоративном портале полнотекстовым поиском, и врач реанимации получает в первой десятке результатов приказ о парковке. Заказчик просит ассистента, который отвечает на вопрос текстом и показывает документ, редакцию и раздел, откуда ответ взят.</p>
+
+<p>Задачу определяют четыре ограничения. Корпус насчитывает около двухсот тысяч документов, накопленных за пятнадцать лет в системе хранения, которую сменяли трижды. Права выданы по отделениям: протокол психиатрии не виден кардиологу, а часть документов открыта только заведующим. Ответ обязан содержать ссылку на источник, потому что клиническое решение принимает клиницист и он проверяет, на чём основан ответ. Медицинские данные не покидают периметр сети: в облако передаётся только деидентифицированное содержимое.</p>
+
+<p>Глава строит из этих ограничений пайплайн: приём документов с сохранением структуры и прав, индекс с векторной и лексической частями, поиск с проверкой прав до ранжирования и набор вопросов, по которому качество поиска измеряется числом. Собранный контекст передаётся модели способом, разобранным в <a href="#ch-4" data-secref="4">главе 4</a>, периметр целиком разбирается в <a href="#ch-10" data-secref="10">главе 10</a>, а ворота релиза для всей системы строятся в <a href="#ch-12" data-secref="12">главе 12</a>.</p>
+
+<h3 id="s-5-2"><span class="num">5.2</span>Почему RAG является задачей data engineering</h3>
+
+<p>Состав корпуса, который в постановке задачи назван словом «документы», выясняется на второй неделе. Сорок процентов корпуса Meridian составляют PDF, полученные сканированием бумаги, и текстового слоя в них нет. Ещё пятая часть представляет собой выгрузки Excel с объединёнными ячейками, где человек читает таблицу дозировок без затруднений, а машинный разбор теряет связь значений с заголовками. Остальные документы хранятся в системе документооборота пятнадцатилетнего возраста, где у половины файлов автор указан как «администратор», а дата изменения совпадает с датой последней миграции.</p>
+
+<dl class="def">
+<dt>Retrieval-augmented generation, RAG <span class="en">(retrieval-augmented generation)</span></dt>
+<dd>Схема ответа, при которой система сначала находит фрагменты документов, относящиеся к вопросу, а затем передаёт их модели вместе с вопросом и требует отвечать по ним. Качество ответа ограничено сверху качеством найденного: модель не может процитировать фрагмент, который поиск не вернул, и не всегда обнаруживает, что возвращённые фрагменты не относятся к вопросу.</dd>
+</dl>
+
+<p>Из этого определения следует порядок работ. Сначала выясняется, какая доля корпуса поддаётся разбору, какие документы дублируются, какие устарели и какие никто не имеет права читать. Затем строится приём данных, и только затем обсуждаются модель эмбеддингов и способ ранжирования. Если проект начинается с выбора векторной базы, то через месяц выясняется, что сканы без текстового слоя, которые в корпусе Meridian составляют сорок процентов, не преобразованы в текст, и индекс приходится строить заново.</p>
+
+<p>Вторая часть тезиса касается прав. Поиск по корпусу с разграничением доступа выполняется внутри подмножества документов, которые спрашивающий вправе видеть. Поиск по всему корпусу с последующей фильтрацией результатов этого условия не выполняет: ранжирование по всему корпусу раскрывает существование закрытых документов через счётчики найденного, через список «похожих» и через сводку, которую модель составляет по фрагментам, полученным в нарушение прав.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 392" role="img" aria-label="Поток данных от источников через разбор, нарезку, обогащение правами и версией, векторизацию к индексу, а под ним два пути запроса: с фильтром по группам до ранжирования и с фильтром после ранжирования, где ранги, счётчики и сводки уже вычислены по закрытым документам" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="30" y="38" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ПУТЬ ДАННЫХ</text>
+  <text x="30" y="182" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ПУТЬ ЗАПРОСА</text>
+
+  <rect x="30" y="248" width="140" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="270" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">запрос и principal</text>
+  <text x="100" y="286" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">кто спрашивает</text>
+
+  <g data-step="1" data-caption="Приём преобразует файлы во фрагменты с правами и версией; файлы, которые не удалось разобрать, помещаются в карантин.">
+    <rect x="30" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+    <text x="89" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">источники</text>
+    <text x="89" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">PDF · XLSX</text>
+    <rect x="170" y="52" width="118" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="229" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">разбор</text>
+    <text x="229" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">текст · таблицы</text>
+    <rect x="310" y="52" width="118" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="369" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">нарезка</text>
+    <text x="369" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">по структуре</text>
+    <rect x="450" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="509" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">обогащение</text>
+    <text x="509" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">acl · версия</text>
+    <rect x="590" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="649" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">вектор</text>
+    <text x="649" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">модель · dims</text>
+    <rect x="730" y="52" width="118" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+    <text x="789" y="74" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">индекс</text>
+    <text x="789" y="90" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">вектор + BM25</text>
+    <line x1="148" y1="76" x2="162" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="288" y1="76" x2="302" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="428" y1="76" x2="442" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="568" y1="76" x2="582" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="708" y1="76" x2="722" y2="76" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <rect x="170" y="122" width="118" height="40" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="229" y="140" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">карантин</text>
+    <text x="229" y="155" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">не разобрано</text>
+    <line x1="229" y1="100" x2="229" y2="116" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar5a)"/>
+  </g>
+
+  <g data-step="2" data-caption="Фильтр по группам стоит до ранжирования: ранжируется только то, что спрашивающий вправе видеть.">
+    <path d="M170,262 H188 V220 H198" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <rect x="206" y="196" width="150" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="281" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">фильтр по группам</text>
+    <text x="281" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">acl ∩ principal</text>
+    <rect x="376" y="196" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="451" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">ранжирование</text>
+    <text x="451" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">вектор + BM25</text>
+    <rect x="546" y="196" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="621" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">rerank</text>
+    <text x="621" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">cross-encoder</text>
+    <rect x="716" y="196" width="138" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="785" y="218" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">пост-проверка</text>
+    <text x="785" y="234" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ссылки в ответе</text>
+    <line x1="356" y1="220" x2="368" y2="220" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="526" y1="220" x2="538" y2="220" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="696" y1="220" x2="708" y2="220" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+  </g>
+
+  <g data-step="3" data-caption="Тот же фильтр, применённый после ранжирования, не предотвращает утечку: ранги, счётчики и сводки к этому моменту уже вычислены с учётом закрытых документов.">
+    <path d="M170,282 H188 V334 H198" fill="none" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar5a)"/>
+    <rect x="206" y="310" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="281" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">ранжирование</text>
+    <text x="281" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">по всему индексу</text>
+    <rect x="376" y="310" width="150" height="48" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="451" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">rerank</text>
+    <text x="451" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">по суперсету</text>
+    <rect x="546" y="310" width="308" height="48" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="700" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">фильтр после ранжирования</text>
+    <text x="700" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">утечка: сводки, похожие, счётчики</text>
+    <line x1="356" y1="334" x2="368" y2="334" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+    <line x1="526" y1="334" x2="538" y2="334" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5a)"/>
+  </g>
+
+  <text x="440" y="380" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Права фрагмента появляются при обогащении и проверяются дважды: до ранжирования и перед выдачей.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Ранг, число найденного и сводка являются функциями множества документов, по которому они вычислены. Поэтому фильтр по правам применяется до ранжирования: фильтр, применённый после, не изменяет уже вычисленных величин.</figcaption>
+</figure>
+
+<h3 id="s-5-3"><span class="num">5.3</span>Готовность данных и ingestion</h3>
+
+<p>Работа начинается с инвентаря источников, устроенного так же, как инвентарь систем из <a href="#ch-2" data-secref="2">главы 2</a>: для каждого источника записываются формат, объём, доля машиночитаемого текста, владелец, схема прав и частота изменения. Инвентарь Meridian показал пять источников: хранилище руководств, приказы в системе документооборота, выгрузки из реестра протоколов, сетевую папку отделений и почтовую рассылку об изменениях. Последние два источника не имели ни владельца, ни схемы прав, поэтому заказчик исключил их из корпуса до начала разбора.</p>
+
+<p>Разбор структурированных и неструктурированных данных различается ценой ошибки. Таблица дозировок, разобранная построчно с потерей заголовков столбцов, превращается в набор чисел без единиц измерения, и модель, получив такой фрагмент, может сформулировать неверный ответ без каких-либо оговорок. Рисунок с алгоритмом действий при остановке сердца в текст не преобразуется, поэтому ответ по нему содержит ссылку на страницу документа. Файл, из которого разбор извлёк три строки вместо тридцати страниц, отправляется в карантин с указанием причины, и для этого события назначаются владелец и срок обработки.</p>
+
+<p>Дедупликация и провенанс завершают приём. Один и тот же протокол существует в корпусе Meridian в четырёх копиях: исходной, с подписью, отсканированной после подписи и приложенной к письму. Дедупликация по хешу содержимого объединяет первые две копии в один документ, а третья остаётся отдельным документом, потому что её текст получен распознаванием и отличается. Провенанс сохраняет для каждого фрагмента путь до исходного файла, номер редакции и время приёма; по этим данным ответ содержит ссылку на источник.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 344" role="img" aria-label="Карта границ доверия Meridian: во внутреннем периметре находятся медицинские системы, разбор и индекс с полным текстом, в облаке лежат только деидентифицированные фрагменты, управляемый поиск и оценка, а единственным переходом между зонами служит шлюз деидентификации с журналом проходов" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar5b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="14" y="44" width="330" height="252" rx="8" fill="none" stroke="var(--sA)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="26" y="34" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sA)">Периметр Meridian: PHI</text>
+  <rect x="536" y="44" width="330" height="252" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="548" y="34" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">Облако: только деидентифицированное</text>
+
+  <rect x="34" y="80" width="290" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="48" y="100" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">EHR · FHIR · отчёты</text>
+  <text x="48" y="116" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">записи пациентов</text>
+  <rect x="34" y="140" width="290" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="48" y="160" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">разбор и нарезка</text>
+  <text x="48" y="176" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">OCR · таблицы · карантин</text>
+  <rect x="34" y="200" width="290" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="48" y="222" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">индекс с PHI, on-prem</text>
+  <text x="48" y="238" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">полный текст · ACL</text>
+
+  <rect x="372" y="140" width="136" height="76" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="440" y="166" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">шлюз</text>
+  <text x="440" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">деидентификации</text>
+  <text x="440" y="201" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">журнал проходов</text>
+
+  <rect x="556" y="80" width="290" height="44" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="570" y="100" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">деидентифицированные чанки</text>
+  <text x="570" y="116" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">без имён и номеров</text>
+  <rect x="556" y="140" width="290" height="44" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="570" y="160" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">управляемый векторный поиск</text>
+  <text x="570" y="176" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">масштаб и ANN</text>
+  <rect x="556" y="200" width="290" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="570" y="222" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">оценка и эксперименты</text>
+  <text x="570" y="238" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">наборы без PHI</text>
+
+  <path d="M324,162 H348 V170 H364" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5b)"/>
+  <path d="M508,170 H528 V102 H548" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5b)"/>
+  <line x1="701" y1="124" x2="701" y2="134" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5b)"/>
+  <line x1="324" y1="226" x2="548" y2="226" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <line x1="428" y1="218" x2="444" y2="234" stroke="var(--sE)" stroke-width="1.6"/>
+  <line x1="444" y1="218" x2="428" y2="234" stroke="var(--sE)" stroke-width="1.6"/>
+  <text x="436" y="252" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">прямого пути нет</text>
+
+  <text x="440" y="326" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Цитаты в ответе берутся из внутреннего индекса; в облако передаётся только деидентифицированный текст.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Если между зонами есть только один переход, требование «PHI не покидает периметр» проверяется по журналу шлюза: каждый деидентифицированный фрагмент в облаке должен иметь запись в журнале, и фрагмент без записи указывает на обходной путь.</figcaption>
+</figure>
+
+<p>Наивный и продуманный приёмы по-разному выполняют каждый шаг загрузки; листинг наивного приёма виден начиная с уровня «стандарт». Наивный вариант режет текст по числу символов, кладёт куски в общий индекс и ищет по ним ближайшие векторы. Продуманный сохраняет структуру, приписывает каждому фрагменту права и версию, записывает хеш содержимого и откладывает то, что не разобралось.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Два способа принять корпус документов">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_rag.py</span></figcaption>
+      <pre><code>GUIDELINES = {
+    "sepsis-v3": ("Отделение: реанимация. Порог лактата 2 ммоль/л. При подозрении "
+                  "на сепсис посев крови берут до первой дозы антибиотика."),
+    "psych-v1": ("Отделение: психиатрия. Оценку суицидального риска проводят при "
+                 "каждом поступлении. Документ закрыт для остальных отделений."),
+}
+
+
+def fixed_chunks(text: str, size: int = 60) -&gt; list[str]:
+    """Нарезка по числу символов: границы фраз и таблиц не учитываются."""
+    return [text[i:i + size] for i in range(0, len(text), size)]
+
+
+def index_all() -&gt; list[str]:
+    return [part for text in GUIDELINES.values() for part in fixed_chunks(text)]
+
+
+def search(query: str, k: int = 3) -&gt; list[str]:
+    q = embed(query)
+    parts = index_all()
+    return sorted(parts, key=lambda part: cosine(q, embed(part)), reverse=True)[:k]
+
+
+if __name__ == "__main__":
+    parts = index_all()
+    assert len(parts) &gt; len(GUIDELINES)                  # документ разрезан вслепую
+    cut = [i for i in range(len(parts) - 1)
+           if parts[i][-1].isalnum() and parts[i + 1][0].isalnum()]
+    assert cut                                           # граница чанка прошла внутри слова
+    assert any("психиатр" in part for part in parts)     # закрытый документ в общем индексе
+    hits = search("порог лактата при сепсисе")
+    assert len(hits) == 3 and all(isinstance(h, str) for h in hits)
+    print("три строки без источника, версии и проверки прав:", len(hits))</code></pre>
+    </figure>
+    <p>Фрагмент здесь представляет собой строку без метаданных. Фрагмент не содержит сведений о документе и редакции, из которых он получен, поэтому ответ не может содержать ссылку. Фрагмент не содержит сведений о правах доступа, поэтому протокол психиатрии находится по запросу любого врача. Граница нарезки проходит посреди слова «подозрении», поэтому фраза «посев крови берут до первой дозы» оказывается во фрагменте, который начинается с обрывка слова и не содержит условия «при подозрении на сепсис», при котором она верна.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">ingest_pipeline.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import hashlib
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
+MAX_CHUNK = 220         # символов в чанке до переноса остатка в следующий
+MIN_TEXT = 40           # меньше этого парсер считается не справившимся
+HEADING = re.compile(r"^##\s+(.+)$")
+
+
+@dataclass(frozen=True)
+class RawDoc:
+    """То, что пришло из SharePoint: текст либо извлечён парсером, либо нет."""
+    id: str
+    title: str
+    department: str
+    version: int
+    text: str | None
+
+
+@dataclass(frozen=True)
+class IndexedChunk:
+    id: str
+    doc_id: str
+    heading: str
+    text: str
+    acl_groups: frozenset[str]
+    doc_version: int
+    content_hash: str
+
+
+def sections(text: str) -&gt; list[tuple[str, str]]:
+    """Разбор по заголовкам: чанк не пересекает границу раздела."""
+    parts: list[tuple[str, list[str]]] = [("", [])]
+    for line in text.splitlines():
+        found = HEADING.match(line.strip())
+        if found:
+            parts.append((found.group(1), []))
+        else:
+            parts[-1][1].append(line)
+    return [(head, "\n".join(body).strip()) for head, body in parts if "".join(body).strip()]
+
+
+def pack(heading: str, body: str, limit: int = MAX_CHUNK) -&gt; list[str]:
+    """Длинный раздел режется по границам предложений, короткий остаётся целым."""
+    pieces: list[str] = []
+    current = ""
+    for sentence in re.split(r"(?&lt;=[.!?])\s+", body):
+        if current and len(current) + len(sentence) + 1 &gt; limit:
+            pieces.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        pieces.append(current)
+    return [f"{heading}. {piece}" if heading else piece for piece in pieces]
+
+
+def content_hash(doc: RawDoc, text: str) -&gt; str:
+    payload = f"{doc.id}|{doc.version}|{doc.department}|{text}"
+    return hashlib.blake2b(payload.encode("utf-8"), digest_size=12).hexdigest()
+
+
+@dataclass
+class Index:
+    rows: dict[str, IndexedChunk] = field(default_factory=dict)
+
+    def upsert(self, chunk: IndexedChunk) -&gt; int:
+        if chunk.id in self.rows:
+            return 0                      # тот же хеш: писать нечего
+        self.rows[chunk.id] = chunk
+        return 1
+
+
+@dataclass
+class Quarantine:
+    rows: list[tuple[str, str]] = field(default_factory=list)
+
+    def hold(self, doc: RawDoc, reason: str) -&gt; None:
+        if all(held != doc.id for held, _ in self.rows):
+            self.rows.append((doc.id, reason))
+
+
+def ingest(docs: Iterable[RawDoc], index: Index, quarantine: Quarantine) -&gt; int:
+    written = 0
+    for doc in docs:
+        if doc.text is None or len(doc.text.strip()) &lt; MIN_TEXT:
+            quarantine.hold(doc, "парсер не извлёк текста")
+            continue
+        for heading, body in sections(doc.text):
+            for piece in pack(heading, body):
+                digest = content_hash(doc, piece)
+                written += index.upsert(IndexedChunk(
+                    id=f"{doc.id}:{digest}", doc_id=doc.id, heading=heading, text=piece,
+                    acl_groups=frozenset({doc.department}), doc_version=doc.version,
+                    content_hash=digest))
+    return written
+
+
+if __name__ == "__main__":
+    body = ("## Показания\nЛактат выше 2 ммоль/л требует повторного измерения.\n"
+            "## Действия\nПосев крови берут до антибиотика. Дозу вводят за час.\n")
+    docs = [RawDoc("gl-17", "Сепсис", "icu", 3, body),
+            RawDoc("gl-18", "Скан 2009 года", "cardio", 1, None),
+            RawDoc("gl-19", "Экспорт без текста", "cardio", 1, "   ")]
+    index, quarantine = Index(), Quarantine()
+    assert ingest(docs, index, quarantine) == len(index.rows) == 2
+    assert {c.heading for c in index.rows.values()} == {"Показания", "Действия"}
+    assert all(c.acl_groups == frozenset({"icu"}) for c in index.rows.values())
+    assert [d for d, _ in quarantine.rows] == ["gl-18", "gl-19"]   # отложены в карантин
+    assert ingest(docs, index, quarantine) == 0                    # повтор ничего не пишет
+    assert ingest([RawDoc("gl-17", "Сепсис", "icu", 4, body)], index, quarantine) == 2
+    assert {c.doc_version for c in index.rows.values()} == {3, 4}  # старые чанки ещё в индексе
+    print("разделов в индексе:", len(index.rows), "· в карантине:", len(quarantine.rows))</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="MIN_TEXT = 40">строка 9</span><p>Порог отделяет документ, из которого извлечён текст, от отказа разбора. Скан на тридцать страниц, из которого извлечено меньше сорока символов, классифицируется как отказ разбора и попадает в карантин, где этот отказ виден.</p></div>
+        <div><span class="at" data-anchor="def sections(text: str)">строка 34</span><p>Нарезка следует структуре документа. Заголовок раздела остаётся с текстом раздела, и фрагмент не пересекает границу между показаниями и противопоказаниями.</p></div>
+        <div><span class="at" data-anchor="+ 1 &gt; limit">строка 51</span><p>Длинный раздел разбивается по границам предложений, поскольку предложение является наименьшей единицей, которую имеет смысл показывать клиницисту как цитату.</p></div>
+        <div><span class="at" data-anchor="payload = f">строка 62</span><p>В хеш входят версия документа и отделение-владелец. Смена прав меняет хеш так же, как смена текста, поэтому фрагмент с новыми правами записывается как новая строка и не совпадает с фрагментом со старыми правами.</p></div>
+        <div><span class="at" data-anchor="if chunk.id in self.rows:">строка 71</span><p>Повторный приём того же документа не пишет ничего. Свойство необходимо для ежедневного прогона по корпусу из двухсот тысяч документов: без него каждый прогон переиндексирует всё и стоит как первичная загрузка.</p></div>
+        <div><span class="at" data-anchor="quarantine.hold(doc,">строка 90</span><p>Документ, который не удалось разобрать, откладывается с указанием причины. Карантин является рабочей очередью с владельцем: пока файл находится в ней, ответы по нему невозможны, и число таких файлов отражается в отчёте.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается единицы индексации. Наивный вариант индексирует отрезок текста, продуманный индексирует фрагмент документа с заголовком раздела, номером редакции, правами и хешем. Ответ по отрезку текста невозможно проверить, ответ по фрагменту документа содержит ссылку на раздел конкретной редакции.</p>
+    <p>Второе различие касается файлов, которые не удалось разобрать. Наивный конвейер пропускает такие файлы без записи, и часть содержимого корпуса незаметно не попадает в индекс; продуманный конвейер откладывает их в карантин, и число таких файлов отражается в отчёте.</p>
+    <p>Третье различие касается стоимости повторного прогона. Ключ по хешу содержимого делает приём идемпотентным: ежедневный прогон записывает только изменившиеся фрагменты.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Типичная ошибка</b>Считать долю успешно разобранных файлов метрикой качества и не анализировать содержимое карантина. Доля разобранного в девяносто процентов не показывает, какие документы составляют оставшиеся десять: если это свежие протоколы, отсканированные после подписи, то система не отвечает по тем документам, ради которых она строилась.</div>
+
+<h3 id="s-5-4"><span class="num">5.4</span>Chunking и метаданные</h3>
+
+<dl class="def">
+<dt>Фрагмент, chunk <span class="en">(chunk)</span></dt>
+<dd>Единица индексации и выдачи: отрезок документа, достаточно короткий, чтобы поместиться в контекст вместе с другими фрагментами, и достаточно самостоятельный, чтобы быть понятным без соседних фрагментов. Фрагмент содержит метаданные документа, из которого получен, и используется в ответе как цитата с указанием источника.</dd>
+</dl>
+
+<p>Стратегия нарезки выводится из структуры корпуса. Клинические руководства Meridian имеют явную иерархию разделов, поэтому фрагмент строится из раздела целиком, а слишком длинный раздел делится по границам предложений с сохранением заголовка в начале каждой части. Приказы коротки и делятся на пункты. Таблицы дозировок делятся по строкам: каждая строка сериализуется вместе с заголовками столбцов и становится отдельным фрагментом, понятным без остальной таблицы.</p>
+
+<p>Метаданные фрагмента определяют, какие операции доступны при поиске. Поле <code>acl_groups</code> хранит группы, которым фрагмент доступен, и используется хранилищем как условие фильтра. Поле <code>doc_version</code> позволяет отличать редакции и удалять устаревшие фрагменты при перевыкладке. Хеш содержимого делает приём идемпотентным. Путь заголовков и дата вступления в силу нужны в ответе: клиницист, увидевший цитату, должен понимать, из какого раздела какой редакции она взята.</p>
+
+<p>Размер фрагмента выбирается как компромисс между двумя ошибками. Короткий фрагмент точнее совпадает с вопросом, но чаще теряет условие, при котором утверждение верно, а в клиническом тексте условие часто стоит в предыдущем предложении. Длинный фрагмент сохраняет условие, но его близость к вопросу ниже, и он занимает в контексте место, которое могли бы занять другие источники. Meridian выбрал в качестве единицы раздел с ограничением около тысячи знаков и проверил это решение измерением из <a href="#s-5-9" data-secref="5.9">раздела 5.9</a>.</p>
+
+<div class="note" data-level="2">Механизмы языка, на которых построен такой конвейер, разобраны отдельно: потоковый разбор больших файлов без загрузки целиком, генераторы и разделение работы между процессами описаны в учебнике <a class="src" href="https://github.com/laputski/book-python" target="_blank" rel="noreferrer">«Продвинутый Python для RAG»</a>. Эта глава ограничивается устройством пайплайна.</div>
+
+<h3 id="s-5-5"><span class="num">5.5</span>Embeddings и хранилища</h3>
+
+<p>Модель эмбеддингов и её версия входят в схему индекса наравне с размерностью вектора. Векторы, построенные разными моделями, несопоставимы, поэтому смена модели означает перестроение индекса целиком. По той же причине идентификатор модели хранится рядом с вектором, и запрос векторизуется той же моделью, что и корпус. При миграции сохранённый идентификатор показывает, какие векторы построены старой моделью и подлежат пересчёту.</p>
+
+<p>Хранилища для поиска делятся на три семейства, и выбор между ними определяется четырьмя свойствами задачи: объёмом, сложностью фильтров, частотой обновлений и наличием дежурной команды. Управляемый векторный поиск выполняет шардирование, приближённый поиск ближайших соседей и обслуживание индекса; его язык фильтров обычно беднее SQL, и каждый запрос проходит дополнительный сетевой переход. Реляционная база с векторным расширением хранит вектор в той же строке, что и атрибуты, поэтому фильтр по отделению, дате и статусу и поиск по вектору выполняются одним SQL-запросом. Аналитическое хранилище выполняет векторный поиск по таблицам витрин и подходит для редких обновлений и больших пакетных расчётов.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 388" role="img" aria-label="Дерево решений о выборе хранилища: сначала вопрос об объёме корпуса, затем о сложности фильтров, затем о частоте обновлений и в конце о наличии дежурной команды, и каждый утвердительный ответ ведёт к своему типу хранилища, а последний отрицательный к полностью управляемому поиску" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar5c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="24" y="36" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ВОПРОС</text>
+  <text x="372" y="36" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЧТО ИЗ ЭТОГО СЛЕДУЕТ</text>
+
+  <rect x="24" y="52" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="72" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">больше 10 млн фрагментов?</text>
+  <text x="38" y="88" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">масштаб</text>
+  <rect x="24" y="124" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="144" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">фильтры по многим атрибутам?</text>
+  <text x="38" y="160" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">сложность фильтра</text>
+  <rect x="24" y="196" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="216" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">обновления реже раза в сутки?</text>
+  <text x="38" y="232" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">свежесть</text>
+  <rect x="24" y="268" width="280" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="38" y="288" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">есть дежурная команда?</text>
+  <text x="38" y="304" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">эксплуатация</text>
+
+  <rect x="372" y="52" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="72" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">управляемый векторный поиск</text>
+  <text x="386" y="88" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">шардирование и ANN как услуга</text>
+  <rect x="372" y="124" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="144" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">SQL-хранилище с pgvector</text>
+  <text x="386" y="160" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">фильтр и вектор в одном запросе</text>
+  <rect x="372" y="196" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="216" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">аналитическое хранилище</text>
+  <text x="386" y="232" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">вектор рядом с витринами</text>
+  <rect x="372" y="268" width="300" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="288" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">собственный индекс</text>
+  <text x="386" y="304" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">полный контроль, своё дежурство</text>
+  <rect x="372" y="330" width="300" height="40" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="386" y="348" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">управляемый поиск целиком</text>
+  <text x="386" y="363" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">меньше контроля, меньше работы</text>
+
+  <line x1="304" y1="74" x2="364" y2="74" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="66" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+  <line x1="304" y1="146" x2="364" y2="146" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="138" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+  <line x1="304" y1="218" x2="364" y2="218" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="210" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+  <line x1="304" y1="290" x2="364" y2="290" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="334" y="282" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+
+  <line x1="164" y1="96" x2="164" y2="118" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="112" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+  <line x1="164" y1="168" x2="164" y2="190" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="184" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+  <line x1="164" y1="240" x2="164" y2="262" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="256" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+  <path d="M164,312 V350 H364" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar5c)"/>
+  <text x="176" y="330" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Хранилище выбирается по ограничениям задачи: объём определяет допустимую архитектуру, сложность фильтров определяет язык запросов, частота обновлений определяет стоимость обновления индекса, а собственный индекс оправдан только при наличии дежурной команды, которая его обслуживает.</figcaption>
+</figure>
+
+<p>Корпус Meridian насчитывает около двухсот тысяч документов и примерно два миллиона фрагментов, фильтры сложны, а обновления приходят ежедневно. Дерево приводит к реляционному хранилищу с векторным расширением внутри периметра, и это же решение упрощает выполнение требования о PHI: фрагменты с медицинскими данными остаются там, где уже хранятся остальные данные пациента. Облачная часть индекса содержит только деидентифицированное содержимое и служит для экспериментов и оценки.</p>
+
+<h3 id="s-5-6"><span class="num">5.6</span>Гибридный поиск и reranking</h3>
+
+<p>Векторный поиск находит фрагменты, близкие по смыслу, и поэтому пропускает совпадения там, где смысл определяется точной строкой. Код диагноза, номер приказа, аббревиатура отделения и торговое название препарата являются редкими токенами, которые эмбеддинг усредняет вместе с окружением. Лексический поиск по обратному индексу, наоборот, находит точное совпадение и не находит перефразировку. Два способа ошибаются на разных запросах, поэтому их результаты объединяются.</p>
+
+<dl class="def">
+<dt>Слияние по обратным рангам <span class="en">(reciprocal rank fusion, RRF)</span></dt>
+<dd>Способ объединить несколько упорядоченных списков результатов, не приводя их оценки к общей шкале. Каждому документу начисляется сумма величин 1/(k + место) по всем спискам, где он встретился, и итоговый порядок строится по этой сумме. Постоянная k, в исходной работе равная шестидесяти, уменьшает влияние первых мест отдельного списка, поэтому документ, найденный обоими способами на пятом месте, обходит документ, найденный одним способом на первом месте: 2/65 больше 1/61.<a class="src" href="https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf" target="_blank" rel="noreferrer">Cormack, Clarke, Büttcher, SIGIR 2009: reciprocal rank fusion</a></dd>
+</dl>
+
+<p>Второй ступенью выполняется переранжирование. Модель-переранжировщик, называемая cross-encoder, получает на вход пару «вопрос и фрагмент» целиком и оценивает их соответствие, тогда как векторный поиск сравнивает два независимо построенных вектора. Вторая ступень точнее, но требует прохода модели для каждой пары вопроса и фрагмента, поэтому переранжируются только десятки кандидатов, отобранных первой ступенью.<a class="src" href="https://sbert.net/examples/cross_encoder/applications/README.html" target="_blank" rel="noreferrer">sbert.net, применение cross-encoder</a> Схема из двух ступеней, дешёвого отбора кандидатов и дорогого упорядочивания, применяется в поисковых системах этого класса.</p>
+
+<p>Приёмов гибридного поиска и переранжирования много, и зрелость у них разная: часть применяется в эксплуатации годами, часть описана только в публикациях. Реестр технологий <a class="src" href="https://ragworld.org" target="_blank" rel="noreferrer">RAG World</a> перечисляет их на карте зрелости. Реестр используется при выборе: у заказчика внедряются приёмы, которые его команда сможет сопровождать после ухода инженеров, а экспериментальные приёмы проверяются параллельно с рабочей схемой, которая остаётся в эксплуатации.</p>
+
+<h3 id="s-5-7"><span class="num">5.7</span>ACL-aware retrieval</h3>
+
+<dl class="def">
+<dt>Поиск с учётом прав <span class="en">(ACL-aware retrieval)</span></dt>
+<dd>Поиск, при котором права спрашивающего входят в запрос к хранилищу и сужают множество кандидатов до ранжирования. Права доступа хранятся в метаданных фрагмента, группы спрашивающего вычисляются из его идентичности, а перед выдачей права проверяются повторно, и нарушение вызывает ошибку.</dd>
+</dl>
+
+<p>Проверка прав выполняется в трёх местах, и ни одно из них не заменяет другие. Предварительный фильтр входит в запрос к хранилищу и определяет, какие фрагменты будут ранжироваться. Изоляция арендатора отделяет сеть Meridian от других клиентов той же установки и выражается отдельным полем, поскольку группы с одинаковыми именами, например <code>icu</code>, существуют у разных клиентов. Пост-проверка выполняется перед возвратом результата и служит утверждением о корректности двух предыдущих проверок: её срабатывание означает дефект фильтра и вызывает исключение.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">acl_retrieval.py</span></figcaption>
+<pre><code>from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+
+class AclViolation(Exception):
+    """Пост-проверка нашла то, чего фильтр не должен был пропустить."""
+
+
+@dataclass
+class AclVectorStore:
+    """Хранилище, фильтрующее по арендатору и группам до ранжирования."""
+    rows: dict[str, tuple[Chunk, list[float]]] = field(default_factory=dict)
+    ranked: int = 0
+
+    @staticmethod
+    def visible(chunk: Chunk, principal: Principal) -&gt; bool:
+        return (chunk.metadata.get("tenant") == principal.tenant
+                and bool(chunk.acl &amp; principal.groups))
+
+    def upsert(self, chunks: Sequence[Chunk]) -&gt; None:
+        for chunk in chunks:
+            self.rows[chunk.id] = (chunk, embed(chunk.text))
+
+    def search(self, vector: Sequence[float], k: int,
+               principal: Principal | None) -&gt; list[Hit]:
+        hits = [Hit(chunk, cosine(vector, vec)) for chunk, vec in self.rows.values()
+                if principal is None or self.visible(chunk, principal)]
+        self.ranked = len(hits)
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:k]
+
+
+def rerank(query: str, hits: Sequence[Hit]) -&gt; list[Hit]:
+    """Заглушка cross-encoder: доля слов запроса, встретившихся в чанке."""
+    words = set(query.lower().split())
+
+    def overlap(hit: Hit) -&gt; float:
+        return len(words &amp; set(hit.chunk.text.lower().split())) / len(words)
+
+    return sorted(hits, key=overlap, reverse=True)
+
+
+def retrieve(store: AclVectorStore, principal: Principal, query: str, k: int = 3,
+             candidates: int = 20, prefilter: bool = True) -&gt; list[Hit]:
+    vector = embed(query)
+    hits = store.search(vector, candidates, principal if prefilter else None)
+    top = rerank(query, hits)[:k]
+    for hit in top:
+        if not AclVectorStore.visible(hit.chunk, principal):
+            raise AclViolation(f"{hit.chunk.id} вне прав {principal.id}")
+    return top
+
+
+if __name__ == "__main__":
+    def make(cid: str, dept: str, tenant: str, text: str) -&gt; Chunk:
+        return Chunk(id=cid, doc_id=cid.split("#")[0], text=text,
+                     acl=frozenset({dept}), metadata={"tenant": tenant})
+
+    store = AclVectorStore()
+    store.upsert([
+        make("gl-17#1", "icu", "meridian", "порог лактата при сепсисе равен 2 ммоль/л"),
+        make("gl-31#1", "cardio", "meridian", "порог тропонина при коронарном синдроме"),
+        make("gl-44#1", "psych", "meridian", "порог риска при оценке суицидального поведения"),
+        make("gl-90#1", "icu", "harbor", "порог лактата в протоколе другой сети клиник"),
+    ])
+    doctor = Principal("u-7", frozenset({"icu", "cardio"}), tenant="meridian")
+    hits = retrieve(store, doctor, "порог лактата при сепсисе")
+    assert {hit.chunk.id for hit in hits} == {"gl-17#1", "gl-31#1"}
+    visible = store.ranked
+    assert visible == 2                          # ранжируются только видимые чанки
+    try:
+        retrieve(store, doctor, "порог риска", prefilter=False)
+    except AclViolation as err:
+        assert "gl-44#1" in str(err)
+    else:
+        raise AssertionError("пост-проверка обязана поймать чужой чанк")
+    print("ранжировано", visible, "чанков из", len(store.rows), "· выдано", len(hits))</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def visible(chunk: Chunk">строка 16</span><p>Условие видимости описано один раз и используется и фильтром, и пост-проверкой. Если бы правило было описано дважды, изменение одного описания без другого привело бы к утечке, которую сборка не обнаруживает.</p></div>
+  <div><span class="at" data-anchor="if principal is None or self.visible">строка 27</span><p>Фильтр применяется внутри обхода хранилища, то есть до сортировки. В хранилище, используемом в эксплуатации, на этом месте стоит предикат запроса, который исполняется движком хранилища до ранжирования.</p></div>
+  <div><span class="at" data-anchor="self.ranked = len(hits)">строка 28</span><p>Число отранжированных кандидатов сохраняется для проверки: по нему тест подтверждает, что ранжирование получило только разрешённые фрагменты. В production эту величину записывают в атрибут трассы.</p></div>
+  <div><span class="at" data-anchor="raise AclViolation(f">строка 50</span><p>Пост-проверка возбуждает исключение. Если бы она молча удаляла лишний фрагмент, дефект фильтра остался бы скрытым, а утечка сохранилась бы в производных величинах: в числе найденного, в списке похожих и в сводке.</p></div>
+</div>
+</figure>
+
+<p>В гибридном поиске это требование применяется к двум ветвям. Лексическая и векторная ветви выполняют поиск независимо, поэтому права применяются в каждой ветви до слияния. Если ветвь фильтруется только после слияния, закрытый документ, занявший в лексической выдаче первое место, сдвигает вниз все разрешённые, и порядок результатов зависит от документов, которые спрашивающий не вправе видеть.</p>
+
+<figure class="code" data-fold="26">
+<figcaption><span class="file">hybrid_search.py</span></figcaption>
+<pre><code>import math
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+TOKEN = re.compile(r"[\w.-]+")
+RRF_K = 60
+
+
+def tokens(text: str) -&gt; list[str]:
+    return TOKEN.findall(text.lower())
+
+
+@dataclass
+class LexicalStore:
+    """BM25 по тем же чанкам: редкие коды и аббревиатуры, которые вектор смазывает."""
+    chunks: list[Chunk] = field(default_factory=list)
+    k1: float = 1.2
+    b: float = 0.75
+
+    def search(self, query: str, principal: Principal, k: int) -&gt; list[str]:
+        allowed = [c for c in self.chunks if c.acl &amp; principal.groups]
+        if not allowed:
+            return []
+        bags = [tokens(c.text) for c in allowed]
+        avg = sum(len(bag) for bag in bags) / len(bags)
+        scored: list[tuple[str, float]] = []
+        for chunk, bag in zip(allowed, bags, strict=True):
+            score = 0.0
+            for term in set(tokens(query)):
+                tf = bag.count(term)
+                if not tf:
+                    continue
+                df = sum(1 for other in bags if term in other)
+                idf = math.log(1 + (len(allowed) - df + 0.5) / (df + 0.5))
+                norm = tf + self.k1 * (1 - self.b + self.b * len(bag) / avg)
+                score += idf * tf * (self.k1 + 1) / norm
+            if score:
+                scored.append((chunk.id, score))
+        scored.sort(key=lambda row: row[1], reverse=True)
+        return [cid for cid, _ in scored[:k]]
+
+
+def rrf(rankings: Sequence[Sequence[str]], k: int = RRF_K) -&gt; list[tuple[str, float]]:
+    """Слияние по обратным рангам: складываются места, а не несравнимые оценки."""
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for place, cid in enumerate(ranking, 1):
+            scores[cid] = scores.get(cid, 0.0) + 1 / (k + place)
+    return sorted(scores.items(), key=lambda row: row[1], reverse=True)
+
+
+def hybrid(query: str, principal: Principal, lexical: LexicalStore,
+           vectors: FakeVectorStore, k: int = 3, depth: int = 10) -&gt; list[str]:
+    lex = lexical.search(query, principal, depth)
+    vec = [hit.chunk.id for hit in
+           vectors.search(embed(query), depth, allowed_groups=principal.groups)]
+    return [cid for cid, _ in rrf([lex, vec])[:k]]
+
+
+if __name__ == "__main__":
+    def make(cid: str, dept: str, text: str) -&gt; Chunk:
+        return Chunk(id=cid, doc_id=cid.split("#")[0], text=text, acl=frozenset({dept}))
+
+    corpus = [
+        make("gl-17#1", "icu", "сепсис по коду R65.2 требует измерения лактата"),
+        make("gl-17#2", "icu", "лактат выше двух ммоль на литр повторяют через час"),
+        make("gl-31#1", "cardio", "тропонин при коронарном синдроме измеряют дважды"),
+        make("gl-44#1", "psych", "код R65.2 в психиатрической выписке не применяется"),
+    ]
+    lexical = LexicalStore(corpus)
+    vectors = FakeVectorStore()
+    vectors.upsert(corpus)
+    doctor = Principal("u-7", frozenset({"icu", "cardio"}))
+
+    assert lexical.search("R65.2", doctor, 5) == ["gl-17#1"]     # точный код находит только лексика
+    assert "gl-44#1" not in hybrid("R65.2", doctor, lexical, vectors)
+    merged = rrf([["только-лексика", "оба"], ["оба"]])
+    assert merged[0][0] == "оба"     # найденное обоими способами выше найденного одним
+    top = hybrid("лактат R65.2", doctor, lexical, vectors)
+    assert "gl-17#1" in top and "gl-44#1" not in top
+    print("слияние вернуло:", top)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="allowed = [c for c in self.chunks if c.acl">строка 22</span><p>Права применяются в лексической ветви до вычисления статистик. Частоты документов считаются по разрешённому подмножеству, иначе редкость термина раскрывает наличие закрытых документов с этим термином.</p></div>
+  <div><span class="at" data-anchor="idf = math.log(">строка 35</span><p>Обратная частота документа поднимает вес редких токенов: кода диагноза, номера приказа, названия препарата. Эти токены векторный поиск усредняет вместе с окружением, поэтому для них используется лексическая ветвь.</p></div>
+  <div><span class="at" data-anchor="1 / (k + place)">строка 49</span><p>Слияние складывает величины, вычисленные по местам в списках. Оценки при этом не используются: оценка BM25 и косинусная близость измеряются в несравнимых шкалах, и линейная комбинация оценок требует подбора весов заново после каждой смены модели.</p></div>
+  <div><span class="at" data-anchor="allowed_groups=principal.groups">строка 57</span><p>Векторная ветвь получает те же группы, что и лексическая. Пропуск этого аргумента приводит к утечке: одна ветвь отфильтрована, другая нет, и слияние поднимает наверх фрагменты, закрытые для спрашивающего.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Отбирать кандидатов по всему индексу, переранжировать их и фильтровать по правам в самом конце, потому что «так проще и результат тот же». Результат отличается: ранги, дошедшие до фильтра, вычислены с учётом закрытых документов, а списки похожего и сводки модели уже составлены по закрытому содержимому.</div>
+
+<h3 id="s-5-8"><span class="num">5.8</span>Свежесть и инкрементальность</h3>
+
+<p>Корпус Meridian меняется ежедневно: выходят новые редакции протоколов, отзываются приказы, меняются права отделений после реорганизаций. Полная переиндексация двух миллионов фрагментов занимает часы и требует оплаты вычислений, поэтому приём работает инкрементально. Источником списка изменений служит либо журнал изменений системы документооборота, либо сравнение хешей при обходе. Первый способ предпочтительнее, поскольку журнал фиксирует удаление в момент удаления, а обход обнаруживает его только при следующем полном проходе, по отсутствию файла.</p>
+
+<p>Изменение редакции обрабатывается как замена. Фрагменты предыдущей редакции удаляются, фрагменты новой вставляются, и версия документа в индексе повышается одной операцией. Без удаления индекс накапливает редакции, и клиницист может получить в ответе цитату из протокола, отменённого полтора года назад, оформленную так же, как цитата из действующего. По форме клиницист не может отличить такой ответ от верного.</p>
+
+<p>Удаление и отзыв прав требуют отдельного механизма, потому что распространяются асинхронно. Реплика поиска получает изменения индекса с задержкой в минуты, запись в кэше хранится часами, а требование «документ отозван и не должен появляться в ответах» действует немедленно. Решением служит журнал надгробий: отзыв сразу записывается в небольшую таблицу, которая читается в момент запроса, и результат, пришедший из отставшей реплики, отбрасывается по этой таблице. Надгробие снимается тогда, когда удаление выполнено во всех копиях.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Считать, что удаление из индекса произошло, если API удаления вернул успех. Успешный ответ означает, что команда принята; распространение удаления по репликам и кэшам происходит позже. Отзыв документа проверяется запросом от имени пользователя, которому документ был доступен, и в требованиях заказчика эта проверка оформляется отдельным приёмочным сценарием.</div>
+
+<h3 id="s-5-9"><span class="num">5.9</span>Измерение retrieval</h3>
+
+<p>Качество поиска измеряется на размеченном наборе вопросов, где для каждого вопроса указаны фрагменты, которые должны попасть в выдачу. Две базовые величины измеряют разные свойства выдачи. Полнота на k, recall@k, равна доле нужных фрагментов, попавших в первые k результатов; когда у вопроса один нужный фрагмент, как в листинге ниже, она показывает, попал ли этот фрагмент в выдачу, и ограничивает сверху качество ответа.<a class="src" href="https://nlp.stanford.edu/IR-book/html/htmledition/evaluation-of-ranked-retrieval-results-1.html" target="_blank" rel="noreferrer">Manning, Raghavan, Schütze, Introduction to Information Retrieval: оценка ранжированной выдачи</a> Средний обратный ранг, MRR, равен среднему по всем вопросам значению 1/место первого нужного фрагмента, причём ненайденный фрагмент даёт ноль; величина уменьшается, когда модели приходится читать лишние фрагменты перед нужным.<a class="src" href="https://en.wikipedia.org/wiki/Mean_reciprocal_rank" target="_blank" rel="noreferrer">Wikipedia, mean reciprocal rank</a> Третья величина, обоснованность ответа, измеряется на следующем этапе и разбирается в <a href="#ch-12" data-secref="12">главе 12</a>.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">retrieval_eval.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+
+NOT_INDEXED = "не проиндексировано"
+HIDDEN = "скрыто фильтром"
+CANDIDATES = "не попало в кандидаты"
+RANKING = "ниже среза k"
+FOUND = "найдено"
+
+
+@dataclass(frozen=True)
+class Question:
+    qid: str
+    text: str
+    gold: frozenset[str]           # чанки, которые обязаны попасть в ответ
+
+
+@dataclass(frozen=True)
+class Diagnosis:
+    qid: str
+    rank: int | None
+    stage: str                     # где именно потерялся правильный ответ
+
+
+@dataclass
+class Report:
+    recall_at_k: float
+    mrr: float
+    rows: list[Diagnosis]
+
+    def failed(self, stage: str) -&gt; list[str]:
+        return [row.qid for row in self.rows if row.stage == stage]
+
+
+def diagnose(question: Question, ranked: Sequence[str], indexed: frozenset[str],
+             visible: frozenset[str], k: int) -&gt; Diagnosis:
+    places = [i for i, cid in enumerate(ranked, 1) if cid in question.gold]
+    if places and places[0] &lt;= k:
+        return Diagnosis(question.qid, places[0], FOUND)
+    if not question.gold &amp; indexed:
+        return Diagnosis(question.qid, None, NOT_INDEXED)
+    if not question.gold &amp; visible:
+        return Diagnosis(question.qid, None, HIDDEN)
+    if not places:
+        return Diagnosis(question.qid, None, CANDIDATES)
+    return Diagnosis(question.qid, places[0], RANKING)
+
+
+def evaluate(questions: Sequence[Question], run: Callable[[Question], list[str]],
+             indexed: frozenset[str], visible: frozenset[str], k: int = 5) -&gt; Report:
+    rows = [diagnose(q, run(q), indexed, visible, k) for q in questions]
+    found = [row for row in rows if row.stage == FOUND and row.rank]
+    return Report(recall_at_k=len(found) / len(rows),
+                  mrr=sum(1 / row.rank for row in found if row.rank) / len(rows),
+                  rows=rows)
+
+
+if __name__ == "__main__":
+    questions = [
+        Question("q1", "порог лактата при сепсисе", frozenset({"gl-17#1"})),
+        Question("q2", "оценка суицидального риска", frozenset({"gl-44#1"})),
+        Question("q3", "срок хранения снимков", frozenset({"gl-52#3"})),
+        Question("q4", "когда вводят антибиотик", frozenset({"gl-17#4"})),
+    ]
+    runs: dict[str, list[str]] = {
+        "q1": ["gl-31#1", "gl-17#1", "gl-90#1"],
+        "q2": ["gl-31#1", "gl-90#1"],
+        "q3": ["gl-31#1"],
+        "q4": ["gl-31#1", "gl-90#1", "gl-52#1", "gl-52#2", "gl-44#1", "gl-17#4"],
+    }
+    indexed = frozenset({"gl-17#1", "gl-17#4", "gl-31#1", "gl-44#1", "gl-90#1",
+                         "gl-52#1", "gl-52#2"})
+    visible = indexed - {"gl-44#1"}          # психиатрия закрыта для этого principal
+    report = evaluate(questions, lambda q: runs[q.qid], indexed, visible, k=5)
+
+    assert report.recall_at_k == 0.25 and report.mrr == 0.125
+    assert report.failed(HIDDEN) == ["q2"]           # индекс есть, прав нет
+    assert report.failed(NOT_INDEXED) == ["q3"]      # документа нет в индексе вовсе
+    assert report.failed(RANKING) == ["q4"]          # нашлось шестым при k = 5
+    print("recall@5:", report.recall_at_k, "· MRR:", report.mrr,
+          "· отказов:", len(report.rows) - 1)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="places = [i for i, cid in enumerate(ranked, 1)">строка 39</span><p>Место первого правильного фрагмента вычисляется по полной выдаче, чтобы отличать случай «нашлось шестым при k, равном пяти» от случая «не нашлось»: эти случаи указывают на разные дефекты и требуют разного ремонта.</p></div>
+  <div><span class="at" data-anchor="if not question.gold &amp; indexed:">строка 42</span><p>Порядок проверок задаёт разбор отказа по стадиям. Сначала выясняется, дошёл ли документ до индекса, затем виден ли он спрашивающему, затем попал ли он в кандидаты, и только затем причиной считается ранжирование.</p></div>
+  <div><span class="at" data-anchor="visible = indexed - ">строка 75</span><p>Права входят в оценку как отдельная стадия. Если правильный ответ закрыт для спрашивающего, система обязана ответить отказом, и такой случай учитывается отдельно от промахов ранжирования.</p></div>
+  <div><span class="at" data-anchor="mrr=sum(1 / row.rank">строка 56</span><p>Сумма обратных рангов делится на число всех вопросов. При делении на число найденных метрика описывала бы только удачные случаи и не уменьшалась бы с ростом числа промахов.</p></div>
+</div>
+</figure>
+
+<p>Агрегированная метрика используется в воротах релиза и не указывает причину падения. Показатель recall@5, равный 0,72, не показывает, какая стадия требует ремонта: разбор, нарезка, права или ранжирование, а ремонт этих стадий различается по стоимости. Поэтому отчёт хранит результат каждого вопроса отдельно и называет стадию, на которой ответ потерялся; сравнение двух прогонов по вопросам показывает, какие вопросы после изменения стали находить нужный фрагмент, а какие перестали. Диагностический стенд <a class="src" href="https://github.com/laputski/causa-rag" target="_blank" rel="noreferrer">causa-rag</a> строит отчёт такой формы и приводится здесь как пример.</p>
+
+<p>Набор вопросов составляется из вопросов, которые пользователи задают на рабочих местах. Для Meridian первые полторы сотни вопросов записаны на двух сменах в реанимации и в приёмном отделении, ещё сотня взята из журнала обращений в методический отдел. Разметку выполняют врачи, и её стоимость высока, поэтому набор пополняется по инцидентам: каждый разобранный инцидент добавляет вопрос, который его воспроизводит. Этот набор используется и для оценки всей системы в <a href="#ch-12" data-secref="12">главе 12</a>.</p>
+
+<h3 id="s-5-10" data-level="2"><span class="num">5.10</span>На Google Cloud: Agent Search, Vector Search, AlloyDB</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Agent Search</span>
+  <span class="tag">AlloyDB · pgvector</span>
+  <span class="tag">Document AI</span>
+</div>
+
+<p data-level="2">Дерево решений из <a href="#s-5-5" data-secref="5.5">раздела 5.5</a> отображается на сервисы Google Cloud без изменения вопросов. Платформа моделей и агентов Google Cloud называется Gemini Enterprise Agent Platform (ранее Vertex AI), и в её составе сервис Vertex AI Search переименован в Agent Search.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes" target="_blank" rel="noreferrer">cloud.google.com, переименования продуктов Agent Platform</a> Agent Search соответствует случаю «управляемый поиск целиком»: сервис разбирает документы, при приёме делит их на фрагменты, индексирует и ранжирует результаты.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/vertex-ai-search" target="_blank" rel="noreferrer">cloud.google.com, об Agent Search</a><a class="src" href="https://docs.cloud.google.com/generative-ai-app-builder/docs/parse-chunk-documents" target="_blank" rel="noreferrer">cloud.google.com, разбор и нарезка документов в Agent Search</a> Для хранилища данных, созданного с включённым управлением доступом, Agent Search определяет пользователя через поставщика идентичности и возвращает только документы, к которым у пользователя есть доступ, поэтому фильтр по группам исполняется сервисом; на сентябрь 2026 года эта функция имеет статус Preview.<a class="src" href="https://docs.cloud.google.com/generative-ai-app-builder/docs/data-source-access-control" target="_blank" rel="noreferrer">cloud.google.com, управление доступом к источникам данных в Agent Search</a></p>
+
+<p data-level="2">Vector Search соответствует случаю большого объёма, когда нужен только векторный индекс: сервис фильтрует по числовым и текстовым атрибутам, а эмбеддинги и конвейер приёма строятся своими силами.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/vector-search/overview" target="_blank" rel="noreferrer">cloud.google.com, Vector Search</a> AlloyDB использует расширение pgvector и выполняет векторный поиск в одном SQL-запросе с условиями на атрибуты, Cloud SQL для PostgreSQL поддерживает то же расширение, и оба сервиса соответствуют ветви сложных фильтров.<a class="src" href="https://docs.cloud.google.com/alloydb/docs/ai/vector-search-overview" target="_blank" rel="noreferrer">cloud.google.com, векторный поиск в AlloyDB</a><a class="src" href="https://docs.cloud.google.com/sql/docs/postgres/work-with-vectors" target="_blank" rel="noreferrer">cloud.google.com, векторы в Cloud SQL для PostgreSQL</a> Векторный поиск в BigQuery выполняется функцией <code>VECTOR_SEARCH</code> в SQL и оплачивается по объёму обработанных данных или по слотам, что соответствует ветви пакетных расчётов рядом с витринами.<a class="src" href="https://docs.cloud.google.com/bigquery/docs/vector-search-intro" target="_blank" rel="noreferrer">cloud.google.com, векторный поиск в BigQuery</a> Document AI распознаёт текст сканов и извлекает таблицы, а документ, который не удалось разобрать, помещается в тот же карантин.<a class="src" href="https://docs.cloud.google.com/document-ai/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, Document AI</a></p>
+
+<p data-level="2">Выбор для Meridian на 2026 год: индекс с медицинскими данными хранится внутри периметра в AlloyDB Omni, редакции AlloyDB, которая устанавливается в собственном центре обработки данных,<a class="src" href="https://docs.cloud.google.com/alloydb/omni/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, AlloyDB Omni</a> деидентифицированная копия и эксперименты размещаются в управляемом поиске, а шлюз деидентификации построен на Sensitive Data Protection, как разобрано в <a href="#ch-10" data-secref="10">главе 10</a>.<a class="src" href="https://docs.cloud.google.com/sensitive-data-protection/docs/deidentify-sensitive-data" target="_blank" rel="noreferrer">cloud.google.com, деидентификация в Sensitive Data Protection</a> Названия и возможности сервисов приведены по документации Google Cloud на сентябрь 2026 года. Названия продуктов меняются чаще, чем структура решения, поэтому вопросы дерева остаются применимыми после смены продуктов.</p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Четыре вопроса дерева не зависят от поставщика. Для корпуса с разграничением доступа хранилища различаются прежде всего тем, применяется ли фильтр по метаданным во время векторного поиска или только к уже найденным результатам. Qdrant и Pinecone принимают условия по метаданным в запросе поиска,<a class="src" href="https://qdrant.tech/documentation/concepts/filtering/" target="_blank" rel="noreferrer">qdrant.tech, фильтрация</a><a class="src" href="https://docs.pinecone.io/guides/search/filter-by-metadata" target="_blank" rel="noreferrer">docs.pinecone.io, фильтр по метаданным</a> а Weaviate строит по фильтру список допустимых объектов до векторного поиска.<a class="src" href="https://docs.weaviate.io/weaviate/concepts/filtering" target="_blank" rel="noreferrer">docs.weaviate.io, фильтрация</a> В Elasticsearch фильтр kNN-поиска применяется во время приближённого поиска;<a class="src" href="https://www.elastic.co/docs/solutions/search/vector/knn" target="_blank" rel="noreferrer">elastic.co, kNN-поиск</a> в OpenSearch такой режим называется efficient k-NN filtering, а булев фильтр вне k-NN-запроса и параметр <code>post_filter</code> применяются после поиска и могут вернуть меньше k результатов.<a class="src" href="https://docs.opensearch.org/latest/vector-search/filter-search-knn/index/" target="_blank" rel="noreferrer">docs.opensearch.org, фильтрация векторного поиска</a> Хранилище или режим, в котором фильтр применяется только после поиска, для корпуса с разграничением доступа не подходит по причинам из <a href="#s-5-7" data-secref="5.7">раздела 5.7</a>.</div>
+
+<h3 id="s-5-11" data-level="3"><span class="num">5.11</span>Вглубь: утечка через reranker, ACL на уровне chunk, миграция embeddings</h3>
+
+<h4 data-level="3">Утечка через переранжировщик и сводки</h4>
+
+<p data-level="3">Переранжирование суперсета выбирают ради полноты: кандидатов берут по всему индексу, чтобы грубый фильтр не отсёк релевантный фрагмент, а права применяют к финальной двадцатке. Итоговый список результатов в такой схеме закрытых документов не содержит, и утечка возникает в величинах, производных от множества кандидатов. Счётчик «найдено 47 документов» отличается от «найдено 12» и сообщает о существовании тридцати пяти закрытых. Блок «похожие документы» строится по соседям в векторном пространстве и может включать закрытые. Сводка, составленная моделью по всем переранжированным фрагментам, пересказывает содержимое закрытых документов, не цитируя их, и фильтр по идентификаторам документов этот пересказ не обнаруживает.</p>
+
+<p data-level="3">Правило: каждая величина, вычисляемая по множеству документов, вычисляется по разрешённому множеству. Правило распространяется на счётчики, фасеты, подсказки в строке поиска, кэш популярных запросов и обучающие выборки переранжировщика. В случае обучающих выборок переранжировщик, дообученный на кликах всех пользователей, запоминает закрытые документы как хорошие ответы и поднимает их в выдаче для пользователей, которые их не открывали.</p>
+
+<h4 data-level="3">Права на документе и права на фрагменте</h4>
+
+<p data-level="3">Модель прав «весь документ виден группе» достаточна, пока в корпусе нет документов смешанной чувствительности. В Meridian такой документ существует: протокол ведения пациента с зависимостью содержит общую часть для всех отделений и раздел с психиатрическим анамнезом, закрытый для остальных. Права на уровне документа заставляют выбрать между сокрытием общей части от всех и раскрытием психиатрического раздела всем.</p>
+
+<p data-level="3">Права на уровне фрагмента решают эту задачу и создают два обязательства. Первое: права фрагмента берутся из системы документооборота, поэтому документ должен содержать разметку разделов, и у этой разметки должен быть ответственный за её поддержку. Второе: ответ, собранный из фрагментов с разными правами, должен показывать источник каждой цитаты, чтобы клиницист мог понять, почему коллега видит только часть ответа. Meridian принял смешанную схему: по умолчанию права документа, а разметка разделов вводится только для тех типов документов, где смешение подтверждено методическим отделом.</p>
+
+<h4 data-level="3">Отозванный документ в отставшей реплике</h4>
+
+<p data-level="3">Ошибка свежести развивается по следующему сценарию. Документ отозван, команда удаления отправлена, API вернул успех, инцидент закрыт. Через неделю клиницист цитирует отозванный протокол, найденный через реплику поиска, которая в момент удаления была недоступна и восстановилась из снимка. Листинг ниже показывает механизм защиты: журнал надгробий является источником истины о действующих документах и читается в момент запроса, поэтому отставшая реплика не возвращает отозванный документ, даже если его строки в ней ещё хранятся.</p>
+
+<figure class="code" data-fold="22" data-level="3">
+<figcaption><span class="file">incremental_index.py</span></figcaption>
+<pre><code>from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+
+@dataclass
+class LiveIndex:
+    """Истина о том, что живо: версии документов и надгробия отозванных."""
+    rows: dict[str, Chunk] = field(default_factory=dict)
+    live_version: dict[str, int] = field(default_factory=dict)
+    revoked: set[str] = field(default_factory=set)
+
+    def publish(self, doc_id: str, version: int, chunks: Sequence[Chunk]) -&gt; tuple[int, int]:
+        stale = [cid for cid, row in self.rows.items()
+                 if row.doc_id == doc_id and row.version &lt; version]
+        for cid in stale:
+            del self.rows[cid]
+        for chunk in chunks:
+            self.rows[chunk.id] = chunk
+        self.live_version[doc_id] = version
+        self.revoked.discard(doc_id)
+        return len(chunks), len(stale)
+
+    def revoke(self, doc_id: str) -&gt; None:
+        self.revoked.add(doc_id)                 # надгробие ставится сразу
+        for cid in [cid for cid, row in self.rows.items() if row.doc_id == doc_id]:
+            del self.rows[cid]
+
+    def alive(self, chunk: Chunk) -&gt; bool:
+        return (chunk.doc_id not in self.revoked
+                and chunk.version &gt;= self.live_version.get(chunk.doc_id, chunk.version))
+
+
+@dataclass
+class SearchReplica:
+    """Реплика поиска, догоняющая индекс с задержкой в минуты."""
+    rows: dict[str, Chunk] = field(default_factory=dict)
+
+    def sync(self, index: LiveIndex) -&gt; None:
+        self.rows = dict(index.rows)
+
+    def search(self, term: str, index: LiveIndex, k: int = 5) -&gt; list[Chunk]:
+        found = [row for row in self.rows.values() if term in row.text]
+        return [row for row in found if index.alive(row)][:k]   # надгробия читаются в запросе
+
+
+if __name__ == "__main__":
+    def make(cid: str, doc_id: str, version: int, text: str) -&gt; Chunk:
+        return Chunk(id=cid, doc_id=doc_id, text=text, acl=frozenset({"icu"}), version=version)
+
+    index, replica = LiveIndex(), SearchReplica()
+    index.publish("gl-17", 3, [make("gl-17:v3", "gl-17", 3, "порог лактата 2 ммоль/л")])
+    replica.sync(index)
+    assert [row.id for row in replica.search("лактата", index)] == ["gl-17:v3"]
+
+    added, removed = index.publish("gl-17", 4, [make("gl-17:v4", "gl-17", 4, "порог лактата 4 ммоль/л")])
+    assert (added, removed) == (1, 1)                    # старая версия удалена
+    assert replica.search("лактата", index) == []        # реплика отстала, надгробие сработало
+    replica.sync(index)
+    assert [row.id for row in replica.search("лактата", index)] == ["gl-17:v4"]
+
+    index.revoke("gl-17")
+    assert replica.rows and replica.search("лактата", index) == []   # отзыв действует до синхронизации
+    print("строк в реплике:", len(replica.rows), "· видно в поиске:", len(replica.search("лактата", index)))</code></pre>
+</figure>
+
+<p data-level="3">Стоимость решения состоит в чтении таблицы надгробий на каждом запросе, и это обычно единицы миллисекунд при таблице в тысячи строк. Надгробия снимаются процессом сверки, который сравнивает копии и убирает запись, когда удаление дошло до всех. Срок хранения надгробия выбирается больше самого долгого возможного отставания реплики и восстановления из резервной копии, то есть измеряется сутками.</p>
+
+<h4 data-level="3">Миграция модели эмбеддингов</h4>
+
+<p data-level="3">Смена модели эмбеддингов означает пересчёт всех фрагментов корпуса и невозможность сравнивать старые векторы с новыми. Двести тысяч документов Meridian дают около двух миллионов фрагментов, и пересчёт занимает часы вычислений, которые оплачиваются. Поэтому схема перехода состоит из двух индексов: новый строится рядом, наполняется пересчётом в фоне и получает те же инкрементальные изменения, что и старый. Переключение выполняется после того, как новый индекс догнал старый по свежести и не уступил ему по измерению из <a href="#s-5-9" data-secref="5.9">раздела 5.9</a>.</p>
+
+<p data-level="3">При миграции может измениться и сама оценка. Набор вопросов размечен идентификаторами фрагментов, а новая нарезка или новая модель меняют границы фрагментов и их идентификаторы, поэтому прямое сравнение метрик между индексами оказывается сравнением разных величин. Поэтому разметка ведётся на уровне документа и раздела, и метрика остаётся сопоставимой при миграции.</p>
+
+<h4 data-level="3">Таблицы и рисунки</h4>
+
+<p data-level="3">Нарезка по абзацам повреждает таблицу двумя способами. Заголовки столбцов остаются в одном фрагменте, а строки в другом, и строка «Взрослые · 500 мг · каждые 8 ч» теряет смысл, потому что неизвестно, к какому препарату она относится. Порядок чтения в PDF с двумя колонками часто перемешивает ячейки, и фрагмент содержит числа из разных строк подряд.</p>
+
+<p data-level="3">Для таблиц применяется сериализация строк. Каждая строка таблицы превращается в отдельный фрагмент вида «Препарат: цефтриаксон. Группа: взрослые. Доза: 2 г. Кратность: каждые 24 ч. Источник: таблица 3 протокола 17, редакция 4», а таблица целиком сохраняется вторым фрагментом с подписью и заголовками. Первый вариант отвечает на вопрос о дозе, второй нужен, когда вопрос касается структуры таблицы. Рисунки и алгоритмы, не превращаемые в текст, индексируются по подписи и окружающему абзацу, а ответ по ним содержит ссылку на страницу.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему фильтр по правам, применённый после ранжирования, считается утечкой, если в выдаче нет закрытых документов?</summary>
+<div class="ans"><p>Утекают величины, вычисленные до фильтра: число найденного, порядок разрешённых результатов, список похожего и сводка, составленная моделью по переранжированным фрагментам. Эти величины зависят от множества, по которому они вычислены, и по ним можно сделать выводы о закрытых документах, даже когда сами документы скрыты.</p></div>
+</details>
+<details>
+<summary>Что даёт слияние по обратным рангам такого, чего не даёт взвешенная сумма оценок двух поисков?</summary>
+<div class="ans"><p>Слияние по обратным рангам не зависит от шкал оценок. Оценка BM25 и косинусная близость несравнимы, и веса линейной комбинации приходится подбирать заново после каждой смены модели или корпуса. Слияние использует места в списках, а места сравнимы при любых шкалах оценок.</p></div>
+</details>
+<details>
+<summary>Показатель recall@5 упал с 0,81 до 0,74 после ежедневного приёма. С чего начинается разбор?</summary>
+<div class="ans"><p>Разбор начинается с диагностики по вопросам: какие вопросы перестали находить правильный фрагмент и на какой стадии. Если правильные фрагменты исчезли из индекса, причина в приёме или в удалении по версии; если они видны, но не попадают в кандидаты, причина в нарезке или отборе; если попадают, но оказываются ниже среза, причина в ранжировании.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>RAG является задачей подготовки данных: готовность корпуса, разбор, дедупликация и провенанс ограничивают сверху качество ответа, и модель со способом ранжирования работают в пределах этого ограничения.</li>
+<li>Фрагмент содержит права, версию и хеш содержимого, поэтому фильтр исполняется хранилищем, перевыкладка идемпотентна, а ответ содержит ссылку на редакцию.</li>
+<li>Права применяются до ранжирования и в каждой ветви гибридного поиска, а пост-проверка перед выдачей вызывает ошибку при нарушении прав.</li>
+<li>Свежесть обеспечивается инкрементальным приёмом и надгробиями, читаемыми в момент запроса, а качество поиска измеряется по вопросам с указанием отказавшей стадии.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-4" data-secref="4">Глава 4: как найденное попадает в контекст</a>
+<a href="#ch-10" data-secref="10">Глава 10: периметр, PHI и суверенитет</a>
+<a href="#ch-12" data-secref="12">Глава 12: оценка всей системы и ворота релиза</a>
+</p>
+</div>
+</section>

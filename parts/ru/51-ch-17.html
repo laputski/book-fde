@@ -1,0 +1,1116 @@
+<!-- ────────────────────────── ГЛАВА 17 ────────────────────────── -->
+<section class="chapter" id="ch-17">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава семнадцатая</p>
+    <span class="strata" role="img" aria-label="Слои A, B и G: системы и данные заказчика, модель и агентный слой, продукт и обратная связь">
+      <i data-s="A"></i><i data-s="B"></i><i></i><i></i><i></i><i></i><i data-s="G"></i>
+    </span>
+  </div>
+  <h2 id="s-17"><span class="num">17</span>Трек архитектора: reference architectures и TCO</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>записывать архитектуру как набор решений с драйверами, альтернативами и ценой отмены;</li>
+<li>строить эталонную архитектуру из нейтральных слоёв с явными точками вариации и отвергать несовместимые привязки до выкладки;</li>
+<li>считать совокупную стоимость владения на три года диапазонами и находить месяцы, в которые меняется самый дешёвый вариант;</li>
+<li>выбирать между разработкой, покупкой и партнёрством по критериям и заранее знать цену выхода от вендора;</li>
+<li>оформлять решения в ADR и проводить архитектурное ревью исполняемым чеклистом.</li>
+</ul>
+</div>
+
+<h3 id="s-17-1"><span class="num">17.1</span>Задача: целевая архитектура на три года</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-5" data-secref="G.5">Досье CF5 · City of Northgate</a></span>
+  <span class="tag">3 года</span>
+  <span class="tag">только в регионе</span>
+  <span class="tag">закупки</span>
+  <span class="tag">EU AI Act</span>
+  <span>муниципалитет</span>
+</div>
+
+<p>Директор по информационным технологиям города Northgate запрашивает целевую архитектуру AI-платформы на три года. Ассистент для жителей из <a href="#ch-10" data-secref="10">главы 10</a> работает в production, а в очереди стоят ещё три агента: помощник сотрудника службы пособий, разбор архива документов и ответы поставщикам на портале закупок. Директор задаёт вопрос: какую платформу строить, чтобы четвёртый агент обошёлся дешевле первого. Вопрос обусловлен правилами закупок, по которым конкурс объявляется только после сравнения вариантов и их стоимости на весь срок контракта.</p>
+
+<p>Тот же вопрос в ту же неделю задаёт Helix Manufacturing из <a href="#ch-14" data-secref="14">главы 14</a>, и ограничения у него противоположны. У Northgate данные обязаны оставаться в регионе, связь с облаком есть всегда, объём растёт непредсказуемо, а эксплуатацию AI-платформы обеспечивают полторы ставки. У Helix три завода изолированы от сети, объём задан сменами и почти не меняется, а на заводах работают инженеры площадки, но ни у одного из них нет опыта дежурства по серверу модели. Одинаковый ответ двум заказчикам означал бы, что по крайней мере одному из них он не подходит.</p>
+
+<p>Архитектор отвечает на такой запрос четырьмя артефактами: эталонной архитектурой с явными точками вариации, моделью совокупной стоимости владения на 36 месяцев, планом миграции и набором ADR, которые связывают каждое решение с его основаниями. Числа Northgate и Helix в главе вымышлены и посчитаны в условном прайсе листингов; они иллюстрируют механизм расчёта и отраслевой статистикой не являются.</p>
+
+<h3 id="s-17-2"><span class="num">17.2</span>Почему архитектура является набором решений</h3>
+
+<p>Слайд с прямоугольниками «портал», «агент», «LLM» и «векторная БД» не отвечает ни на один вопрос, ради которого заказывали архитектуру. Каждый прямоугольник обозначает выбор, который на слайде не записан: где исполняется агент, кто платит за простой мощности, в чьей юрисдикции хранится индекс. У выбора есть основания, отвергнутые альтернативы и цена, которую придётся заплатить, если основания изменятся. Слайд не содержит этих сведений и поэтому устаревает при первом изменении требований.</p>
+
+<p>Основание решения называется архитектурным драйвером: это требование или ограничение, изменение которого заставляет пересмотреть хотя бы одно решение. Пожелание становится драйвером, когда у него есть владелец у заказчика и проверяемая формулировка: «дела жителей обрабатываются только в ЕС» является драйвером, «платформа должна быть надёжной» им не является. Цена отмены решения измеряется неделями работы и деньгами, которые потребуются для перехода к отвергнутой альтернативе, когда драйвер изменится.</p>
+
+<p>Тезис главы состоит в следующем. Результатом работы консультирующего архитектора является решение с обоснованием: эталонная архитектура с явными точками вариации, совокупная стоимость владения на горизонте контракта, выбор между разработкой, покупкой и партнёрством и привязка к вендору с заранее известной ценой выхода. Диаграмма служит изображением этих решений, записанных в других артефактах.</p>
+
+<h3 id="s-17-3"><span class="num">17.3</span>Reference architectures</h3>
+
+<dl class="def">
+<dt>Эталонная архитектура <span class="en">(reference architecture)</span></dt>
+<dd>Архитектура, описанная для класса заказчиков: слои с нейтральными именами компонентов, неизменная часть, обязательная для всех, и точки вариации, значения которых выбираются по драйверам конкретного заказчика. Соответствие компонентов продуктам поставщиков хранится отдельно и снабжается датой проверки.</dd>
+</dl>
+
+<p>Агентная платформа описывается шестью слоями: каналы, среда исполнения агента, инструменты и интеграция, данные и поиск, оценка и наблюдаемость, безопасность и управление. Слои повторяют систему координат книги из <a href="#s-0-3" data-secref="0.3">раздела 0.3</a> с одним отличием: люди и продукт, которые там являются слоями, здесь становятся потребителями платформы и входят в неё через каналы. У каждого слоя есть неизменная часть, от которой не отказывается ни один заказчик, и главы, где разобраны его механизмы.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Слой</th><th>Неизменная часть</th><th>Точка вариации</th><th>Главы</th></tr></thead>
+<tbody>
+<tr><td>Каналы</td><td>единый API агента для всех каналов</td><td>нет</td><td><a href="#ch-11" data-secref="11">11</a></td></tr>
+<tr><td>Среда исполнения агента</td><td>бюджеты цикла, checkpoint</td><td>1: агентный цикл; 2: эндпоинт модели</td><td><a href="#ch-7" data-secref="7">7</a>, <a href="#ch-9" data-secref="9">9</a>, <a href="#ch-14" data-secref="14">14</a></td></tr>
+<tr><td>Инструменты и интеграция</td><td>политика вне модели</td><td>3: MCP-серверы</td><td><a href="#ch-6" data-secref="6">6</a>, <a href="#ch-10" data-secref="10">10</a></td></tr>
+<tr><td>Данные и поиск</td><td>системы записи, поиск с учётом прав</td><td>4: индекс поиска</td><td><a href="#ch-5" data-secref="5">5</a></td></tr>
+<tr><td>Оценка и наблюдаемость</td><td>модель трассы, ворота оценки</td><td>5: трассы и оценки</td><td><a href="#ch-12" data-secref="12">12</a>, <a href="#ch-13" data-secref="13">13</a></td></tr>
+<tr><td>Безопасность и управление</td><td>журнал аудита</td><td>6: ключи и периметр</td><td><a href="#ch-10" data-secref="10">10</a></td></tr>
+</tbody></table></div>
+
+<p>Имена компонентов выбраны нейтральными. Продукты облачных поставщиков переименовываются в пределах срока службы архитектуры, и одна и та же среда исполнения агентов может одновременно называться по-разному в документации, в справочнике API и в команде развёртывания. Решение, записанное как «эндпоинт модели: региональный, с оплатой за токены», остаётся верным после переименования, а решение, записанное названием продукта, приходится переписывать при каждом обновлении документации.</p>
+
+<h3 id="s-17-4"><span class="num">17.4</span>Точки вариации</h3>
+
+<dl class="def">
+<dt>Точка вариации <span class="en">(variation point)</span></dt>
+<dd>Место эталонной архитектуры, где допускается несколько вариантов с разными свойствами: способом размещения, объёмом эксплуатации на стороне заказчика, гарантией резидентности, обязательством по оплате. Точка связана с драйверами, от которых зависит выбор, и с правилами, которые запрещают несовместимые сочетания вариантов и условий площадки.</dd>
+</dl>
+
+<p>Точка вариации оправдана, только если её драйвер различается у ожидаемых заказчиков. Регуляторика определяет, где размещаются MCP-серверы, а резидентность определяет место эндпоинта, индекса и ключей. Стабильность объёма и задержка определяют выбор между оплатой за токены и выделенной мощностью, эксплуатационная ёмкость определяет, может ли заказчик эксплуатировать собственные компоненты. Всё, что от драйверов не зависит, относится к неизменной части.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Эталонная архитектура из шести слоёв внутри рамки безопасности: каналы, среда исполнения, инструменты, данные и поиск, оценка, безопасность; шесть компонентов отмечены номерами точек вариации, неизменные компоненты номеров не имеют, а таблица справа сопоставляет каждой точке её драйверы и значения для Northgate и для изолированного завода Helix" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar17a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="24" y="36" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">безопасность и управление охватывают все слои</text>
+  <rect x="14" y="46" width="466" height="342" rx="8" fill="none" stroke="var(--sE)" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+  <rect x="28" y="60" width="438" height="38" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="40" y="76" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">каналы</text>
+  <text x="40" y="91" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">гл. 11</text>
+  <rect x="166" y="66" width="294" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="313" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">единый API агента для всех каналов</text>
+
+  <rect x="28" y="114" width="438" height="38" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="40" y="130" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">среда исполнения</text>
+  <text x="40" y="145" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">B · гл. 7, 9, 14</text>
+  <rect x="166" y="120" width="142" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="180" cy="133" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="180" y="137" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">1</text>
+  <text x="194" y="137" font-family="Inter,sans-serif" font-size="11" fill="currentColor">агентный цикл</text>
+  <rect x="316" y="120" width="144" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="330" cy="133" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="330" y="137" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">2</text>
+  <text x="344" y="137" font-family="Inter,sans-serif" font-size="11" fill="currentColor">эндпоинт модели</text>
+
+  <rect x="28" y="168" width="438" height="38" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="40" y="184" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">инструменты</text>
+  <text x="40" y="199" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">C · гл. 6, 10</text>
+  <rect x="166" y="174" width="142" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="180" cy="187" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="180" y="191" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">3</text>
+  <text x="194" y="191" font-family="Inter,sans-serif" font-size="11" fill="currentColor">MCP-серверы</text>
+  <rect x="316" y="174" width="144" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="388" y="191" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">политика вне модели</text>
+
+  <rect x="28" y="222" width="438" height="38" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="40" y="238" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">данные и поиск</text>
+  <text x="40" y="253" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">A · гл. 5</text>
+  <rect x="166" y="228" width="142" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="180" cy="241" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="180" y="245" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">4</text>
+  <text x="194" y="245" font-family="Inter,sans-serif" font-size="11" fill="currentColor">индекс поиска</text>
+  <rect x="316" y="228" width="144" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="388" y="245" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">системы записи</text>
+
+  <rect x="28" y="276" width="438" height="38" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="40" y="292" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">оценка</text>
+  <text x="40" y="307" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">D · гл. 12, 13</text>
+  <rect x="166" y="282" width="142" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="180" cy="295" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="180" y="299" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">5</text>
+  <text x="194" y="299" font-family="Inter,sans-serif" font-size="11" fill="currentColor">трассы и оценки</text>
+  <rect x="316" y="282" width="144" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="388" y="299" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">ворота оценки</text>
+
+  <rect x="28" y="330" width="438" height="38" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="40" y="346" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">безопасность</text>
+  <text x="40" y="361" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">E · гл. 10</text>
+  <rect x="166" y="336" width="142" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="180" cy="349" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="180" y="353" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">6</text>
+  <text x="194" y="353" font-family="Inter,sans-serif" font-size="11" fill="currentColor">ключи и периметр</text>
+  <rect x="316" y="336" width="144" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="388" y="353" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">журнал аудита</text>
+
+  <line x1="100" y1="99" x2="100" y2="112" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar17a)"/>
+  <line x1="100" y1="153" x2="100" y2="166" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar17a)"/>
+  <line x1="100" y1="207" x2="100" y2="220" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar17a)"/>
+
+  <text x="496" y="36" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">точка вариации и её драйверы</text>
+  <text x="753" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">Northgate</text>
+  <text x="830" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">Helix, завод</text>
+  <line x1="496" y1="46" x2="866" y2="46" stroke="var(--line-strong)" stroke-width="1.3"/>
+
+  <circle cx="508" cy="67" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="508" y="71" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">1</text>
+  <text x="522" y="71" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">агентный цикл</text>
+  <text x="522" y="87" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">эксплуатация · резидентность</text>
+  <text x="753" y="75" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">управляемый</text>
+  <text x="830" y="75" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">на заводе</text>
+  <line x1="496" y1="96" x2="866" y2="96" stroke="var(--line)" stroke-width="1.3"/>
+
+  <circle cx="508" cy="115" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="508" y="119" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">2</text>
+  <text x="522" y="119" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">эндпоинт модели</text>
+  <text x="522" y="135" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">объём · задержка · резидентность</text>
+  <text x="753" y="123" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">за токены</text>
+  <text x="830" y="123" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">open weights</text>
+  <line x1="496" y1="144" x2="866" y2="144" stroke="var(--line)" stroke-width="1.3"/>
+
+  <circle cx="508" cy="163" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="508" y="167" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">3</text>
+  <text x="522" y="167" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">MCP-серверы</text>
+  <text x="522" y="183" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">регуляторика</text>
+  <text x="753" y="171" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">в периметре</text>
+  <text x="830" y="171" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">на заводе</text>
+  <line x1="496" y1="192" x2="866" y2="192" stroke="var(--line)" stroke-width="1.3"/>
+
+  <circle cx="508" cy="211" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="508" y="215" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">4</text>
+  <text x="522" y="215" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">индекс поиска</text>
+  <text x="522" y="231" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">резидентность · объём</text>
+  <text x="753" y="219" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">управляемый</text>
+  <text x="830" y="219" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">локальный</text>
+  <line x1="496" y1="240" x2="866" y2="240" stroke="var(--line)" stroke-width="1.3"/>
+
+  <circle cx="508" cy="259" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="508" y="263" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">5</text>
+  <text x="522" y="263" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">трассы и оценки</text>
+  <text x="522" y="279" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">регуляторика · эксплуатация</text>
+  <text x="753" y="267" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">управляемые</text>
+  <text x="830" y="267" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">outbox</text>
+  <line x1="496" y1="288" x2="866" y2="288" stroke="var(--line)" stroke-width="1.3"/>
+
+  <circle cx="508" cy="307" r="8" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="508" y="311" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" font-weight="600" fill="currentColor">6</text>
+  <text x="522" y="311" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">ключи и периметр</text>
+  <text x="522" y="327" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">резидентность · регуляторика</text>
+  <text x="753" y="315" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">у города</text>
+  <text x="830" y="315" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">на заводе</text>
+  <line x1="496" y1="336" x2="866" y2="336" stroke="var(--line-strong)" stroke-width="1.3"/>
+
+  <rect x="496" y="350" width="24" height="16" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="505" cy="358" r="5" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="530" y="362" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">с номером: значение выбирает драйвер</text>
+  <rect x="496" y="372" width="24" height="16" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="530" y="384" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">без номера: одинаково у всех заказчиков</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Архитектура записывается как набор решений: неизменная часть одинакова у Northgate и у изолированного завода Helix, а каждая из шести точек вариации получает у них разные значения, потому что драйверы двух заказчиков противоположны.</figcaption>
+</figure>
+
+<p>Ни одна точка не получила у двух заказчиков одинакового значения, и каждое различие выводится из драйверов. Изолированный завод Helix исключает всё, что требует связи с облаком, поэтому агентный цикл, модель, индекс и ключи находятся на заводе, а трассы передаются в центр через outbox с проверками принимающей стороны из <a href="#s-14-6" data-secref="14.6">раздела 14.6</a>. Northgate, напротив, не может эксплуатировать собственные компоненты и выбирает управляемые варианты внутри периметра с ключами города, как требует <a href="#s-10-6" data-secref="10.6">раздел 10.6</a>.</p>
+
+<p>Эталонная архитектура записывается кодом, чтобы привязку можно было проверить до поставки оборудования. Наивная запись повторяет слайд.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы записать архитектуру">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="16">
+      <figcaption><span class="file">naive_slides.py</span></figcaption>
+      <pre><code>BOXES = ["Портал", "Агент", "LLM", "Векторная БД", "CRM", "Мониторинг"]
+ARROWS = [("Портал", "Агент"), ("Агент", "LLM"), ("Агент", "Векторная БД"),
+          ("Агент", "CRM"), ("Агент", "Мониторинг")]
+
+
+def impact(change: str) -&gt; set[str]:
+    """Что затронет изменение требования? Схема содержит только имена и стрелки."""
+    hit = {box for box in BOXES if box.lower() in change.lower()}
+    for source, target in ARROWS:
+        if source in hit:
+            hit.add(target)
+    return hit
+
+
+if __name__ == "__main__":
+    assert impact("данные жителей не покидают страну") == set()    # драйвер не назван ни в одном блоке
+    assert impact("заменить LLM на более дешёвую") == {"LLM"}      # цена замены неизвестна
+    assert len(BOXES) == 6 and len(ARROWS) == 5
+    print("шесть блоков, пять стрелок, ни одного решения")</code></pre>
+    </figure>
+    <p>Модель содержит шесть имён и пять стрелок. На вопрос о том, что изменится, если данные жителей не должны покидать страну, она возвращает пустое множество, а на вопрос о замене LLM возвращает один блок без цены замены. Данных для проверки совместимости с изолированным заводом в такой модели нет.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">reference_architecture.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Self
+
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+
+
+class Layer(StrEnum):
+    CHANNELS = "каналы"
+    RUNTIME = "среда исполнения агента"
+    TOOLS = "инструменты и интеграция"
+    DATA = "данные и поиск"
+    EVALUATION = "оценка и наблюдаемость"
+    GOVERNANCE = "безопасность и управление"
+
+
+class Hosting(StrEnum):
+    MANAGED = "managed"          # сервис поставщика, эксплуатирует поставщик
+    TENANT = "in_tenancy"        # облачный проект заказчика, эксплуатирует заказчик
+    ON_SITE = "on_site"          # площадка без связи с облаком
+
+
+class Driver(StrEnum):
+    RESIDENCY = "резидентность"
+    VOLUME = "стабильность объёма"
+    LATENCY = "задержка"
+    OPERATIONS = "эксплуатация"
+    REGULATION = "регуляторика"
+
+
+@dataclass(frozen=True)
+class Option:
+    name: str
+    hosting: Hosting
+    ops_fte: float = 0.0         # эксплуатация на стороне заказчика, ставок
+    residency: bool = True       # обработка и ключи остаются в юрисдикции заказчика
+    commitment: bool = False     # мощность оплачивается на срок вперёд
+
+
+@dataclass(frozen=True)
+class Point:
+    number: int
+    component: str
+    layer: Layer
+    drivers: frozenset[Driver]
+    options: tuple[Option, ...]
+
+
+M, T, S = Hosting.MANAGED, Hosting.TENANT, Hosting.ON_SITE
+D = Driver
+FIXED = {Layer.CHANNELS: "единый API агента", Layer.TOOLS: "политика вне модели",
+         Layer.DATA: "системы записи", Layer.EVALUATION: "ворота оценки", Layer.GOVERNANCE: "журнал аудита"}
+POINTS = {p.number: p for p in (
+    Point(1, "агентный цикл", Layer.RUNTIME, frozenset({D.OPERATIONS, D.RESIDENCY}),
+          (Option("managed_runtime", M), Option("container", T, 0.5), Option("edge_container", S, 0.5))),
+    Point(2, "эндпоинт модели", Layer.RUNTIME, frozenset({D.VOLUME, D.LATENCY, D.RESIDENCY}),
+          (Option("paygo_regional", M), Option("paygo_global", M, residency=False),
+           Option("provisioned", M, commitment=True), Option("open_weights", T, 1.5),
+           Option("open_weights_edge", S, 1.0))),
+    Point(3, "MCP-серверы", Layer.TOOLS, frozenset({D.REGULATION}),
+          (Option("mcp_in_perimeter", T, 0.5), Option("mcp_on_site", S, 0.5))),
+    Point(4, "индекс поиска", Layer.DATA, frozenset({D.RESIDENCY, D.VOLUME}),
+          (Option("managed_index", M), Option("pgvector", T, 0.3), Option("local_index", S, 0.3))),
+    Point(5, "трассы и оценки", Layer.EVALUATION, frozenset({D.REGULATION, D.OPERATIONS}),
+          (Option("managed_traces", M), Option("self_hosted_traces", T, 0.4), Option("outbox_sync", S, 0.2))),
+    Point(6, "ключи и периметр", Layer.GOVERNANCE, frozenset({D.RESIDENCY, D.REGULATION}),
+          (Option("provider_keys", M, residency=False), Option("customer_keys", M),
+           Option("site_keys", S, 0.2))),
+)}
+
+
+def driven_by(driver: Driver) -&gt; list[int]:
+    """Какие решения пересматриваются, если меняется драйвер."""
+    return sorted(n for n, p in POINTS.items() if driver in p.drivers)
+
+
+@dataclass(frozen=True)
+class Site:
+    name: str
+    air_gapped: bool
+    residency: bool
+    ops_fte: float               # сколько эксплуатации заказчик способен держать
+    stable_volume: bool
+
+
+class Blueprint(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    site: Site
+    choices: dict[int, str]
+
+    def problems(self) -&gt; list[str]:
+        out: list[str] = []
+        ops = 0.0
+        for n, point in POINTS.items():
+            chosen = self.choices.get(n)
+            option = next((o for o in point.options if o.name == chosen), None)
+            where = f"точка {n} ({point.component})"
+            if option is None:
+                out.append(f"{where}: вариант {chosen!r} отсутствует в каталоге")
+                continue
+            ops += option.ops_fte
+            if self.site.air_gapped and option.hosting is not Hosting.ON_SITE:
+                out.append(f"{where}: {option.name} требует связи с облаком")
+            if self.site.residency and not option.residency:
+                out.append(f"{where}: {option.name} не гарантирует резидентность")
+            if option.commitment and not self.site.stable_volume:
+                out.append(f"{where}: обязательство по мощности без стабильной базы")
+        if ops &gt; self.site.ops_fte:
+            out.append(f"эксплуатация {ops:.1f} ставки при доступных {self.site.ops_fte:.1f}")
+        return out
+
+    @model_validator(mode="after")
+    def compatible(self) -&gt; Self:
+        if problems := self.problems():
+            raise ValueError("; ".join(problems))
+        return self
+
+
+def rebind(base: Blueprint, number: int, option: str) -&gt; Blueprint:
+    """model_copy не запускает валидацию, поэтому вариант собирается заново."""
+    return Blueprint.model_validate({"site": base.site, "choices": base.choices | {number: option}})
+
+
+if __name__ == "__main__":
+    northgate = Site("Northgate", air_gapped=False, residency=True, ops_fte=1.5, stable_volume=False)
+    helix = Site("Helix, завод 12", air_gapped=True, residency=True, ops_fte=3.0, stable_volume=True)
+    city = Blueprint(site=northgate, choices={1: "managed_runtime", 2: "paygo_regional", 3: "mcp_in_perimeter",
+                                              4: "managed_index", 5: "managed_traces", 6: "customer_keys"})
+    plant = Blueprint(site=helix, choices={1: "edge_container", 2: "open_weights_edge", 3: "mcp_on_site",
+                                           4: "local_index", 5: "outbox_sync", 6: "site_keys"})
+    assert set(FIXED) | {p.layer for p in POINTS.values()} == set(Layer)   # ни один слой не забыт
+    assert driven_by(Driver.RESIDENCY) == [1, 2, 4, 6]        # вопрос, на который слайд не отвечает
+    rejected = [(plant, 1, "managed_runtime", "точка 1 (агентный цикл): managed_runtime требует связи"),
+                (city, 2, "paygo_global", "не гарантирует резидентность"),
+                (city, 2, "provisioned", "без стабильной базы"),
+                (city, 2, "open_weights", "эксплуатация 2.0 ставки при доступных 1.5")]
+    for base, number, option, reason in rejected:
+        try:
+            rebind(base, number, option)
+        except ValidationError as err:
+            assert reason in str(err), str(err)
+        else:
+            raise AssertionError(f"{option} в точке {number} обязан быть отвергнут")
+    print("две привязки приняты, четыре отвергнуты с указанием точки")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="drivers: frozenset[Driver]">строка 47</span><p>Точка хранит свои драйверы, и ответ на вопрос «что изменится, если…» даёт вызов <code>driven_by</code>. Изменение резидентности возвращает точки 1, 2, 4 и 6, то есть решения, которые придётся пересмотреть.</p></div>
+        <div><span class="at" data-anchor="if self.site.air_gapped and option.hosting">строка 104</span><p>Правило изолированной площадки проверяет способ размещения варианта. Проверку по имени продукта пришлось бы дополнять при каждом новом сервисе, а проверка способа размещения отвергает новый управляемый сервис для завода Helix без изменения правила.</p></div>
+        <div><span class="at" data-anchor="== set(Layer)">строка 133</span><p>Утверждение проверяет полноту: у каждого слоя есть неизменная часть или точка вариации. Слой, забытый в обоих словарях, означал бы решение, которое никто не принимал.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие в предмете записи: слайд хранит компоненты, эталонная архитектура хранит решения с драйверами, и вопрос о последствиях изменившегося требования получает ответ из данных.</p>
+    <p>Второе различие в моменте обнаружения несовместимости: управляемая среда исполнения на изолированном заводе отвергается при сборке привязки, а не на площадке после поставки оборудования.</p>
+    <p>Третье различие в границах архитектуры: эксплуатация и обязательства по оплате являются свойствами вариантов, и решение, требующее больше эксплуатации, чем доступно заказчику, проверку не проходит.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Типичная ошибка</b>Начинать эталонную архитектуру с выбора продуктов и подбирать к ним драйверы задним числом. Точки вариации тогда появляются там, где у продуктов есть настройки, и могут не совпадать с различиями заказчиков. Решения, которые должны были следовать из драйверов, закрепляются без записанных оснований.</div>
+
+<h3 id="s-17-5"><span class="num">17.5</span>Совокупная стоимость владения</h3>
+
+<dl class="def">
+<dt>Совокупная стоимость владения, TCO <span class="en">(total cost of ownership)</span></dt>
+<dd>Сумма всех затрат на вариант архитектуры за выбранный горизонт: токены и инфраструктура, разовые затраты на запуск, люди на эксплуатацию, оценку и ревью безопасности, а также цена выхода в конце горизонта. Варианты с разной структурой затрат сравниваются по накопленной сумме помесячно и по диапазону сценариев.</dd>
+</dl>
+
+<p>Цена за миллион токенов определяет только одну из составляющих TCO. Управляемый API почти не требует людей, но его счёт растёт вместе с объёмом. Выделенная мощность, то есть подписка на блоки мощности, фиксирует число блоков и их цену на год вперёд. Свой сервинг модели с открытыми весами стоит сотни тысяч долларов на запуск и две с половиной ставки на дежурства и обновления, зато почти не зависит от прайса. Перевод объёма в единицы мощности и узлы разобран в <a href="#s-14-3" data-secref="14.3">разделах 14.3</a> и <a href="#s-14-6" data-secref="14.6">14.6</a>, фактический расход даёт книга затрат из <a href="#s-13-5" data-secref="13.5">раздела 13.5</a>, а модель TCO распределяет эти затраты по месяцам горизонта.</p>
+
+<figure class="code" data-fold="26">
+<figcaption><span class="file">tco_model.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from itertools import accumulate
+
+HORIZON = 36
+FTE_MONTH = Decimal(12_000)          # условная полная стоимость ставки в месяц, долларов
+ZERO = Decimal(0)
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """Объём в миллионах токенов в месяц, прайс в долларах за миллион токенов."""
+    volume0: Decimal
+    growth: Decimal                  # множитель объёма за месяц, пока объём ниже потолка
+    cap: Decimal
+    price0: Decimal
+    cuts: tuple[tuple[int, Decimal], ...] = ((13, Decimal("0.85")), (25, Decimal("0.85")))
+
+    def volume(self, month: int) -&gt; Decimal:
+        return min(self.cap, self.volume0 * self.growth ** (month - 1))
+
+    def price(self, month: int) -&gt; Decimal:
+        factor = Decimal(1)
+        for since, cut in self.cuts:
+            if month &gt;= since:
+                factor *= cut
+        return self.price0 * factor
+
+
+def units(amount: Decimal, size: Decimal, rounding: str) -&gt; int:
+    return int((amount / size).to_integral_value(rounding=rounding))
+
+
+@dataclass(frozen=True)
+class Option:
+    name: str
+    setup: Decimal                   # однократно, в первый месяц
+    people_fte: Decimal              # эксплуатация, оценка, ревью безопасности
+    exit_cost: Decimal               # цена ухода в конце горизонта
+
+    def usage(self, s: Scenario, month: int) -&gt; Decimal:
+        raise NotImplementedError
+
+    def monthly(self, s: Scenario, month: int) -&gt; Decimal:
+        one_off = self.setup if month == 1 else ZERO
+        return one_off + self.usage(s, month) + self.people_fte * FTE_MONTH
+
+
+@dataclass(frozen=True)
+class ManagedApi(Option):
+    def usage(self, s: Scenario, month: int) -&gt; Decimal:
+        return s.volume(month) * s.price(month)
+
+
+@dataclass(frozen=True)
+class Provisioned(Option):
+    block: Decimal = Decimal(5_000)   # миллионов токенов в месяц на блок мощности
+    min_blocks: int = 3
+    rate: Decimal = Decimal("0.6")    # доля прайса начала срока, по которой оплачен блок
+    cover: Decimal = Decimal("0.7")   # доля объёма начала срока под обязательством
+    term: int = 12
+
+    def usage(self, s: Scenario, month: int) -&gt; Decimal:
+        start = month - (month - 1) % self.term          # блоки и цена фиксируются на весь срок
+        blocks = max(self.min_blocks, units(s.volume(start) * self.cover, self.block, ROUND_FLOOR))
+        committed = blocks * self.block * s.price(start) * self.rate
+        spill = max(ZERO, s.volume(month) - blocks * self.block)
+        return committed + spill * s.price(month)
+
+
+@dataclass(frozen=True)
+class SelfHosted(Option):
+    node_capacity: Decimal = Decimal(40_000)   # миллионов токенов в месяц на узел
+    node_month: Decimal = Decimal(8_000)
+    min_nodes: int = 2
+    peak: Decimal = Decimal("1.6")             # узлы покупаются под пиковую нагрузку
+
+    def usage(self, s: Scenario, month: int) -&gt; Decimal:
+        need = units(s.volume(month) * self.peak, self.node_capacity, ROUND_CEILING)
+        return max(self.min_nodes, need) * self.node_month
+
+
+def cumulative(option: Option, s: Scenario) -&gt; list[Decimal]:
+    return list(accumulate(option.monthly(s, m) for m in range(1, HORIZON + 1)))
+
+
+def tco(option: Option, s: Scenario) -&gt; Decimal:
+    return cumulative(option, s)[-1] + option.exit_cost
+
+
+def crossover(a: Option, b: Option, s: Scenario) -&gt; int | None:
+    """Первый месяц, начиная с которого a не дороже b до конца горизонта."""
+    ca, cb = cumulative(a, s), cumulative(b, s)
+    month: int | None = None
+    for m in range(HORIZON, 0, -1):
+        if ca[m - 1] &gt; cb[m - 1]:
+            break
+        month = m
+    return month
+
+
+def cheapest(options: list[Option], s: Scenario, month: int) -&gt; str:
+    return min((cumulative(o, s)[month - 1], o.name) for o in options)[1]
+
+
+if __name__ == "__main__":
+    api = ManagedApi("managed_api", ZERO, Decimal("0.5"), Decimal(60_000))
+    prov = Provisioned("provisioned", Decimal(40_000), Decimal("0.7"), Decimal(60_000))
+    own = SelfHosted("self_hosted", Decimal(300_000), Decimal("2.5"), Decimal(150_000))
+    options: list[Option] = [api, prov, own]
+    base = Scenario(Decimal(8_000), Decimal("1.12"), Decimal(50_000), Decimal("2.00"))
+    assert [cheapest(options, base, m) for m in (6, 18, 34)] == ["managed_api", "provisioned", "self_hosted"]
+    assert crossover(prov, api, base) == 10 and crossover(own, prov, base) == 32
+    assert tco(prov, base) &lt; tco(own, base)            # с ценой выхода подписка снова дешевле
+
+    scenarios = [replace(base, growth=Decimal("1.08"), cap=Decimal(35_000)), base,
+                 replace(base, growth=Decimal("1.15"), cap=Decimal(60_000), cuts=())]
+    ranges = {o.name: (min(tco(o, s) for s in scenarios), max(tco(o, s) for s in scenarios))
+              for o in options}
+    (p_lo, p_hi), (s_lo, s_hi) = ranges["provisioned"], ranges["self_hosted"]
+    assert p_lo &lt; s_lo &lt; s_hi &lt; p_hi                   # цена своего сервинга почти не зависит от объёма и прайса
+
+    falling = replace(base, cuts=((13, Decimal("0.6")), (25, Decimal("0.6"))))
+    assert crossover(own, prov, falling) is None       # при быстром падении цен свой сервинг не окупается
+    sharp = replace(base, cuts=((7, Decimal("0.5")),))
+    assert all(prov.monthly(sharp, m) &gt; api.monthly(sharp, m) for m in range(7, 13))
+    print("TCO за 36 месяцев, тыс. долларов:",
+          {n: f"{lo / 1000:,.0f}–{hi / 1000:,.0f}" for n, (lo, hi) in ranges.items()})</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="start = month - (month - 1) % self.term">строка 66</span><p>Обязательство фиксирует число блоков и цену в начале срока. Объём сверх оплаченных блоков оплачивается по прайсу, а снижение прайса внутри срока на цену блоков не влияет; раздел 17.10 показывает стоимость этого эффекта.</p></div>
+  <div><span class="at" data-anchor="return cumulative(option, s)[-1] + option.exit_cost">строка 90</span><p>Цена выхода входит в TCO. Без неё свой сервинг дешевле подписки на 71 тысячу долларов за три года, с ней дороже на 19 тысяч.</p></div>
+  <div><span class="at" data-anchor="for m in range(HORIZON, 0, -1):">строка 97</span><p>Пересечение ищется с конца горизонта: месяцем пересечения считается начало последнего отрезка, на котором вариант не дороже, и кратковременное касание линий пересечением не считается.</p></div>
+</div>
+</figure>
+
+<p>В базовом сценарии Northgate объём начинается с 8 млрд токенов в месяц и растёт на 12 % в месяц до потолка в 50 млрд, а прайс снижается на 15 % в начале второго и третьего года. Накопленным итогом управляемый API дешевле всех с первого по девятый месяц, выделенная мощность с десятого по тридцать первый, свой сервинг с тридцать второго. Цена выхода меняет ответ ещё раз: за 36 месяцев подписка обходится в 2 087 тысяч долларов, а свой сервинг в 2 106 тысяч, потому что уход с него стоит дороже.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Накопленная разница стоимости выделенной мощности и своего сервинга относительно управляемого API за 36 месяцев: мощность становится дешевле API с десятого месяца, свой сервинг дешевле API с двадцать третьего и дешевле мощности с тридцать второго; полоса внизу показывает самый дешёвый вариант по месяцам, а справа приведены диапазоны TCO трёх вариантов по трём сценариям с ценой выхода" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar17b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="70" y="22" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">НАКОПЛЕННАЯ РАЗНИЦА С УПРАВЛЯЕМЫМ API, ТЫС. ДОЛЛАРОВ</text>
+  <text x="70" y="38" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">выше нуля дороже, ниже нуля дешевле; базовый сценарий tco_model.py</text>
+  <line x1="70" y1="52" x2="70" y2="340" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="70" y1="340" x2="646" y2="340" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="64" y1="88" x2="70" y2="88" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="60" y="92" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">+400</text>
+  <line x1="64" y1="144" x2="70" y2="144" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="60" y="148" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">+200</text>
+  <line x1="64" y1="200" x2="70" y2="200" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="60" y="204" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0</text>
+  <line x1="64" y1="256" x2="70" y2="256" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="60" y="260" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">−200</text>
+  <line x1="64" y1="312" x2="70" y2="312" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="60" y="316" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">−400</text>
+  <line x1="70" y1="340" x2="70" y2="346" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="70" y="358" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0</text>
+  <line x1="166" y1="340" x2="166" y2="346" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="166" y="358" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">6</text>
+  <line x1="262" y1="340" x2="262" y2="346" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="262" y="358" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">12</text>
+  <line x1="358" y1="340" x2="358" y2="346" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="358" y="358" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">18</text>
+  <line x1="454" y1="340" x2="454" y2="346" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="454" y="358" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">24</text>
+  <line x1="550" y1="340" x2="550" y2="346" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="550" y="358" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">30</text>
+  <line x1="646" y1="340" x2="646" y2="346" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="646" y="358" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">36</text>
+
+  <line x1="70" y1="200" x2="646" y2="200" stroke="currentColor" stroke-width="1.4"/>
+  <text x="262" y="193" font-family="Inter,sans-serif" font-size="11" fill="currentColor">управляемый API</text>
+  <path d="M70,187.6 H86 V186.9 H102 V186.8 H118 V187.4 H134 V188.7 H150 V190.9 H166 V193.6 H182 V196.3 H198 V198.9 H214 V201.6 H230 V204.3 H246 V207.0 H262 V210.1 H278 V213.3 H294 V216.4 H310 V219.6 H326 V222.7 H342 V225.8 H358 V229.0 H374 V232.1 H390 V235.2 H406 V238.4 H422 V241.5 H438 V244.6 H454 V249.6 H470 V254.6 H486 V259.6 H502 V264.6 H518 V269.6 H534 V274.6 H550 V279.6 H566 V284.6 H582 V289.6 H598 V294.6 H614 V299.6 H630 V304.6 H646" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <path d="M70,109.3 H86 V103.1 H102 V97.5 H118 V92.6 H134 V88.5 H150 V85.2 H166 V82.8 H182 V81.5 H198 V81.4 H214 V82.6 H230 V85.3 H246 V89.7 H262 V93.4 H278 V98.8 H294 V106.2 H310 V115.8 H326 V128.0 H342 V140.6 H358 V153.2 H374 V165.8 H390 V178.4 H406 V191.0 H422 V203.6 H438 V216.2 H454 V225.2 H470 V234.2 H486 V243.3 H502 V252.3 H518 V261.3 H534 V270.3 H550 V279.4 H566 V288.4 H582 V297.4 H598 V306.5 H614 V315.5 H630 V324.5 H646" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <path d="M92,62 H78 V101" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar17b)"/>
+  <text x="98" y="66" font-family="Inter,sans-serif" font-size="11" fill="currentColor">запуск своего сервинга: 300 тысяч</text>
+
+  <line x1="420" y1="58" x2="446" y2="58" stroke="currentColor" stroke-width="1.4"/>
+  <line x1="420" y1="76" x2="446" y2="76" stroke="var(--sB)" stroke-width="1.8"/>
+  <line x1="420" y1="94" x2="446" y2="94" stroke="var(--sA)" stroke-width="1.8"/>
+  <circle cx="433" cy="112" r="4.5" fill="currentColor" opacity="0.85"/>
+  <text x="454" y="62" font-family="Inter,sans-serif" font-size="11" fill="currentColor">управляемый API: оплата за токены</text>
+  <text x="454" y="80" font-family="Inter,sans-serif" font-size="11" fill="currentColor">выделенная мощность: блоки на год</text>
+  <text x="454" y="98" font-family="Inter,sans-serif" font-size="11" fill="currentColor">свой сервинг: узлы и дежурства</text>
+  <text x="454" y="116" font-family="Inter,sans-serif" font-size="11" fill="currentColor">пересечение и его месяц</text>
+
+  <circle cx="214" cy="200" r="4.5" fill="currentColor" opacity="0.85"/>
+  <text x="214" y="224" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">10</text>
+  <circle cx="422" cy="200" r="4.5" fill="currentColor" opacity="0.85"/>
+  <text x="432" y="190" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">23</text>
+  <circle cx="566" cy="284" r="4.5" fill="currentColor" opacity="0.85"/>
+  <text x="556" y="308" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">32</text>
+
+  <rect x="70" y="368" width="142" height="18" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <rect x="216" y="368" width="342" height="18" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <rect x="562" y="368" width="88" height="18" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="141" y="381" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">API дешевле всех</text>
+  <text x="387" y="381" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">выделенная мощность дешевле всех</text>
+  <text x="606" y="381" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">свой сервинг</text>
+
+  <line x1="664" y1="12" x2="664" y2="392" stroke="var(--line)" stroke-width="1.3"/>
+  <text x="680" y="22" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">TCO ЗА 36 МЕСЯЦЕВ</text>
+  <text x="680" y="38" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">три сценария, с ценой выхода</text>
+  <text x="690" y="68" font-family="Inter,sans-serif" font-size="11" fill="currentColor">управляемый API</text>
+  <rect x="713.1" y="76" width="141.5" height="8" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <circle cx="766.9" cy="80" r="4" fill="currentColor" opacity="0.85"/>
+  <text x="690" y="100" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1 789–3 557 · база 2 461</text>
+  <text x="690" y="120" font-family="Inter,sans-serif" font-size="11" fill="currentColor">выделенная мощность</text>
+  <rect x="696.4" y="128" width="110.2" height="8" rx="3" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <circle cx="737.0" cy="132" r="4" fill="var(--sB)" opacity="0.85"/>
+  <text x="690" y="152" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1 580–2 958 · база 2 087</text>
+  <text x="690" y="172" font-family="Inter,sans-serif" font-size="11" fill="currentColor">свой сервинг</text>
+  <rect x="738.5" y="180" width="14.1" height="8" rx="3" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <circle cx="738.5" cy="184" r="4" fill="var(--sA)" opacity="0.85"/>
+  <text x="690" y="204" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2 106–2 282 · база 2 106</text>
+  <line x1="690" y1="222" x2="858" y2="222" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="690" y1="222" x2="690" y2="228" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="690" y="240" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1 500</text>
+  <line x1="770" y1="222" x2="770" y2="228" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="770" y="240" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2 500</text>
+  <line x1="850" y1="222" x2="850" y2="228" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="850" y="240" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3 500</text>
+  <text x="680" y="272" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">с ценой выхода подписка</text>
+  <text x="680" y="288" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">дешевле своего сервинга:</text>
+  <text x="680" y="304" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">2 087 против 2 106</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Самый дешёвый вариант зависит от месяца, на который сравнивается накопленная стоимость: разовые затраты поднимают линию над нулём, ежемесячная разница задаёт её наклон, а цена выхода и разброс сценариев могут изменить ответ ещё раз.</figcaption>
+</figure>
+
+<p>Диапазоны по сценариям показывают, насколько TCO каждого варианта зависит от допущений. В трёх сценариях листинга, различающихся ростом объёма и падением цен, TCO своего сервинга находится в узком интервале от 2 106 до 2 282 тысяч долларов, а подписки в широком, от 1 580 до 2 958 тысяч: свой сервинг заменяет неопределённость прайса фиксированными затратами. При падении цен на 40 % в год он не становится дешевле подписки до конца горизонта. Поэтому решение определяется тем, какой риск готов нести заказчик; точка пересечения в базовом сценарии этот риск не отражает.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Сравнивать варианты по цене за миллион токенов при одной оценке объёма. Такое сравнение не учитывает людей, разовые затраты и цену выхода, а единственная оценка объёма не показывает, что при другом росте объёма самым дешёвым становится другой вариант.</div>
+
+<h3 id="s-17-6"><span class="num">17.6</span>Build, buy, partner</h3>
+
+<p>Для каждой точки вариации у заказчика три пути: разработать компонент самому (build), купить управляемый сервис (buy) или привлечь партнёра, который построит компонент и будет эксплуатировать его по договору (partner). Критериев выбора пять: отличает ли компонент заказчика от других, как скоро он принесёт пользу, какой нужен контроль над данными, ключами и версиями, есть ли люди для эксплуатации и во что обойдётся выход.</p>
+
+<p>Жёсткие ограничения применяются до оценки по критериям. Покупка управляемого сервиса для изолированного завода Helix исключена ещё проверкой привязки из раздела 17.4, и исключённый вариант в сравнение по баллам не включается. Веса критериев задаёт заказчик, поэтому сумма баллов в матрице фиксирует рассуждение при этих весах и при других весах может дать другой результат.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 390" role="img" aria-label="Матрица из трёх путей, разработки, покупки и партнёрства, и пяти критериев с оценками от нуля до трёх отдельно для Northgate и для Helix: у Northgate наибольшую сумму набирает покупка, у Helix покупка исключена изоляцией завода и наибольшую сумму набирает партнёрство" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar17c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">КОМПОНЕНТ: АГЕНТНЫЙ ЦИКЛ И ЭНДПОИНТ МОДЕЛИ, ТОЧКИ ВАРИАЦИИ 1 И 2</text>
+  <text x="346" y="50" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">build · разработка</text>
+  <text x="550" y="50" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">buy · покупка</text>
+  <text x="754" y="50" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">partner · партнёрство</text>
+  <text x="295" y="68" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Northgate</text>
+  <text x="397" y="68" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Helix</text>
+  <text x="499" y="68" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Northgate</text>
+  <text x="601" y="68" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Helix</text>
+  <text x="703" y="68" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Northgate</text>
+  <text x="805" y="68" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Helix</text>
+  <line x1="20" y1="78" x2="856" y2="78" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="448" y1="36" x2="448" y2="318" stroke="var(--line)" stroke-width="1.3"/>
+  <line x1="652" y1="36" x2="652" y2="318" stroke="var(--line)" stroke-width="1.3"/>
+
+  <text x="20" y="97" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">дифференциация</text>
+  <text x="20" y="112" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">отличает ли заказчика</text>
+  <circle cx="281" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="295" cy="101" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="309" cy="101" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="383" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="397" cy="101" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="411" cy="101" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="485" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="499" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="513" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="689" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="703" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="717" cy="101" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="791" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="805" cy="101" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="819" cy="101" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <line x1="20" y1="120" x2="856" y2="120" stroke="var(--line)" stroke-width="1.3"/>
+
+  <text x="20" y="139" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">время до пользы</text>
+  <text x="20" y="154" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">месяцы до первого результата</text>
+  <circle cx="281" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="295" cy="143" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="309" cy="143" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="383" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="397" cy="143" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="411" cy="143" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="485" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="499" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="513" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="689" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="703" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="717" cy="143" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="791" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="805" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="819" cy="143" r="4.5" fill="currentColor" opacity="0.85"/>
+  <line x1="20" y1="162" x2="856" y2="162" stroke="var(--line)" stroke-width="1.3"/>
+
+  <text x="20" y="181" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">контроль</text>
+  <text x="20" y="196" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">данные, ключи, версии</text>
+  <circle cx="281" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="295" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="309" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="383" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="397" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="411" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="485" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="499" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="513" cy="185" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="689" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="703" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="717" cy="185" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="791" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="805" cy="185" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="819" cy="185" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <line x1="20" y1="204" x2="856" y2="204" stroke="var(--line)" stroke-width="1.3"/>
+
+  <text x="20" y="223" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">эксплуатация</text>
+  <text x="20" y="238" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">кто дежурит ночью</text>
+  <circle cx="281" cy="227" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="295" cy="227" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="309" cy="227" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="383" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="397" cy="227" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="411" cy="227" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="485" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="499" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="513" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="689" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="703" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="717" cy="227" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="791" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="805" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="819" cy="227" r="4.5" fill="currentColor" opacity="0.85"/>
+  <line x1="20" y1="246" x2="856" y2="246" stroke="var(--line)" stroke-width="1.3"/>
+
+  <text x="20" y="265" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">цена выхода</text>
+  <text x="20" y="280" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">недели и деньги на уход</text>
+  <circle cx="281" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="295" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="309" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="383" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="397" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="411" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="485" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="499" cy="269" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="513" cy="269" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="689" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="703" cy="269" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="717" cy="269" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <circle cx="791" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="805" cy="269" r="4.5" fill="currentColor" opacity="0.85"/>
+  <circle cx="819" cy="269" r="4.5" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <line x1="20" y1="288" x2="856" y2="288" stroke="var(--line)" stroke-width="1.3"/>
+
+  <text x="20" y="310" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">сумма</text>
+  <text x="295" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" fill="currentColor">8</text>
+  <text x="397" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" fill="currentColor">9</text>
+  <text x="499" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" fill="currentColor">12</text>
+  <text x="703" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" fill="currentColor">9</text>
+  <text x="805" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="12" font-weight="600" fill="currentColor">12</text>
+
+  <rect x="556" y="86" width="90" height="230" rx="4" fill="none" stroke="var(--muted)" stroke-width="1.3"/>
+  <text x="601" y="196" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">исключено:</text>
+  <text x="601" y="212" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет связи</text>
+  <rect x="453" y="56" width="92" height="266" rx="8" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <rect x="759" y="56" width="92" height="266" rx="8" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <line x1="499" y1="340" x2="499" y2="326" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar17c)"/>
+  <line x1="805" y1="340" x2="805" y2="326" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar17c)"/>
+  <text x="499" y="354" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">решение Northgate</text>
+  <text x="805" y="354" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">решение Helix</text>
+  <text x="20" y="380" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">разрабатывают оба то, что их отличает: инструменты правил пособий у Northgate, объяснение дефекта по MES у Helix</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Компонент, который не отличает заказчика, покупается, компонент, который отличает, разрабатывается, а партнёр привлекается, если заказчик не может эксплуатировать компонент сам: для одного и того же компонента Northgate покупает управляемый сервис, а Helix, для завода которого покупка исключена отсутствием связи, выбирает партнёра.</figcaption>
+</figure>
+
+<p>Агентный цикл и эндпоинт модели Northgate покупает, поскольку эти компоненты не отличают город от других городов, а людей для их эксплуатации у города нет. Helix привлекает партнёра, который устанавливает и сопровождает узлы на заводах по договору с условиями передачи знаний и выхода из <a href="#s-16-7" data-secref="16.7">раздела 16.7</a>. Разрабатывают оба заказчика то, что их отличает: город пишет MCP-инструменты для правил пособий, завод строит объяснение дефектов по журналу MES.</p>
+
+<div class="note" data-level="2">При партнёрстве ответственность за решения остаётся у заказчика. ADR, оценочный набор и право на выход остаются у заказчика, а партнёру передаётся эксплуатация. Договор, который не даёт заказчику прав на оценочный набор и конфигурацию, делает партнёра новой точкой привязки.</div>
+
+<h3 id="s-17-7"><span class="num">17.7</span>Привязка к вендору и стратегии выхода</h3>
+
+<p>Привязка к вендору означает, что цена перехода к другому поставщику выросла настолько, что переход перестал быть экономически оправданной альтернативой. Привязка сама по себе ошибкой не является: управляемый сервис сокращает потребность в людях за счёт того, что заказчик принимает его семантику. Ошибкой является привязка с неизвестной ценой, поэтому архитектор управляет ценой выхода.</p>
+
+<p>Вызов API модели заменяется адаптером за день, а дольше всего заменяются четыре вещи. Индекс хранит векторы одной модели эмбеддингов, и её смена означает переиндексацию корпуса. Оценочные наборы и судьи, записанные в формате одного сервиса, не переносятся, а промпт, отлаженный под одну модель, на другой модели даёт снижение качества, которое обнаруживается только на оценочном наборе. Наконец, поведение сессий, памяти, квот и перелива у другого поставщика повторяется лишь приблизительно.</p>
+
+<p>Слой переносимости отделяет решения заказчика от семантики поставщика. Модель трассы на OpenTelemetry из <a href="#s-13-3" data-secref="13.3">раздела 13.3</a>, инструменты за MCP из <a href="#ch-6" data-secref="6">главы 6</a>, оценочный набор в собственном формате из <a href="#s-12-4" data-secref="12.4">раздела 12.4</a> и исходные фрагменты документов рядом с векторами сокращают выход до работы на несколько недель без переписывания платформы. Поддержка адаптеров оплачивается ежемесячно, даже если выход не случится.</p>
+
+<p>Учение по выходу измеряет цену выхода. Раз в год команда прогоняет оценочный набор на альтернативной модели или среде исполнения, замеряет потерю качества, недели на адаптацию промптов и стоимость переиндексации и записывает результат в цену отмены соответствующего ADR. Архитектурное ревью фиксирует замечание по управляемому компоненту, выход с которого не проверялся больше года.</p>
+
+<h3 id="s-17-8"><span class="num">17.8</span>ADR и архитектурное ревью</h3>
+
+<dl class="def">
+<dt>Запись архитектурного решения, ADR <span class="en">(architecture decision record)</span></dt>
+<dd>Короткий документ об одном архитектурном решении. Исходный формат Найгарда содержит название, контекст, решение, статус и последствия; книга добавляет к ним драйверы, рассмотренные альтернативы с причинами отказа, цену отмены и дату пересмотра. Принятый ADR не редактируется: изменившееся решение оформляется новым ADR, а прежний помечается как замещённый.<a class="src" href="https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions" target="_blank" rel="noreferrer">Nygard, Documenting Architecture Decisions, 2011</a></dd>
+</dl>
+
+<p>ADR близок к журналу решений из <a href="#s-1-8" data-secref="1.8">раздела 1.8</a>, но сохраняется после окончания engagement и остаётся у заказчика. Две части ADR, которые обычно пропускают, здесь обязательны. Альтернативы показывают, из чего делался выбор: без них решение невозможно ни проверить, ни пересмотреть. Дата пересмотра связывает решение с моделью TCO: ADR об эндпоинте модели Northgate назначает пересмотр на месяц раньше ожидаемого пересечения с выделенной мощностью.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">adr_generator.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from datetime import date
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+
+class Alternative(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    name: str
+    rejected_because: str = Field(min_length=20)
+
+
+class Decision(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    number: int
+    title: str
+    status: Literal["proposed", "accepted", "superseded"] = "proposed"
+    decided_on: date
+    point: int | None = None                  # точка вариации, значение которой фиксирует решение
+    context: str
+    drivers: tuple[str, ...]
+    decision: str
+    alternatives: tuple[Alternative, ...]
+    consequences: tuple[str, ...]
+    reversal_weeks: int = Field(ge=0)         # сколько стоит отменить решение
+    reversal_usd: int = Field(ge=0)
+    review_on: date
+
+    @model_validator(mode="after")
+    def is_a_choice(self) -&gt; Self:
+        problems: list[str] = []
+        if not self.alternatives:
+            problems.append("нет альтернатив: неизвестно, из чего делался выбор")
+        if not self.drivers:
+            problems.append("нет драйверов: неизвестно, когда решение устареет")
+        if not self.consequences:
+            problems.append("нет последствий: цена решения скрыта")
+        if self.review_on &lt;= self.decided_on:
+            problems.append("дата пересмотра должна быть позже даты решения")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
+
+
+def render(d: Decision) -&gt; str:
+    point = f" · точка вариации {d.point}" if d.point is not None else ""
+    lines = [f"# ADR-{d.number:03d}: {d.title}",
+             f"Статус: {d.status} · {d.decided_on} · пересмотр {d.review_on}{point}",
+             "", "## Контекст", d.context, "", "## Драйверы", *[f"- {x}" for x in d.drivers],
+             "", "## Решение", d.decision, "", "## Рассмотренные альтернативы",
+             *[f"- {a.name}: отвергнута, потому что {a.rejected_because}" for a in d.alternatives],
+             "", "## Последствия", *[f"- {x}" for x in d.consequences],
+             "", "## Цена отмены", f"{d.reversal_weeks} недель, около {d.reversal_usd:,} долларов"]
+    return "\n".join(lines)
+
+
+def due(decisions: list[Decision], today: date) -&gt; list[int]:
+    return [d.number for d in decisions if d.status == "accepted" and d.review_on &lt;= today]
+
+
+if __name__ == "__main__":
+    adr = Decision(
+        number=7, title="Эндпоинт модели для дел жителей", status="accepted",
+        decided_on=date(2026, 9, 14), point=2,
+        context="Объём растёт на 12 % в месяц; команда эксплуатации города составляет 1.5 ставки.",
+        drivers=("стабильность объёма", "резидентность", "эксплуатация"),
+        decision="Региональный эндпоинт с оплатой за токены внутри сервисного периметра.",
+        alternatives=(Alternative(name="provisioned", rejected_because="стабильной базы объёма ещё нет, "
+                                  "пересечение ожидается на десятом месяце"),
+                      Alternative(name="open_weights", rejected_because="требует 1.5 ставки дежурств, "
+                                  "которых у города нет")),
+        consequences=("счёт растёт вместе с объёмом до пересмотра", "промпты настраиваются под одну модель"),
+        reversal_weeks=6, reversal_usd=60_000, review_on=date(2027, 5, 14))
+    text = render(adr)
+    assert text.startswith("# ADR-007:") and "точка вариации 2" in text
+    assert text.count("отвергнута, потому что") == 2
+    assert due([adr], date(2027, 5, 1)) == [] and due([adr], date(2027, 5, 14)) == [7]
+    try:
+        Decision.model_validate(adr.model_dump() | {"alternatives": (), "review_on": date(2026, 9, 1)})
+    except ValidationError as err:
+        assert "нет альтернатив" in str(err) and "дата пересмотра" in str(err)
+    else:
+        raise AssertionError("решение без альтернатив обязано быть отвергнуто")
+    print(text.splitlines()[0], "· строк в документе:", len(text.splitlines()))</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="reversal_weeks: int = Field(ge=0)">строка 27</span><p>Цена отмены записана в неделях и деньгах, поэтому её можно сравнить с TCO. Учение по выходу из раздела 17.7 измеряет эти две величины и обновляет эти два поля.</p></div>
+  <div><span class="at" data-anchor="review_on=date(2027, 5, 14)">строка 75</span><p>Пересмотр назначен через восемь месяцев после решения, за месяц до пересечения, найденного листингом <code>tco_model.py</code>, и функция <code>due</code> выдаёт ADR к пересмотру в этот день.</p></div>
+</div>
+</figure>
+
+<p>План миграции Northgate составляется из таких ADR. Каждая фаза меняет значения точек вариации и начинается, когда выполнено условие перехода, записанное в ADR предыдущей фазы.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Фаза</th><th>Месяцы</th><th>Точки вариации</th><th>Условие перехода к следующей фазе</th></tr></thead>
+<tbody>
+<tr><td>1. Управляемые сервисы</td><td>1–9</td><td>1, 2, 4, 5 управляемые; 6 ключи города</td><td>объём три месяца подряд выше минимального обязательства</td></tr>
+<tr><td>2. Выделенная мощность</td><td>10–24</td><td>2 переходит на выделенную мощность</td><td>учение по выходу с эндпоинта пройдено, ADR-007 пересмотрен</td></tr>
+<tr><td>3. Пересмотр своего сервинга</td><td>с 25</td><td>1 и 2 по результатам нового расчёта TCO</td><td>эксплуатация не меньше 2.5 ставки, прайс падает медленнее 15 % в год</td></tr>
+</tbody></table></div>
+
+<p>Архитектурное ревью проверяет привязку на соответствие эталонной архитектуре и принятым практикам, и устроено оно как тесты: список исполняемых проверок, каждая из которых сообщает замечание и ответственную за него точку вариации. Ревью в форме совещания охватывает только то, что помнят участники, тогда как исполняемый чеклист запускается при каждом изменении привязки.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">architecture_review.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from datetime import date
+
+
+@dataclass(frozen=True)
+class Binding:
+    point: int
+    option: str
+    hosting: str                    # managed | in_tenancy | on_site
+    adr: int | None = None          # номер ADR, обосновывающего выбор
+    exit_drill: date | None = None  # последнее учение по выходу
+    portable: bool = False          # данные и оценки хранятся в собственном формате заказчика
+
+
+@dataclass(frozen=True)
+class Config:
+    site: str
+    air_gapped: bool
+    bindings: tuple[Binding, ...]
+    eval_owner: str | None = None   # владелец оценочного набора со стороны заказчика
+
+
+@dataclass(frozen=True, order=True)
+class Finding:
+    point: int
+    check: str
+    detail: str
+
+
+type Check = Callable[[Config, date], list[Finding]]
+CHECKS: list[Check] = []
+
+
+def check(fn: Check) -&gt; Check:
+    CHECKS.append(fn)
+    return fn
+
+
+@check
+def decision_recorded(cfg: Config, today: date) -&gt; list[Finding]:
+    return [Finding(b.point, "adr", f"{b.option} выбран без ADR") for b in cfg.bindings if b.adr is None]
+
+
+@check
+def reachable_from_site(cfg: Config, today: date) -&gt; list[Finding]:
+    return [Finding(b.point, "air_gap", f"{b.option} недоступен без связи с облаком")
+            for b in cfg.bindings if cfg.air_gapped and b.hosting != "on_site"]
+
+
+@check
+def exit_rehearsed(cfg: Config, today: date) -&gt; list[Finding]:
+    stale = [b for b in cfg.bindings if b.hosting == "managed"
+             and (b.exit_drill is None or (today - b.exit_drill).days &gt; 365)]
+    return [Finding(b.point, "exit_drill", f"выход с {b.option} не проверялся больше года") for b in stale]
+
+
+@check
+def portable_state(cfg: Config, today: date) -&gt; list[Finding]:
+    return [Finding(b.point, "portability", f"состояние {b.option} существует только в формате поставщика")
+            for b in cfg.bindings if b.hosting == "managed" and not b.portable]
+
+
+@check
+def evaluation_owned(cfg: Config, today: date) -&gt; list[Finding]:
+    return [] if cfg.eval_owner else [Finding(5, "eval_owner", "у оценочного набора нет владельца у заказчика")]
+
+
+def review(cfg: Config, today: date) -&gt; list[Finding]:
+    return sorted(f for c in CHECKS for f in c(cfg, today))
+
+
+if __name__ == "__main__":
+    today = date(2026, 9, 14)
+    city = Config("Northgate", air_gapped=False, eval_owner="служба пособий", bindings=(
+        Binding(1, "managed_runtime", "managed", adr=5, exit_drill=date(2026, 3, 2), portable=True),
+        Binding(2, "paygo_regional", "managed", adr=7, exit_drill=date(2025, 6, 20), portable=True),
+        Binding(4, "managed_index", "managed", adr=8, exit_drill=date(2026, 5, 11)),
+        Binding(6, "customer_keys", "managed", adr=9, exit_drill=date(2026, 5, 11), portable=True)))
+    found = review(city, today)
+    assert [(f.point, f.check) for f in found] == [(2, "exit_drill"), (4, "portability")]
+    fixed = replace(city, bindings=tuple(
+        replace(b, exit_drill=date(2026, 9, 1), portable=True) if b.point in (2, 4) else b
+        for b in city.bindings))
+    assert review(fixed, today) == []
+    plant = Config("Helix, завод 12", air_gapped=True, bindings=(
+        Binding(2, "open_weights_edge", "on_site", adr=21), Binding(5, "managed_traces", "managed", adr=22)))
+    at_five = {f.check for f in review(plant, today) if f.point == 5}
+    assert at_five == {"air_gap", "exit_drill", "portability", "eval_owner"}
+    print(f"проверок: {len(CHECKS)}, замечаний у Northgate: {len(found)}, после исправления: 0")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def check(fn: Check) -&gt; Check:">строка 37</span><p>Чеклист является реестром функций. Новая проверка добавляется изменением кода и проходит обычное ревью кода.</p></div>
+  <div><span class="at" data-anchor="(today - b.exit_drill).days &gt; 365">строка 56</span><p>Результат учения по выходу считается действительным 365 дней. Эндпоинт Northgate проверяли в июне 2025 года, и к сентябрю 2026 года цена отмены в его ADR больше не подтверждена.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Писать ADR после выкладки, чтобы задокументировать сделанное. Альтернативы в таком ADR подбираются под принятое решение, причины отказа формулируются задним числом, а дата пересмотра не ставится. ADR пишется до решения в статусе proposed и принимается вместе с ним.</div>
+
+<h3 id="s-17-9" data-level="2"><span class="num">17.9</span>На Google Cloud: well-architected для агентных систем</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Well-Architected Framework</span>
+  <span class="tag">Agent Platform</span>
+  <span class="tag">Agent Runtime</span>
+  <span class="tag">Google Distributed Cloud</span>
+</div>
+
+<p data-level="2">Google Cloud Well-Architected Framework состоит из шести столпов, от операционного совершенства до устойчивости, и сквозных перспектив, одна из которых посвящена AI и машинному обучению.<a class="src" href="https://docs.cloud.google.com/architecture/framework" target="_blank" rel="noreferrer">cloud.google.com, Well-Architected Framework</a> Перспектива AI и ML появилась в октябре 2024 года и в 2025 и 2026 годах получила расширенные документы по отдельным столпам.<a class="src" href="https://docs.cloud.google.com/architecture/framework/whats-new" target="_blank" rel="noreferrer">cloud.google.com, изменения фреймворка</a> Среди её принципов стоимости названо использование управляемых сервисов и предобученных моделей:<a class="src" href="https://docs.cloud.google.com/architecture/framework/perspectives/ai-ml/cost-optimization" target="_blank" rel="noreferrer">cloud.google.com, AI и ML: оптимизация стоимости</a> для Northgate принцип совпадает с выбором, для изолированного завода Helix противоречит драйверу, поэтому в ADR он записывается как аргумент, а решение определяется драйверами заказчика.</p>
+
+<p data-level="2">Руководство Architecture Center по выбору компонентов агентной системы, обновлённое в апреле 2026 года, предлагает для среды исполнения агента Agent Runtime, Cloud Run и GKE, а для исполнения модели Gemini Enterprise Agent Platform (ранее Vertex AI), Cloud Run и GKE. Выбор между ними оно связывает с операционной нагрузкой, потребностью в состоянии, резидентностью и формой трафика.<a class="src" href="https://docs.cloud.google.com/architecture/choose-agentic-ai-architecture-components" target="_blank" rel="noreferrer">cloud.google.com, выбор компонентов агентной системы</a> Эти варианты являются значениями точек вариации 1 и 2, выраженными в продуктах, и выбираются по тем же драйверам.</p>
+
+<p data-level="2">Gemini Enterprise Agent Platform представлена в апреле 2026 года как развитие Vertex AI, и сервисы Vertex AI развиваются дальше в её составе.<a class="src" href="https://cloud.google.com/blog/products/ai-machine-learning/introducing-gemini-enterprise-agent-platform" target="_blank" rel="noreferrer">cloud.google.com, анонс Agent Platform</a> Управляемая среда исполнения агентов называется в документации Agent Runtime: она полностью интегрирована с ADK, принимает контейнеры, соблюдающие контракт среды, совместима с VPC Service Controls, а ресурс в справочнике API сохраняет прежнее имя <code>ReasoningEngine</code>.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/runtime" target="_blank" rel="noreferrer">cloud.google.com, Agent Runtime</a> Команда развёртывания ADK по-прежнему называется <code>adk deploy agent_engine</code>.<a class="src" href="https://adk.dev/deploy/agent-runtime/deploy/" target="_blank" rel="noreferrer">adk.dev, развёртывание в Agent Runtime</a> Три имени одного компонента объясняют, почему ADR ссылается на точку вариации, а соответствие продукту записывает с датой. API платформы <code>aiplatform.googleapis.com</code> поддерживается VPC Service Controls в статусе общей доступности, и вместе с ключами из <a href="#s-10-9" data-secref="10.9">раздела 10.9</a> это обеспечивает значение точки 6 для Northgate.<a class="src" href="https://docs.cloud.google.com/vpc-service-controls/docs/supported-products" target="_blank" rel="noreferrer">cloud.google.com, продукты VPC Service Controls</a></p>
+
+<p data-level="2">Для TCO существенна модель оплаты индекса. Стоимость Vector Search включает виртуальные машины, на которых размещены развёрнутые индексы, то есть фиксированную часть даже без трафика,<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/vector-search/overview" target="_blank" rel="noreferrer">cloud.google.com, Vector Search</a> а Agent Retrieval (ранее Vector Search 2.0) предлагает оплату по использованию для небольших нагрузок и по ресурсам для настроенной производительности.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/vector-search-2/overview" target="_blank" rel="noreferrer">cloud.google.com, Agent Retrieval</a> В модели TCO это два разных метода <code>usage</code> для точки 4: переменный для первых месяцев Northgate и фиксированный для стабильного центрального парка Helix.</p>
+
+<p data-level="2">Изолированный вариант Google Distributed Cloud не требует связи с Google Cloud,<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/overview" target="_blank" rel="noreferrer">cloud.google.com, GDC air-gapped</a> и его ограничения для цехов Helix разобраны в <a href="#s-14-9" data-secref="14.9">разделе 14.9</a>. Перечень сервисов Vertex AI на нём включает генеративный AI, распознавание текста и речи и перевод, а Agent Runtime в перечне на сентябрь 2026 года не значится.<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/application/ao-user/vertex-ai-overview" target="_blank" rel="noreferrer">cloud.google.com, Vertex AI на GDC air-gapped</a> Точка 1 для завода поэтому получает значение «контейнер на площадке»: документация ADK допускает запуск агента из образа в среде без связи с Google Cloud.<a class="src" href="https://adk.dev/deploy/" target="_blank" rel="noreferrer">adk.dev, варианты развёртывания</a></p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Столпы у трёх крупных облаков почти совпадают; различаются источники вопросов для ревью агентной системы. Agentic AI Lens от AWS, опубликованная 10 июня 2026 года, импортируется в AWS Well-Architected Tool как пользовательская линза и применяется для ревью конкретной нагрузки.<a class="src" href="https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentic-ai-lens.html" target="_blank" rel="noreferrer">docs.aws.amazon.com, Agentic AI Lens</a> Руководство Azure Well-Architected для AI-нагрузок разбирает выбор между собственной моделью, готовой моделью и сервисом и обычно рекомендует готовую модель или управляемый сервис.<a class="src" href="https://learn.microsoft.com/en-us/azure/well-architected/ai/get-started" target="_blank" rel="noreferrer">learn.microsoft.com, AI workloads on Azure</a> Исполняемый чеклист заказчика поэтому остаётся источником истины, а вопросы из документов поставщиков сопоставляются с его проверками.</div>
+
+<h3 id="s-17-10" data-level="3"><span class="num">17.10</span>Вглубь: скрытые затраты in-tenancy, цены на токены, мультиоблако без драйвера</h3>
+
+<h4 data-level="3">Скрытые затраты in-tenancy и собственного сервинга</h4>
+
+<p data-level="3">Размещение in-tenancy, то есть в облачном проекте заказчика под его эксплуатацией, и собственный сервинг на площадке несут затраты, которых нет в цене ускорителей. Обновление модели с открытыми весами означает прогон оценочного набора, сравнение с активной версией и, для изолированного завода, выпуск подписанного пакета, как в <a href="#s-14-10" data-secref="14.10">разделе 14.10</a>; те же ворота проходит каждое обновление драйверов и сервера модели. Дежурство требует ротации: при дежурной неделе раз в месяц это четыре человека, даже если инцидентов мало. Листинг <code>tco_model.py</code> закладывает 2.5 ставки, и окупаемость своего сервинга зависит от этой строки сильнее, чем от цены узла.</p>
+
+<h4 data-level="3">Падение цен на токены: обязательство дороже прайса</h4>
+
+<p data-level="3">В сценарии листинга с двукратным снижением прайса на седьмом месяце подписка дороже оплаты за токены в каждом месяце с седьмого по двенадцатый: блок оплачен по 60 % прежней цены, то есть по 1.20 доллара за миллион токенов, а управляемый API стоит уже 1.00 доллара. До конца срока обязательство оплачивается по цене выше текущего прайса, и рост загрузки эту разницу не устраняет. Отсюда два правила: срок обязательства выбирается короче ожидаемого интервала между снижениями цен, а пересмотр ADR назначается на конец срока обязательства, когда условия подписки можно изменить.</p>
+
+<h4 data-level="3">Мультиоблако без драйвера</h4>
+
+<p data-level="3">Требование «платформа работает в двух облаках» часто появляется в конкурсной документации без драйвера. Его стоимость складывается из постоянных затрат: адаптеров к двум средам исполнения, двух наборов квот, двух прогонов оценки при каждом изменении промптов и ограничения возможностей теми, что есть у обеих платформ. Выход, ради которого несутся эти затраты, в течение срока контракта может не понадобиться. Архитектор переводит требование в драйвер с владельцем и сценарием: какое событие требует ухода и в какой срок. Для ухода за три месяца достаточно слоя переносимости и ежегодного учения по выходу, а одновременная работа в двух облаках оправдана лишь требованием непрерывности при отказе поставщика.</p>
+
+<h4 data-level="3">Когда эталонная архитектура избыточна: пилот не является платформой</h4>
+
+<p data-level="3">Эталонная архитектура окупается на нескольких агентах и заказчиках. В пилоте одного агента, собранном сразу по ней, реализуются шесть точек вариации, из которых используется одна, и ворота оценки без оценочного набора. Northgate начинал ассистента для жителей без платформы, и это решение соответствовало драйверам: драйверы платформы появились, когда в очереди встали три следующих агента. Точка вариации, которая за год ни разу не получила второго значения, является преждевременной абстракцией того рода, что разобран в <a href="#s-16-9" data-secref="16.9">разделе 16.9</a>.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему архитектура в виде списка блоков и стрелок не отвечает на вопрос «что изменится, если данные должны остаться в стране», и как на него отвечает эталонная архитектура?</summary>
+<div class="ans"><p>В списке блоков нет драйверов, и связь требования с компонентами не записана. Эталонная архитектура хранит драйверы в точках вариации, поэтому ответ вычисляется: изменение резидентности затрагивает точки 1, 2, 4 и 6.</p></div>
+</details>
+<details>
+<summary>Свой сервинг дешевле подписки накопленным итогом с тридцать второго месяца. Почему листинг всё же находит подписку дешевле за 36 месяцев?</summary>
+<div class="ans"><p>В TCO входит цена выхода: уход со своего сервинга стоит 150 тысяч долларов против 60 тысяч у подписки, и с ней подписка дешевле на 19 тысяч. Диапазоны показывают, что TCO подписки сильно зависит от объёма и прайса, поэтому решение определяется допустимым для заказчика риском.</p></div>
+</details>
+<details>
+<summary>Чем определяется привязка эндпоинта модели Northgate к поставщику и что измеряет учение по выходу?</summary>
+<div class="ans"><p>Привязку определяют промпты, отлаженные под одну модель, оценочные наборы и судьи, векторы индекса и семантика управляемых сервисов; вызов API заменяется адаптером за день. Учение прогоняет оценочный набор на альтернативе и измеряет потерю качества, недели на адаптацию и стоимость переиндексации, а результат обновляет цену отмены в ADR.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Архитектура является набором решений с драйверами, альтернативами и ценой отмены; диаграмма служит изображением этих решений.</li>
+<li>Эталонная архитектура состоит из нейтральных слоёв, неизменной части и точек вариации, привязка к которым проверяется кодом до выкладки.</li>
+<li>TCO считается помесячно с людьми, разовыми затратами и ценой выхода, диапазонами по сценариям, и самый дешёвый вариант зависит от месяца.</li>
+<li>Покупается то, что не отличает заказчика, разрабатывается то, что отличает, партнёр привлекается там, где заказчик не может эксплуатировать компонент сам; цена выхода проверяется учениями и записывается в ADR.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-10" data-secref="10">Глава 10: суверенитет данных и периметр</a>
+<a href="#ch-14" data-secref="14">Глава 14: модель мощности и аппаратура</a>
+<a href="#ch-16" data-secref="16">Глава 16: бизнес-кейс, SOW и выход</a>
+</p>
+</div>
+</section>

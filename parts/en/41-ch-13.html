@@ -1,0 +1,1237 @@
+<!-- ────────────────────────── CHAPTER 13 ────────────────────────── -->
+<section class="chapter" id="ch-13">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter thirteen</p>
+    <span class="strata" role="img" aria-label="Layer D: evaluation and observability">
+      <i></i><i></i><i></i><i data-s="D"></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-13"><span class="num">13</span>Observability, Tracing and Cost</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>build a trace model of an agentic request in which a model call, a tool call, a retrieval and an agent step are separate spans carrying usage attributes;</li>
+<li>choose metrics that reflect the nature of language models and store them as histograms from which percentiles are computed across the whole fleet;</li>
+<li>design cost attribution by business unit, feature and user on a versioned price list and reconcile it with the provider's invoice;</li>
+<li>define a logging policy under which cost and latency are always kept and personal data is never kept in the clear;</li>
+<li>formulate the SLOs of an agentic system and set up alerts on the error budget burn rate over several windows.</li>
+</ul>
+</div>
+
+<h3 id="s-13-1"><span class="num">13.1</span>The task: Orion's five business units</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-4" data-secref="G.4">Case file CF4 · Orion Telecom</a></span>
+  <span class="tag">multi-tenant platform</span>
+  <span class="tag">chargeback</span>
+  <span class="tag">five business units</span>
+  <span>telecom, 30 million subscribers</span>
+</div>
+
+<p>By the autumn of 2026 Orion's separate agent projects had been merged into a common platform. The operator suggestions of <a href="#ch-4" data-secref="4">Chapter 4</a>, the incident triage of <a href="#ch-8" data-secref="8">Chapter 8</a> and several other scenarios use one gateway, one agent runtime, shared quotas with the model providers and a shared invoice. Five business units use the platform: the consumer market, enterprise customers, home internet and TV, wholesale services for other operators, and network operations. About half a million agentic requests pass through the gateway every day, and each of them spawns anywhere from three to several dozen model calls, tool calls and retrievals.</p>
+
+<p>In its first month the platform split the provider's invoice among the business units in proportion to their request counts, and within a week it received two objections. The enterprise unit pointed out that its requests are short, whereas incident triage reads tens of thousands of tokens of alarms at every step, so a split by request count shifts other units' costs onto enterprise. The consumer unit reported that a suggestion sometimes reaches the operator after six seconds or more, while the logs show only when the request arrived and when the response left. The platform had no data with which to answer these objections.</p>
+
+<p>The requirements the platform owner set out after that month are the subject of this chapter. Every request can be reconstructed from its trace down to an individual model call and tool call, with its duration and token usage. Cost is allocated among the business units by actual consumption, broken down to the feature and the user, and agrees with the provider's invoice to within one per cent. Latency and the share of successful runs have service level objectives (SLOs), and a breach pages the on-call engineer before a business unit files a complaint. Logs and traces contain neither subscriber numbers nor the texts of conversations, except for an explicitly permitted and redacted sample: GDPR and the lawful-intercept boundaries recorded in the case file demand it.</p>
+
+<h3 id="s-13-2"><span class="num">13.2</span>Why traces are the evidence</h3>
+
+<p>A log answers the question of what happened at a given point in the code at a given moment. An agentic request is a tree of operations in which the agent loop spawns steps, a step spawns model calls, tool calls and retrievals, and a tool reaches the customer's systems in another process. A log line does not record the relation between parent and child, and with two concurrent requests the lines interleave so that the log no longer shows which step made the answer slow and expensive. The line "tool: ok" with a timestamp contains the moment the operation finished, but neither the moment it started nor a reference to the request.</p>
+
+<p>Three consumers on the platform need information about the course of a request, and each of them needs an answer supported by recorded data. An engineer who is debugging needs to know where the time of a particular request went. A financial controller needs to know who consumed the tokens on the invoice. The head of a business unit, an auditor or a regulator needs to know which data the agent read and which actions it took. All three questions require the causal structure of the request, that is, the links between operations.</p>
+
+<dl class="def">
+<dt>Span</dt>
+<dd>A record of one named operation with a start and an end, holding the trace identifier, its own identifier, the identifier of its parent span, attributes and a completion status. A span is opened where the operation begins and closed where it ends, so its duration and attributes are measured directly while the operation runs.</dd>
+<dt>Trace</dt>
+<dd>A tree of spans that share one trace identifier and whose root is the incoming request. A trace describes the causal structure of one request: which operations it spawned, in what order, which of them ran concurrently and how each of them ended.</dd>
+</dl>
+
+<p>Hence the thesis of the chapter. Granular tracing, in which every model call, every tool call, every retrieval and every agent step becomes a span of its own, together with metrics that reflect the nature of language models, is a necessary condition for debugging an agentic system, pricing it and proving how it behaved. The second consequence: cost attribution across tenants is a design constraint that is met at the moment of every call. A monthly report cannot replace it, because a tenant attribute that is not written onto the span at the moment of the call cannot be recovered by any query against the invoice at the end of the month.</p>
+
+<h3 id="s-13-3"><span class="num">13.3</span>The trace model</h3>
+
+<p>A trace of an Orion agentic request is built from spans of five kinds, and four of them are described by the OpenTelemetry semantic conventions for generative AI.<a class="src" href="https://github.com/open-telemetry/semantic-conventions-genai" target="_blank" rel="noreferrer">OpenTelemetry, GenAI semantic conventions</a> A model call span is named after the operation and the model, for example <code>chat model-flash</code>, and carries token usage in its attributes. A tool call span has the operation <code>execute_tool</code> and the tool's name, a retrieval span has the operation <code>retrieval</code> and the data source identifier, and an agent invocation span has the operation <code>invoke_agent</code>. The conventions do not single out the fifth kind, a step of the agent loop, and the platform introduces it itself, since the step is the unit of reasoning of <a href="#s-7-3" data-secref="7.3">Section 7.3</a>.</p>
+
+<p>Token usage is recorded in the attributes <code>gen_ai.usage.input_tokens</code> and <code>gen_ai.usage.output_tokens</code>, and tokens read from and written to the cache in the separate attributes <code>gen_ai.usage.cache_read.input_tokens</code> and <code>gen_ai.usage.cache_write.input_tokens</code>; earlier versions of the conventions called the second attribute <code>gen_ai.usage.cache_creation.input_tokens</code>. The conventions prescribe counting cached tokens within the total input, so the cost of fresh input is obtained by subtraction, and a mistake at this point counts the cached tokens twice. In 2026 the conventions have development status and are still changing, so the platform pins their version in the tracer's code just as it pins the model version. The units and prices to which these attributes apply are defined in <a href="#s-3-3" data-secref="3.3">Section 3.3</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="The tree of one operator-suggestion trace: the incoming request contains the agent invocation, the agent contains two steps, the first step contains a retrieval and a model call, the second step contains a failed and a retried tool call and a second model call; every span carries the tenant label, the model calls record token usage, and the cost of each parent is the sum of the costs of its children" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar13a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="24" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">SPAN</text>
+  <text x="376" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">TENANT</text>
+  <text x="452" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ATTRIBUTES</text>
+  <text x="676" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">COST</text>
+
+  <line x1="692" y1="40" x2="692" y2="354" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="776" y1="40" x2="776" y2="354" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <path d="M36,69 V92 H50" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M62,105 V236 H76" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M62,128 H76" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,141 V200 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,164 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,249 V344 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,272 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <path d="M88,308 H102" fill="none" stroke="var(--line-strong)" stroke-width="1.3"/>
+
+  <rect x="24" y="43" width="336" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="36" y="60" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">POST /assist</text>
+  <rect x="50" y="79" width="310" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="62" y="96" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">invoke_agent assist</text>
+  <rect x="76" y="115" width="284" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="88" y="132" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">step 1</text>
+  <rect x="102" y="151" width="258" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="114" y="168" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">retrieval kb-consumer</text>
+  <rect x="102" y="187" width="258" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="114" y="204" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">chat model-flash</text>
+  <rect x="76" y="223" width="284" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="88" y="240" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">step 2</text>
+  <rect x="102" y="259" width="258" height="26" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="114" y="276" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">execute_tool get_charges</text>
+  <rect x="102" y="295" width="258" height="26" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="114" y="312" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">execute_tool get_charges</text>
+  <rect x="102" y="331" width="258" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="114" y="348" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">chat model-flash</text>
+
+  <rect x="376" y="47" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="60" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="83" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="119" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="132" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="155" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="168" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="191" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="204" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="227" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="240" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="263" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="276" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="299" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="312" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+  <rect x="376" y="335" width="62" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+  <text x="407" y="348" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sD)">consumer</text>
+
+  <text x="452" y="60" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">feature=agent_assist · 6.2 s</text>
+  <text x="452" y="96" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2 steps · 6.2 s</text>
+  <text x="452" y="132" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1.4 s</text>
+  <text x="452" y="168" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">hits=2 · 0.3 s</text>
+  <text x="452" y="204" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">in 5000 · cache 4200 · out 60</text>
+  <text x="452" y="240" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">4.8 s</text>
+  <text x="452" y="276" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">error.type=TimeoutError · 2.0 s</text>
+  <text x="452" y="312" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">retry · 0.3 s</text>
+  <text x="452" y="348" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">in 13290 · cache 4200 · out 180</text>
+
+  <rect x="676" y="51" width="100" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <line x1="692" y1="51" x2="692" y2="61" stroke="var(--sB)" stroke-width="1.3"/>
+  <rect x="676" y="87" width="100" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <line x1="692" y1="87" x2="692" y2="97" stroke="var(--sB)" stroke-width="1.3"/>
+  <rect x="676" y="123" width="16" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <rect x="676" y="195" width="16" height="10" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="692" y="231" width="84" height="10" rx="2" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <rect x="692" y="339" width="84" height="10" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <text x="860" y="60" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.001559</text>
+  <text x="860" y="96" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.001559</text>
+  <text x="860" y="132" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.000252</text>
+  <text x="860" y="204" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">$0.000252</text>
+  <text x="860" y="240" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" font-weight="600" fill="currentColor">Σ $0.001307</text>
+  <text x="860" y="348" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">$0.001307</text>
+
+  <text x="24" y="386" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">A parent carries the sum of its children's cost; a business unit's bill is the sum of the roots bearing its tenant label.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Cost is recorded as an attribute of every span and summed up the tree. Every model call has its own price computed from its tokens, a parent has the sum of its children's prices, and a business unit has the sum of the roots bearing its label. The tenant label is written on every span, so the roll-up can stop at any level: at a step, at a run, at a feature.</figcaption>
+</figure>
+
+<dl class="def">
+<dt>Trace context propagation</dt>
+<dd>Passing the trace identifier, the identifier of the current span and accompanying request attributes, called baggage, from an operation to its descendants, including across thread, process and organisation boundaries. Within a process the context is held in context variables; between processes it travels in the W3C <code>traceparent</code> and <code>baggage</code> headers, and in the MCP protocol under the same keys in the <code>params._meta</code> field.<a class="src" href="https://www.w3.org/TR/trace-context/" target="_blank" rel="noreferrer">W3C, Trace Context</a></dd>
+</dl>
+
+<p>Context propagation breaks in predictable places, and all of them occur on the Orion platform. A thread pool and a background task do not inherit context variables unless these are copied explicitly, and a supervisor's worker then starts a trace of its own. A message queue loses the headers unless the producer has written them into the message. An MCP server that does not read <code>params._meta</code> opens a new trace for every tool call. In all three cases the spans are recorded but remain orphans without a parent and a tenant, and their usage is attributed to no business unit.</p>
+
+<p>In the multi-agent system of <a href="#ch-8" data-secref="8">Chapter 8</a> the trace tree mirrors the delegation tree. A worker's <code>invoke_agent</code> span is nested in the span of the supervisor step that issued the contract, and the worker's model and tool calls are nested in its own steps. The cost of triage therefore breaks down by worker without extra labelling: the cost of diagnostics equals the sum of its subtree, and the supervisor's own spending is visible separately. A comparison of two tracers, a naive one and a considered one, shows how this structure differs from a log.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to record the course of a request">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="16">
+      <figcaption><span class="file">naive_logging.py</span></figcaption>
+      <pre><code>import heapq
+import io
+from collections.abc import Iterator
+from contextlib import redirect_stdout
+
+NOW = [0.0]
+
+
+def log(message: str) -&gt; None:
+    print(f"[{NOW[0]:4.1f}] {message}")
+
+
+def handle(tenant: str, question: str, tool_s: float) -&gt; Iterator[float]:
+    """The hint handler: yield hands control back for the duration of a wait."""
+    log(f"request from {tenant}: {question}")
+    yield 0.3
+    log("retrieval: ok")
+    yield 1.1
+    log("model: ok, 5060 tokens")
+    yield tool_s
+    log("tool: ok")
+    yield 2.3
+    log("model: ok, 13470 tokens")
+
+
+def serve(handlers: list[Iterator[float]]) -&gt; None:
+    """Two requests at once: wake the one whose wait ends first."""
+    wake = [(i * 0.2, i) for i in range(len(handlers))]
+    while wake:
+        NOW[0], i = heapq.heappop(wake)
+        wait = next(handlers[i], None)
+        if wait is not None:
+            heapq.heappush(wake, (round(NOW[0] + wait, 1), i))
+
+
+if __name__ == "__main__":
+    out = io.StringIO()
+    with redirect_stdout(out):
+        serve([handle("consumer", "why were 300 roubles charged?", tool_s=2.5),
+               handle("enterprise", "status of circuit 4471", tool_s=0.3)])
+    lines = out.getvalue().splitlines()
+    starts = [float(x[1:5]) for x in lines if "request from" in x]
+    tools = [float(x[1:5]) for x in lines if "tool: ok" in x]
+    assert len(starts) == len(tools) == 2
+    assert all(s &lt; t for s in starts for t in tools)      # any line fits any request
+    assert sum("consumer" in x for x in lines) == 1          # the tenant is only in the first line
+    assert "300 roubles" in out.getvalue()                    # the subscriber's question is written to the log
+    print("the log cannot tell whose tool was slow or who pays for what")</code></pre>
+    </figure>
+    <p>The handler writes one line per operation, and each line is correct on its own. Two concurrent requests produce a log in which the "tool: ok" lines are written with the timestamps 1.9 and 3.9 seconds, and nothing ties them to a request or to a tenant: the name of the business unit appears only in the first line of each request. The tool's duration cannot be recovered, because the log contains the moment an operation ended but not the moment it began. At the same time the subscriber's question is written to the log in full.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">tracing.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import contextvars
+import functools
+import hashlib
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Any
+
+type Attr = str | int | float | bool
+
+
+@dataclass
+class ManualClock:
+    t: float = 0.0
+
+    def now(self) -&gt; float:
+        return self.t
+
+    def advance(self, seconds: float) -&gt; None:
+        self.t = round(self.t + seconds, 6)
+
+
+@dataclass(frozen=True)
+class SpanContext:
+    trace_id: str
+    span_id: str
+
+
+@dataclass
+class Span:
+    name: str
+    context: SpanContext
+    parent_id: str | None
+    start: float
+    end: float = 0.0
+    status: str = "ok"
+    attributes: dict[str, Attr] = field(default_factory=dict)
+
+    @property
+    def duration(self) -&gt; float:
+        return round(self.end - self.start, 6)
+
+
+@dataclass(frozen=True)
+class Completion:
+    input_tokens: int               # under the OTel conventions it includes cached tokens
+    cache_read_tokens: int
+    output_tokens: int
+
+
+CURRENT: contextvars.ContextVar[SpanContext | None] = contextvars.ContextVar("span", default=None)
+BAGGAGE: contextvars.ContextVar[tuple[tuple[str, str], ...]] = contextvars.ContextVar("baggage", default=())
+
+
+@contextmanager
+def baggage(items: dict[str, str]) -&gt; Iterator[None]:
+    """Request attributes inherited by every span further down the tree."""
+    token = BAGGAGE.set(BAGGAGE.get() + tuple(items.items()))
+    try:
+        yield
+    finally:
+        BAGGAGE.reset(token)
+
+
+def inject() -&gt; dict[str, str]:
+    """W3C headers for HTTP; in MCP the same keys travel in params._meta."""
+    ctx = CURRENT.get()
+    assert ctx is not None, "inject outside a span"
+    return {"traceparent": f"00-{ctx.trace_id}-{ctx.span_id}-01",
+            "baggage": ",".join(f"{k}={v}" for k, v in BAGGAGE.get())}
+
+
+@contextmanager
+def extracted(carrier: dict[str, str]) -&gt; Iterator[None]:
+    """The receiving side: the remote parent and the baggage from the headers."""
+    _, trace_id, span_id, _ = carrier["traceparent"].split("-")
+    pairs = tuple((k, v) for k, v in (p.split("=", 1) for p in carrier["baggage"].split(",") if p))
+    parent, bag = CURRENT.set(SpanContext(trace_id, span_id)), BAGGAGE.set(pairs)
+    try:
+        yield
+    finally:
+        BAGGAGE.reset(bag)
+        CURRENT.reset(parent)
+
+
+class Tracer:
+    def __init__(self, service: str, clock: ManualClock) -&gt; None:
+        self.service = service
+        self.clock = clock
+        self.finished: list[Span] = []
+        self._n = 0
+
+    def _id(self, size: int) -&gt; str:
+        self._n += 1
+        return hashlib.blake2b(f"{self.service}:{self._n}".encode(), digest_size=size).hexdigest()
+
+    @contextmanager
+    def span(self, name: str, attributes: dict[str, Attr] | None = None) -&gt; Iterator[Span]:
+        parent = CURRENT.get()
+        ctx = SpanContext(parent.trace_id if parent else self._id(16), self._id(8))
+        inherited: dict[str, Attr] = dict(BAGGAGE.get())
+        span = Span(name, ctx, parent.span_id if parent else None, self.clock.now(),
+                    attributes=inherited | (attributes or {}))
+        token = CURRENT.set(ctx)
+        try:
+            yield span
+        except Exception as err:
+            span.status = "error"
+            span.attributes["error.type"] = type(err).__name__
+            raise
+        finally:
+            CURRENT.reset(token)
+            span.end = self.clock.now()
+            self.finished.append(span)
+
+    def _wrap[**P, R](self, name: str, attributes: dict[str, Attr],
+                      after: Callable[[Span, Any], None] | None = None
+                      ) -&gt; Callable[[Callable[P, R]], Callable[P, R]]:
+        def decorator(fn: Callable[P, R]) -&gt; Callable[P, R]:
+            @functools.wraps(fn)
+            def inner(*args: P.args, **kwargs: P.kwargs) -&gt; R:
+                with self.span(name, attributes) as span:
+                    result = fn(*args, **kwargs)
+                    if after is not None:
+                        after(span, result)
+                return result
+            return inner
+        return decorator
+
+    def llm[**P](self, model: str) -&gt; Callable[[Callable[P, Completion]], Callable[P, Completion]]:
+        def usage(span: Span, c: Completion) -&gt; None:
+            span.attributes |= {"gen_ai.usage.input_tokens": c.input_tokens,
+                                "gen_ai.usage.cache_read.input_tokens": c.cache_read_tokens,
+                                "gen_ai.usage.output_tokens": c.output_tokens}
+        return self._wrap(f"chat {model}", {"gen_ai.operation.name": "chat",
+                                             "gen_ai.request.model": model}, usage)
+
+    def tool[**P, R](self, name: str) -&gt; Callable[[Callable[P, R]], Callable[P, R]]:
+        return self._wrap(f"execute_tool {name}", {"gen_ai.operation.name": "execute_tool",
+                                                   "gen_ai.tool.name": name})
+
+    def retrieval[**P, R](self, source: str) -&gt; Callable[[Callable[P, R]], Callable[P, R]]:
+        return self._wrap(f"retrieval {source}", {"gen_ai.operation.name": "retrieval",
+                                                  "gen_ai.data_source.id": source})
+
+
+if __name__ == "__main__":
+    clock = ManualClock()
+    gateway = Tracer("gateway", clock)
+    billing = Tracer("mcp-billing", clock)             # another process with its own tracer
+
+    @gateway.retrieval("kb-consumer")
+    def search(query: str) -&gt; list[str]:
+        clock.advance(0.3)
+        return ["kb-112", "kb-587"]
+
+    @gateway.llm("model-flash")
+    def chat(prompt: str, seconds: float, usage: tuple[int, int, int]) -&gt; Completion:
+        clock.advance(seconds)
+        return Completion(*usage)
+
+    def backend(headers: dict[str, str]) -&gt; int:
+        with extracted(headers), billing.span("SELECT charges", {"db.system.name": "postgresql"}):
+            clock.advance(0.2)
+        return 300
+
+    outcomes: Iterator[TimeoutError | None] = iter([TimeoutError("billing: no answer within 2 s"), None])
+
+    @gateway.tool("get_charges")
+    def get_charges(account: str) -&gt; int:
+        if (failure := next(outcomes)) is not None:
+            clock.advance(2.0)
+            raise failure
+        clock.advance(0.1)
+        return contextvars.Context().run(backend, inject())   # an empty context, as in another process
+
+    request = {"orion.tenant": "consumer", "orion.feature": "agent_assist", "orion.user": "u-5f2a"}
+    with (baggage(request), gateway.span("POST /assist"),
+          gateway.span("invoke_agent assist", {"gen_ai.operation.name": "invoke_agent"})):
+        with gateway.span("step 1", {"orion.agent.step": 1}):
+            search("why were 300 roubles charged")
+            chat("plan", 1.1, (5_000, 4_200, 60))
+        with gateway.span("step 2", {"orion.agent.step": 2}):
+            try:
+                get_charges("acc-17")
+            except TimeoutError:
+                clock.advance(0.2)                     # backoff before the retry
+                get_charges("acc-17")
+            chat("answer", 2.3, (13_290, 4_200, 180))
+
+    spans = gateway.finished + billing.finished
+    by_id = {s.context.span_id: s for s in spans}
+    assert len({s.context.trace_id for s in spans}) == 1             # one trace, the MCP server included
+    assert all(s.parent_id in by_id for s in spans if s.parent_id)    # no orphans
+    assert all(s.attributes["orion.tenant"] == "consumer" for s in spans)
+    tools = [s for s in spans if s.name == "execute_tool get_charges"]
+    assert [t.status for t in tools] == ["error", "ok"]
+    assert billing.finished[0].parent_id == tools[1].context.span_id
+    llm = [s for s in spans if s.attributes.get("gen_ai.operation.name") == "chat"]
+    assert sum(int(s.attributes["gen_ai.usage.input_tokens"]) for s in llm) == 18_290
+    parents = {s.parent_id for s in spans}
+    slowest = max((s for s in spans if s.context.span_id not in parents), key=lambda s: s.duration)
+    root = next(s for s in spans if s.parent_id is None)
+    step_2 = next(s for s in spans if s.name == "step 2")
+    assert root.duration == 6.2 and step_2.duration == 4.8
+    assert slowest.name == "chat model-flash" and slowest.parent_id == step_2.context.span_id
+    print(f"trace {root.context.trace_id[:8]}: {len(spans)} spans, the longest is {slowest.name} in step 2")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="contextvars.ContextVar(&quot;span&quot;, default=None)">line 53</span><p>The current span is held in a context variable. Asynchronous tasks inherit it automatically, a thread pool does not: work is handed to the pool through <code>contextvars.copy_context().run</code>, otherwise the worker starts a trace of its own.</p></div>
+        <div><span class="at" data-anchor="inherited: dict[str, Attr] = dict(BAGGAGE.get())">line 103</span><p>Every span copies the baggage when it is created. The tenant, the feature and the user are set once at the gateway, and every call receives them without additional code.</p></div>
+        <div><span class="at" data-anchor="span.attributes[&quot;error.type&quot;] = type(err).__name__">line 111</span><p>An exception closes the span with an error status and the exception's class in the <code>error.type</code> attribute, and is then re-raised. The tracer records the failure, and the decision to retry is made by the agent loop.</p></div>
+        <div><span class="at" data-anchor="&quot;gen_ai.usage.cache_read.input_tokens&quot;: c.cache_read_tokens">line 135</span><p>Usage is written onto the model span at the moment of the response. The attribute names follow the OpenTelemetry conventions, so the same span is read without rework by Cloud Trace, by third-party tools and by the cost ledger.</p></div>
+        <div><span class="at" data-anchor="contextvars.Context().run(backend, inject())">line 177</span><p>The billing server runs in an empty context, as if in a separate process: it receives information about the trace and the tenant only from the headers. The <code>orion.tenant</code> attribute on its span therefore confirms that propagation through the headers works.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns structure. A log stores a sequence of lines, a trace stores a tree. In a trace the question "where did the time go" is answered by finding the longest leaf and its parent; a log holds no data to answer it.</p>
+    <p>The second difference concerns inheritance. The tenant, the feature and the user are written in the tracer once, when the request enters, and reach every span, including the spans of the MCP server in another process. In a log they appear only in the lines where the developer printed them explicitly.</p>
+    <p>The third difference concerns content. A span contains numbers (duration, tokens, status) and does not contain the text of the conversation. The naive handler's log contains the text of the conversation and does not contain the durations of operations.</p>
+  </div>
+</div>
+
+<div class="warn"><b>Common mistake</b>Wrapping only the whole incoming request in a span and calling that tracing. Such a span contains the total duration of the suggestion, for example six seconds, without a breakdown by operation. Its token usage is either missing or recorded as a total that cannot be broken down by call. A span is opened for every operation that has a duration of its own, a usage of its own or a way of failing of its own.</div>
+
+<h3 id="s-13-4"><span class="num">13.4</span>LLM-native metrics</h3>
+
+<p>A trace describes one request; a metric describes the distribution over all requests. Metrics are aggregated at write time, their storage volume does not depend on traffic, and they are therefore not sampled; traces are consulted once a metric has shown where to look. The usual metrics of a web service, namely request rate, error rate and response time, are necessary for an agentic platform but not sufficient: they contain no information about tokens, the cache or the agent's steps.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Metric</th><th>Unit</th><th>What it shows</th><th>Storage form</th></tr></thead>
+<tbody>
+<tr><td>Time to first token, TTFT</td><td>seconds</td><td>whether the suggestion appears before the operator finishes typing the answer; grows with a cache miss and with a queue at the provider</td><td>histogram, bounds from 0.01 to 81.92 s, doubling</td></tr>
+<tr><td>Stream speed</td><td>output tokens per second</td><td>the remainder of latency after the first token; streaming calls only</td><td>histogram, from 5 to 640</td></tr>
+<tr><td>Cost per request</td><td>dollars</td><td>the distribution of run cost by feature and tenant, including cost per successful task</td><td>histogram and a sum counter</td></tr>
+<tr><td>Cache hit ratio</td><td>share of input tokens</td><td>stability of the prefix; the first to drop after an instruction is edited</td><td>ratio of two counters</td></tr>
+<tr><td>Steps per run</td><td>steps</td><td>loops and needless replanning by the agent</td><td>histogram, from 1 to 128, doubling</td></tr>
+</tbody></table></div>
+
+<p>Time to first token and stream speed are taken apart in <a href="#s-3-3" data-secref="3.3">Section 3.3</a>, and the stable prefix on which the cache hit ratio depends in <a href="#s-4-5" data-secref="4.5">Section 4.5</a>. This section defines the storage form: each of these quantities is stored as a histogram with fixed bucket bounds. A mean is unsuitable for this because it hides the tail: for consumer suggestions the mean TTFT is 0.84 seconds while the 95th percentile is about three, and the slow suggestions that the operator notices are in the tail. Percentiles cannot be averaged, since the p95 of two gateway instances under different loads is not the mean of their p95 values. Histograms with identical bounds add up across instances and time windows, and the percentile is computed after the addition.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">metrics.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import bisect
+import functools
+import random
+from dataclasses import dataclass, field
+
+SECONDS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92)
+TOKENS_PER_S = (5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0)
+STEPS = (1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
+LABELS = frozenset({"tenant", "feature", "model"})     # bounded cardinality: no user, no request_id
+
+
+@dataclass
+class Histogram:
+    bounds: tuple[float, ...]
+    counts: list[int] = field(default_factory=list)
+    total: float = 0.0
+    n: int = 0
+
+    def __post_init__(self) -&gt; None:
+        self.counts = self.counts or [0] * (len(self.bounds) + 1)   # the last bucket: above the bounds
+
+    def record(self, value: float) -&gt; None:
+        self.counts[bisect.bisect_left(self.bounds, value)] += 1
+        self.total += value
+        self.n += 1
+
+    def merge(self, other: Histogram) -&gt; Histogram:
+        if other.bounds != self.bounds:
+            raise ValueError("only histograms with identical bounds can be merged")
+        counts = [a + b for a, b in zip(self.counts, other.counts, strict=True)]
+        return Histogram(self.bounds, counts, self.total + other.total, self.n + other.n)
+
+    def mean(self) -&gt; float:
+        return self.total / self.n
+
+    def quantile(self, q: float) -&gt; float:
+        """Interpolation inside the bucket: the accuracy is bounded by its width."""
+        rank, seen = q * self.n, 0
+        for i, c in enumerate(self.counts):
+            if c and seen + c &gt;= rank:
+                if i == len(self.bounds):
+                    return self.bounds[-1]
+                low = self.bounds[i - 1] if i else 0.0
+                return low + (self.bounds[i] - low) * (rank - seen) / c
+            seen += c
+        return self.bounds[-1]
+
+
+@dataclass
+class Metrics:
+    series: dict[tuple[str, tuple[tuple[str, str], ...]], Histogram] = field(default_factory=dict)
+
+    def observe(self, name: str, bounds: tuple[float, ...], value: float, **labels: str) -&gt; None:
+        if extra := set(labels) - LABELS:
+            raise ValueError(f"label of unbounded cardinality: {sorted(extra)}")
+        key = (name, tuple(sorted(labels.items())))
+        if key not in self.series:
+            self.series[key] = Histogram(bounds)
+        self.series[key].record(value)
+
+    def query(self, name: str, **match: str) -&gt; Histogram:
+        found = [h for (n, labels), h in self.series.items()
+                 if n == name and match.items() &lt;= dict(labels).items()]
+        return functools.reduce(Histogram.merge, found)
+
+
+def record_call(m: Metrics, *, stream: bool, ttft_s: float, total_s: float, output_tokens: int,
+                **labels: str) -&gt; None:
+    m.observe("gen_ai.client.operation.duration", SECONDS, total_s, **labels)
+    if stream:                                         # no stream: neither a first token nor a speed
+        m.observe("orion.ttft", SECONDS, ttft_s, **labels)
+        m.observe("orion.output_tokens_per_s", TOKENS_PER_S, output_tokens / (total_s - ttft_s), **labels)
+
+
+if __name__ == "__main__":
+    rng = random.Random(13)
+    pods = {"pod-a": Metrics(), "pod-b": Metrics()}
+    raw: list[float] = []
+    for pod, calls, slow_share in (("pod-a", 1_500, 0.08), ("pod-b", 500, 0.0)):
+        for _ in range(calls):
+            ttft = rng.uniform(3.0, 5.0) if rng.random() &lt; slow_share else rng.uniform(0.4, 0.9)
+            raw.append(ttft)
+            record_call(pods[pod], stream=True, ttft_s=ttft, total_s=ttft + 1.4, output_tokens=400,
+                        tenant="consumer", feature="agent_assist", model="model-flash")
+    record_call(pods["pod-b"], stream=False, ttft_s=0.0, total_s=38.0, output_tokens=9_000,
+                tenant="netops", feature="incident_triage", model="model-pro")
+
+    a, b = (pods[p].query("orion.ttft", tenant="consumer") for p in ("pod-a", "pod-b"))
+    fleet = a.merge(b)
+    exact_p95 = sorted(raw)[int(0.95 * len(raw))]
+    assert fleet.mean() &lt; 1.0 &lt; 2.56 &lt; fleet.quantile(0.95)        # the mean is below a second, p95 above 2.56
+    assert 2.56 &lt; exact_p95 &lt;= 5.12                                 # the same bucket as the estimate
+    assert fleet.quantile(0.95) - (a.quantile(0.95) + b.quantile(0.95)) / 2 &gt; 0.5    # p95 values are not averaged
+    tps = pods["pod-a"].query("orion.output_tokens_per_s")
+    assert tps.n == 1_500 and 160 &lt; tps.quantile(0.5) &lt;= 320
+    assert pods["pod-b"].query("gen_ai.client.operation.duration", tenant="netops").n == 1
+
+    runs = Metrics()
+    for steps in (2, 2, 3, 2, 4, 2, 9, 2, 3, 2, 2, 17):
+        runs.observe("orion.agent.steps", STEPS, steps, feature="incident_triage")
+    per_run = runs.query("orion.agent.steps")
+    assert per_run.quantile(0.5) &lt;= 2 and per_run.quantile(0.95) &gt; 8     # a median of two steps, a tail of loops
+    try:
+        runs.observe("orion.agent.steps", STEPS, 3, user="u-5f2a")
+        raise AssertionError("a user label was accepted")
+    except ValueError:
+        pass
+    print(f"TTFT: mean {fleet.mean():.2f} s, p95 {fleet.quantile(0.95):.2f} s, exact p95 {exact_p95:.2f} s")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="bisect.bisect_left(self.bounds, value)">line 25</span><p>A value equal to a bound falls into the bucket that this bound closes from above, as in OpenTelemetry's explicit buckets. Histograms from different processes can be added only under the same convention about bounds.</p></div>
+  <div><span class="at" data-anchor="return low + (self.bounds[i] - low) * (rank - seen) / c">line 46</span><p>The percentile is estimated by linear interpolation inside a bucket, and the accuracy of the estimate is bounded by the width of the bucket. In the example the p95 estimate is 2.85 seconds against an exact value of 3.34: both lie in the bucket from 2.56 to 5.12, and for an alert this accuracy is sufficient.</p></div>
+  <div><span class="at" data-anchor="if extra := set(labels) - LABELS:">line 56</span><p>Label cardinality is limited by a check in code. A user label is rejected at write time, before the number of series overloads the metrics store.</p></div>
+  <div><span class="at" data-anchor="if stream:">line 72</span><p>For a non-streaming call only the duration is recorded: such a call has no moment of the first token, and a stream speed cannot be derived from its total duration.</p></div>
+  <div><span class="at" data-anchor="fleet.quantile(0.95) - (a.quantile(0.95) + b.quantile(0.95)) / 2">line 95</span><p>The mean of the two instances' p95 values is lower than the fleet's p95 by more than half a second: the slow instance serves three times as many requests, while averaging treats the instances as equal.</p></div>
+</div>
+</figure>
+
+<p>Metric labels are restricted to dimensions with few values: tenant, feature, model. A user or request identifier in a label creates a separate series for every value, and the number of series grows with the number of users until the metrics store stops responding. Questions about a particular user are addressed to the cost ledger and to traces, where such cardinality is provided for in the design and included in the cost of storage.</p>
+
+<div class="note" data-level="2">Stream speed is computed only for streaming calls and only after the first token. A non-streaming call has no moment of the first token, and dividing output tokens by the total duration mixes the speed of generation with input processing and the provider's queue, so a model with a long input receives an understated speed. The distortions that remain even within streaming calls are taken apart in <a href="#s-13-9" data-secref="13.9">Section 13.9</a>.</div>
+
+<h3 id="s-13-5"><span class="num">13.5</span>Cost attribution</h3>
+
+<dl class="def">
+<dt>Chargeback</dt>
+<dd>The allocation of a shared platform's costs among internal consumers by measured consumption, with an invoice issued to each of them. Chargeback differs from allocation by predetermined shares in that every line of the invoice traces back to usage events that can be shown to the consumer.</dd>
+</dl>
+
+<p>Splitting the invoice by request count, where Orion started, is wrong by construction, because the costs of requests differ by two orders of magnitude. An operator suggestion makes two calls to the junior model: a planning call and an answer call that reads the context of <a href="#s-4-3" data-secref="4.3">Section 4.3</a>, about thirteen thousand tokens. Both calls read the 4,200-token stable prefix from the cache, and the whole suggestion costs about 0.16 cents. A triage step reads forty thousand tokens of alarms with the senior model and costs about six cents, and a triage run consists of several such steps. Under a split by request count the enterprise unit, with its many short requests, pays for the triage of network operations.</p>
+
+<p>Attribution begins at the gateway. The gateway verifies the caller's token and derives the tenant, the feature and the user pseudonym from it; these values are never taken from the request body, otherwise any client could assign its costs to another business unit by changing one field of the request. From there the attributes are passed in the baggage of the trace context and copied onto every span, including the spans of MCP servers and of workers in other processes. A span without a tenant is assigned to an "unattributed" bucket, and the share of that bucket is a separate metric with a target level below one per cent.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 390" role="img" aria-label="The observability data flow: the gateway sets the tenant attribute from the caller's token, the trace context carrying that attribute passes through the agent runtime into the MCP server, all three processes export spans to the collector, and the collector routes aggregates to metrics, a redacted sample of content to the trace store and the complete stream of usage events to the cost ledger, which is reconciled with the provider's invoice" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar13b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <g data-step="1" data-caption="The gateway verifies the caller's token and derives the tenant attribute from the identity stated in that token.">
+    <text x="125" y="22" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">request · the caller's token</text>
+    <line x1="125" y1="30" x2="125" y2="58" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <rect x="20" y="64" width="210" height="56" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+    <text x="34" y="88" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">platform gateway</text>
+    <text x="34" y="106" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tenant ← token</text>
+    <rect x="166" y="70" width="56" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+    <text x="194" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--sD)">tenant</text>
+  </g>
+
+  <g data-step="2" data-caption="The trace context and baggage cross process boundaries: W3C headers for HTTP, the params._meta field for MCP. The tenant label appears on the spans of every process.">
+    <line x1="125" y1="120" x2="125" y2="158" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <text x="137" y="146" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">traceparent · baggage</text>
+    <rect x="20" y="164" width="210" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="34" y="188" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">agent runtime</text>
+    <text x="34" y="206" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">invoke_agent · chat</text>
+    <rect x="166" y="170" width="56" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+    <text x="194" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--sD)">tenant</text>
+    <line x1="125" y1="220" x2="125" y2="258" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <text x="137" y="246" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">params._meta</text>
+    <rect x="20" y="264" width="210" height="56" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+    <text x="34" y="288" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">MCP server</text>
+    <text x="34" y="306" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">execute_tool</text>
+    <rect x="166" y="270" width="56" height="18" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.5"/>
+    <text x="194" y="283" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="var(--sD)">tenant</text>
+  </g>
+
+  <g data-step="3" data-caption="The processes export spans over OTLP to the collector; by this point the tenant attribute is written on every span.">
+    <path d="M230,92 H280 V192" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M230,292 H280 V192" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <line x1="230" y1="192" x2="314" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <text x="297" y="184" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">OTLP</text>
+    <rect x="320" y="48" width="250" height="292" rx="8" fill="none" stroke="var(--sD)" stroke-width="1.5" stroke-dasharray="6 5"/>
+    <text x="332" y="40" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sD)">OpenTelemetry collector</text>
+    <path d="M320,192 H332" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M332,100 V284" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <line x1="332" y1="100" x2="342" y2="100" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="332" y1="192" x2="342" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="332" y1="284" x2="342" y2="284" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+  </g>
+
+  <g data-step="4" data-caption="The collector splits the stream: metrics are aggregated without sampling, content passes through the logging policy, all usage events are passed to the cost ledger.">
+    <rect x="350" y="76" width="196" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="364" y="96" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">aggregation</text>
+    <text x="364" y="113" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">histograms, no sampling</text>
+    <rect x="350" y="168" width="196" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="364" y="188" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">content policy</text>
+    <text x="364" y="205" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">HMAC · redaction · 1%</text>
+    <rect x="350" y="260" width="196" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <text x="364" y="280" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">usage events</text>
+    <text x="364" y="297" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">every attempt, no sampling</text>
+    <line x1="546" y1="100" x2="632" y2="100" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="546" y1="192" x2="632" y2="192" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <line x1="546" y1="284" x2="632" y2="284" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar13b)"/>
+    <rect x="640" y="76" width="220" height="48" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="654" y="96" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">metrics and SLOs</text>
+    <text x="654" y="113" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">kept for 13 months</text>
+    <rect x="640" y="168" width="220" height="48" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="654" y="188" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">traces and logs</text>
+    <text x="654" y="205" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">30 days · content 7</text>
+    <rect x="640" y="260" width="220" height="48" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+    <text x="654" y="280" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">cost ledger</text>
+    <text x="654" y="297" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tenant · feature · user</text>
+  </g>
+
+  <g data-step="5" data-caption="The cost ledger is reconciled with the provider's invoice by model and day; a gap above one per cent means lost events or a stale price list.">
+    <line x1="750" y1="332" x2="750" y2="314" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar13b)"/>
+    <text x="762" y="326" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">reconciliation</text>
+    <rect x="640" y="332" width="220" height="44" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+    <text x="654" y="351" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">provider's invoice</text>
+    <text x="654" y="367" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">export by day and label</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The tenant attribute is written once, from the caller's identity, and is passed with the trace context, so by the time of export it is written on every span. The collector splits one stream into three destinations with different rules: metrics are aggregated, content is redacted and sampled, and usage events are passed to the cost ledger in full and reconciled with the provider's invoice.</figcaption>
+</figure>
+
+<p>The cost ledger stores individual usage events, from which totals are computed at roll-up. An event is emitted when a span with token usage closes and contains the span identifier, the day, the tenant, the feature, the user pseudonym, the model and four token counters: input, read from the cache, written to the cache and output. The cost of an event is computed from the price list in force on the day of the event: the price table is kept as data with effective dates, as <a href="#s-3-3" data-secref="3.3">Section 3.3</a> requires, and a change of prices alters the cost of future events without rewriting past ones. Cached tokens are priced at their own rate, and the roll-up by tenant, feature and user reduces to summing events. The set of dimensions grows as needed: the TKL pipeline of <a href="#s-3-10" data-secref="3.10">Section 3.10</a> adds the language of the document to them.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">cost_ledger.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+
+MILLION = Decimal(1_000_000)
+
+
+@dataclass(frozen=True)
+class Price:
+    """Dollars per million tokens from the effective date on."""
+    since: date
+    input: Decimal
+    cache_read: Decimal
+    cache_write: Decimal
+    output: Decimal
+
+
+def usd(*values: str) -&gt; tuple[Decimal, ...]:
+    return tuple(Decimal(v) for v in values)
+
+
+PRICES: dict[str, tuple[Price, ...]] = {
+    "model-flash": (Price(date(2026, 2, 1), *usd("0.15", "0.0375", "0.1875", "0.60")),
+                    Price(date(2026, 8, 1), *usd("0.12", "0.03", "0.15", "0.50"))),
+    "model-pro": (Price(date(2026, 2, 1), *usd("1.25", "0.3125", "1.5625", "5.00")),),
+}
+
+
+class UsageEvent(BaseModel):
+    """A usage event: emitted when a span with usage closes, and never sampled."""
+    model_config = ConfigDict(frozen=True)
+
+    span_id: str
+    day: date
+    tenant: str = "unattributed"
+    feature: str
+    user: str
+    model: str
+    input_tokens: int                 # includes cache_read and cache_write, as in the OTel conventions
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    output_tokens: int = 0
+
+    @model_validator(mode="after")
+    def cached_within_input(self) -&gt; UsageEvent:
+        if self.cache_read_tokens + self.cache_write_tokens &gt; self.input_tokens:
+            raise ValueError("more cached tokens than input tokens")
+        return self
+
+
+def price_for(model: str, day: date) -&gt; Price:
+    versions = [p for p in PRICES[model] if p.since &lt;= day]
+    if not versions:
+        raise LookupError(f"no price for {model} on {day}")
+    return versions[-1]
+
+
+def cost(e: UsageEvent) -&gt; Decimal:
+    p = price_for(e.model, e.day)
+    fresh = e.input_tokens - e.cache_read_tokens - e.cache_write_tokens
+    return (fresh * p.input + e.cache_read_tokens * p.cache_read
+            + e.cache_write_tokens * p.cache_write + e.output_tokens * p.output) / MILLION
+
+
+class Ledger:
+    def __init__(self) -&gt; None:
+        self.rows: dict[str, tuple[UsageEvent, Decimal]] = {}
+
+    def add(self, event: UsageEvent) -&gt; bool:
+        """Export delivers at least once: a repeated event does not double the bill."""
+        if event.span_id in self.rows:
+            return False
+        self.rows[event.span_id] = (event, cost(event))
+        return True
+
+    def rollup(self, *keys: str) -&gt; dict[tuple[str, ...], Decimal]:
+        out: defaultdict[tuple[str, ...], Decimal] = defaultdict(Decimal)
+        for event, amount in self.rows.values():
+            out[tuple(str(getattr(event, k)) for k in keys)] += amount
+        return dict(out)
+
+    def total(self) -&gt; Decimal:
+        return sum((amount for _, amount in self.rows.values()), Decimal(0))
+
+    def gap(self, invoice: Decimal) -&gt; Decimal:
+        """The relative gap to the provider's invoice for the same period."""
+        return abs(self.total() - invoice) / invoice
+
+
+if __name__ == "__main__":
+    aug, jul = date(2026, 8, 14), date(2026, 7, 30)
+    hint = UsageEvent(span_id="a1", day=aug, tenant="consumer", feature="agent_assist", user="u-5f2a",
+                      model="model-flash", input_tokens=5_000, cache_read_tokens=4_200, output_tokens=60)
+    events = [
+        hint,
+        UsageEvent(span_id="a2", day=aug, tenant="consumer", feature="agent_assist", user="u-5f2a",
+                   model="model-flash", input_tokens=13_290, cache_read_tokens=4_200, output_tokens=180),
+        UsageEvent(span_id="t1", day=aug, tenant="netops", feature="incident_triage", user="u-duty",
+                   model="model-pro", input_tokens=41_000, cache_write_tokens=12_000, output_tokens=900),
+        UsageEvent(span_id="e1", day=jul, tenant="enterprise", feature="agent_assist", user="u-9c01",
+                   model="model-flash", input_tokens=5_000, cache_read_tokens=4_200, output_tokens=60),
+        UsageEvent(span_id="x1", day=aug, feature="agent_assist", user="u-0000",
+                   model="model-flash", input_tokens=1_000, output_tokens=100),
+    ]
+    ledger = Ledger()
+    assert all(ledger.add(e) for e in events) and not ledger.add(hint)   # a repeated export is discarded
+
+    assert cost(hint) == Decimal("0.000252")
+    assert cost(hint.model_copy(update={"cache_read_tokens": 0})) == Decimal("0.00063")   # 2.5 times dearer without the cache
+    assert cost(events[3]) == Decimal("0.0003135")          # the July price list: the same work costs more
+    by_tenant = ledger.rollup("tenant")
+    assert by_tenant[("consumer",)] == Decimal("0.0015588") and by_tenant[("netops",)] == Decimal("0.0595")
+    assert sum(by_tenant.values()) == ledger.total()
+    assert ledger.rollup("tenant", "feature", "user")[("consumer", "agent_assist", "u-5f2a")] == Decimal("0.0015588")
+    assert by_tenant[("unattributed",)] / ledger.total() &lt; Decimal("0.01")
+    assert ledger.gap(invoice=Decimal("0.0619")) &lt; Decimal("0.01")
+    try:
+        UsageEvent(span_id="bad", day=aug, feature="f", user="u", model="model-flash",
+                   input_tokens=100, cache_read_tokens=200)
+        raise AssertionError("a cache larger than the input was accepted")
+    except ValidationError:
+        pass
+    try:
+        price_for("model-pro", date(2026, 1, 31))
+        raise AssertionError("a cost without a price record")
+    except LookupError:
+        pass
+    print(f"cost ledger: {len(ledger.rows)} events, ${ledger.total()} in total, consumer ${by_tenant[('consumer',)]}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="MILLION = Decimal(1_000_000)">line 10</span><p>Money is counted in <code>Decimal</code>. A sum of millions of events in floating point accumulates error, and the reconciliation with the invoice drifts by an amount that corresponds to no event.</p></div>
+  <div><span class="at" data-anchor="tenant: str = &quot;unattributed&quot;">line 40</span><p>An event without a tenant goes into a bucket of its own. If such events were discarded, their spending would vanish from the reconciliation unnoticed; the bucket makes it visible and measurable.</p></div>
+  <div><span class="at" data-anchor="versions = [p for p in PRICES[model] if p.since &lt;= day]">line 57</span><p>The price is chosen by the day of the event. The planning call of the enterprise unit's July suggestion costs 0.0003135 dollars even after the August price cut, because the provider billed it at that price.</p></div>
+  <div><span class="at" data-anchor="fresh = e.input_tokens - e.cache_read_tokens - e.cache_write_tokens">line 65</span><p>Fresh input tokens are obtained by subtraction, because under the OpenTelemetry conventions the input token counter already includes cached tokens. Adding instead of subtracting would count the cached tokens twice.</p></div>
+  <div><span class="at" data-anchor="if event.span_id in self.rows:">line 76</span><p>The span identifier serves as the idempotency key of the event. The collector retries an export after a network failure, and without this check every failure would double the event's spending on the tenant's bill.</p></div>
+</div>
+</figure>
+
+<p>The last step of attribution is reconciliation with the provider's invoice. Once a day the cost ledger is summed by model and day and compared with the billing export; a gap above one per cent means that some calls bypass the tracer, that events are lost in export or that the price table is out of date. The collector delivers events at least once, so the ledger discards duplicates by span identifier. The unattributed bucket is reconciled like the others: its growth points to a service that has stopped passing the context on.</p>
+
+<div class="warn"><b>Common mistake</b>Storing only tokens on the span and computing cost at report time from the current price list. A July report built in August after a price cut shows a smaller total than the provider billed, and the reconciliation diverges by the difference between the July and August prices. The price is chosen by the date of the event, and the price table is never edited retroactively.</div>
+
+<h3 id="s-13-6"><span class="num">13.6</span>Logging content safely</h3>
+
+<p>The content of an agentic platform's requests consists almost entirely of personal data: subscribers' messages with phone numbers, billing charges, operators' notes. The OpenTelemetry conventions for generative AI tell instrumentations not to record instructions, input messages or model responses by default, and for production they suggest storing content separately, with a reference from the span. Orion formalises this recommendation as a policy of five classes, in which an attribute's class is determined by its key.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Class</th><th>Attributes</th><th>Handling</th></tr></thead>
+<tbody>
+<tr><td>Always kept</td><td>cost, duration, TTFT, tokens, model, status, tenant, feature</td><td>unchanged: SLOs and chargeback are computed from these attributes</td></tr>
+<tr><td>Pseudonymised</td><td>user identifier, subscriber number</td><td>HMAC with a key from the secret store after normalisation to a canonical form</td></tr>
+<tr><td>Redacted and sampled</td><td>message texts, tool arguments</td><td>phone numbers, email addresses and account numbers are replaced with placeholders; 1% of traces kept for 7 days</td></tr>
+<tr><td>Never kept</td><td>access tokens, CDRs, lawful-intercept data</td><td>dropped, and the policy forbids including them in other classes</td></tr>
+<tr><td>Not listed</td><td>anything added without a policy change</td><td>dropped: the policy is a list of permitted keys</td></tr>
+</tbody></table></div>
+
+<p>A pseudonym is computed by a hash function with a secret key. A plain hash is unsuitable for this: subscriber numbers of one country have on the order of ten billion possible values, and a SHA-256 table of all of them is built on a single GPU in minutes, after which an "anonymised" log reads like an open one. HMAC with a secret key keeps the property of a hash that joining logs requires, namely the same pseudonym for the same number in every log, and makes the pseudonym irreversible for anyone who lacks the key. Destroying the key at the end of the retention period anonymises the whole archive without rewriting it.</p>
+
+<p>The content sampling decision is taken for the whole trace and computed from the trace identifier, so every process the request passed through reaches the same answer without coordination. A decision per span would put into the sample a model call without the tool's response, and the stored content would be useless for analysis. Retention periods differ by the purpose of the data: redacted content is kept for seven days, traces for thirty, metrics for thirteen months, and the cost ledger for as long as financial reporting requires.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">redaction.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import hmac
+import re
+from dataclasses import dataclass
+
+type Attr = str | int | float | bool
+
+KEEP = frozenset({"orion.tenant", "orion.feature", "gen_ai.operation.name", "gen_ai.request.model",
+                  "gen_ai.usage.input_tokens", "gen_ai.usage.cache_read.input_tokens",
+                  "gen_ai.usage.output_tokens", "orion.cost_usd", "orion.duration_s", "orion.ttft_s",
+                  "error.type"})
+PSEUDONYMIZE = frozenset({"orion.user", "orion.msisdn"})
+REDACT = frozenset({"gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.tool.call.arguments"})
+NEVER = frozenset({"http.request.header.authorization", "orion.cdr", "orion.intercept_ref"})
+
+PATTERNS = (
+    (re.compile(r"\+?\d[\d\s()-]{8,}\d"), "&lt;phone&gt;"),
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "&lt;email&gt;"),
+    (re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"), "&lt;iban&gt;"),
+)
+
+
+def redact(text: str) -&gt; str:
+    for pattern, placeholder in PATTERNS:
+        text = pattern.sub(placeholder, text)
+    return text
+
+
+@dataclass(frozen=True)
+class Policy:
+    key: bytes                      # from the secret store; destroying the key anonymises the archive
+    content_rate: float = 0.01      # share of traces whose redacted content is kept
+
+    def pseudonym(self, value: str) -&gt; str:
+        canonical = re.sub(r"[\s()-]", "", value)
+        return hmac.new(self.key, canonical.encode(), hashlib.blake2b).hexdigest()[:16]
+
+    def keeps_content(self, trace_id: str) -&gt; bool:
+        """The decision covers the whole trace and is the same in every process."""
+        digest = hashlib.blake2b(trace_id.encode(), digest_size=8).digest()
+        return int.from_bytes(digest) / 2**64 &lt; self.content_rate
+
+    def apply(self, trace_id: str, attrs: dict[str, Attr]) -&gt; tuple[dict[str, Attr], dict[str, str]]:
+        record: dict[str, Attr] = {}
+        content: dict[str, str] = {}
+        for k, v in attrs.items():
+            if k in KEEP:
+                record[k] = v
+            elif k in PSEUDONYMIZE:
+                record[k] = self.pseudonym(str(v))
+            elif k in REDACT and self.keeps_content(trace_id):
+                content[k] = redact(str(v))
+            # everything else is dropped: NEVER, unknown keys and content outside the sample
+        return record, content
+
+
+if __name__ == "__main__":
+    assert not NEVER &amp; (KEEP | PSEUDONYMIZE | REDACT)
+    policy = Policy(key=b"orion-logs-2026-09")
+    span: dict[str, Attr] = {
+        "orion.tenant": "consumer", "orion.feature": "agent_assist", "orion.cost_usd": 0.001307,
+        "orion.duration_s": 2.3, "gen_ai.usage.output_tokens": 180,
+        "orion.user": "u-5f2a", "orion.msisdn": "+44 7700 900461",
+        "gen_ai.input.messages": "My number is +44 7700 900461, email ivan@mail.example. Why were 300 roubles charged?",
+        "http.request.header.authorization": "Bearer eyJhbGciOiJSUzI1NiJ9", "debug.prompt_dump": "…",
+    }
+    ids = [f"trace-{i:05d}" for i in range(20_000)]
+    sampled = next(t for t in ids if policy.keeps_content(t))
+    unsampled = next(t for t in ids if not policy.keeps_content(t))
+
+    record, content = policy.apply(sampled, span)
+    assert record["orion.cost_usd"] == 0.001307 and record["orion.duration_s"] == 2.3   # price and time intact
+    assert record["orion.msisdn"] == policy.pseudonym("+447700900461")                    # joinable with the key
+    assert record["orion.msisdn"] != hashlib.sha256(b"+447700900461").hexdigest()[:16]   # and not brute-forceable
+    assert "Bearer" not in str(record) and "debug.prompt_dump" not in record
+    text = content["gen_ai.input.messages"]
+    assert "&lt;phone&gt;" in text and "&lt;email&gt;" in text and "300 roubles" in text
+    assert policy.apply(unsampled, span)[1] == {} and "orion.cost_usd" in policy.apply(unsampled, span)[0]
+    share = sum(map(policy.keeps_content, ids)) / len(ids)
+    assert 0.008 &lt; share &lt; 0.012
+    print(f"logged: {len(record)} attributes of {len(span)}, content: {share:.1%} of traces, redacted")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="canonical = re.sub(">line 37</span><p>The number is normalised to a canonical form before the pseudonym is computed. Otherwise one subscriber gets different pseudonyms in the gateway and BSS logs, and these logs cannot be joined by pseudonym.</p></div>
+  <div><span class="at" data-anchor="hmac.new(self.key, canonical.encode(), hashlib.blake2b)">line 38</span><p>The pseudonym is computed with a secret key. Enumerating all the numbers of the country without the key yields no match, and rotating the key with the retention period severs the link between old and new logs.</p></div>
+  <div><span class="at" data-anchor="return int.from_bytes(digest) / 2**64 &lt; self.content_rate">line 43</span><p>The sampling decision is derived from the trace identifier, so the gateway, the agent and the MCP server arrive at the same answer independently. The content of a trace is either kept in full or not kept at all.</p></div>
+  <div><span class="at" data-anchor="# everything else is dropped">line 55</span><p>The policy lists what is permitted. An attribute that a developer adds for debugging does not reach the log by default, and keeping it requires a policy change that goes through review.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Treating the SHA-256 of a phone number as anonymisation. The space of numbers is small, and an unkeyed hash is reversed by enumeration within minutes. For a regulator such a log contains personal data, with every consequence for retention periods, access rights and breach notification.</div>
+
+<div class="note" data-level="2">Redaction by regular expressions recognises only notation formats: the filter does not recognise an address dictated in words or a contract number in a non-standard notation. Redacted content is therefore still treated as personal data, stored apart from traces with separate access rights, and its sample is limited to one per cent of traces. Lawful-intercept information does not reach even this sample, because it is dropped by key before redaction.</div>
+
+<h3 id="s-13-7"><span class="num">13.7</span>SLOs and alerting</h3>
+
+<p>A service level objective for an agentic system is formulated in the same terms as for a web service, but its indicators differ. Orion sets three indicators for suggestions. Latency: 95% of suggestions start appearing to the operator within 2.5 seconds, with time measured from the request to the first token of the final answer, because intermediate model calls are not visible to the operator. Success: 99% of runs end with an answer that passed the schema check; HTTP 200 does not count as success, because a response with that code may fail the schema. Cost per successful task: the total cost of all runs of a feature divided by the number of successful ones stays below the business unit's threshold, and a rise in this quantity at unchanged provider prices means that the agent enters loops more often or ends runs without a result more often.</p>
+
+<dl class="def">
+<dt>Error budget</dt>
+<dd>The share of events that an SLO allows to be bad over the compliance window: with a 99% objective over 30 days the budget is 1% of the events in that window. The budget is spent by outages, releases and experiments, and what remains of it is the basis for deciding whether to roll out the next version.</dd>
+<dt>Burn rate</dt>
+<dd>The ratio of the observed share of bad events in a window to the share the SLO allows. A burn rate of 1 means that the budget runs out exactly at the end of the compliance window; a burn rate of 14.4 sustained for an hour consumes 2% of the monthly budget.<a class="src" href="https://sre.google/workbook/alerting-on-slos/" target="_blank" rel="noreferrer">Google SRE Workbook, Alerting on SLOs</a></dd>
+</dl>
+
+<p>A threshold alert of the form "p95 above 2.5 seconds for five minutes" errs in both directions. At night, when there are only a few suggestions a minute, one slow suggestion pages the on-call engineer. By day, a degradation of half a per cent does not cross the threshold for weeks and spends the budget without firing an alert. A burn-rate alert answers the question on which the on-call engineer's action depends: will the budget run out before the end of the window, and at what rate it is being spent.</p>
+
+<p>Each rule checks two windows. The long window shows that the burn is significant for the budget, and the short one confirms that the burn is continuing right now and clears the alert soon after a fix. Orion uses three rules following the Google SRE method: a page at a burn rate of 14.4 over windows of one hour and five minutes, a page at 6 over six hours and thirty minutes, and a ticket at 1 over three days and six hours.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">slo_alerts.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+MINUTE = 60
+HOUR = 60 * MINUTE
+DAY = 24 * HOUR
+
+
+@dataclass
+class ManualClock:
+    t: float = 0.0
+
+    def now(self) -&gt; float:
+        return self.t
+
+
+@dataclass(frozen=True)
+class Rule:
+    long_s: int
+    short_s: int
+    burn: float
+    severity: str
+
+
+RULES = (
+    Rule(1 * HOUR, 5 * MINUTE, 14.4, "page"),       # 2% of the monthly budget in an hour
+    Rule(6 * HOUR, 30 * MINUTE, 6.0, "page"),       # 5% in six hours
+    Rule(3 * DAY, 6 * HOUR, 1.0, "ticket"),         # 10% in three days
+)
+
+
+@dataclass
+class BurnRateAlerts:
+    clock: ManualClock
+    objective: float                                 # share of successful runs over 30 days
+    rules: tuple[Rule, ...] = RULES
+    minutes: dict[int, tuple[int, int]] = field(default_factory=dict)   # minute: (total, failed)
+
+    def record(self, total: int, bad: int) -&gt; None:
+        m = int(self.clock.now() // MINUTE)
+        seen, failed = self.minutes.get(m, (0, 0))
+        self.minutes[m] = (seen + total, failed + bad)
+
+    def error_ratio(self, window_s: int) -&gt; float:
+        now = int(self.clock.now() // MINUTE)
+        cells = [self.minutes.get(m, (0, 0)) for m in range(now - window_s // MINUTE + 1, now + 1)]
+        total = sum(t for t, _ in cells)
+        return sum(b for _, b in cells) / total if total else 0.0
+
+    def burn_rate(self, window_s: int) -&gt; float:
+        """1.0 means the budget runs out exactly at the end of the 30-day window."""
+        return self.error_ratio(window_s) / (1 - self.objective)
+
+    def firing(self) -&gt; list[str]:
+        return [r.severity for r in self.rules
+                if self.burn_rate(r.long_s) &gt;= r.burn and self.burn_rate(r.short_s) &gt;= r.burn]
+
+
+def run(alerts: BurnRateAlerts, minutes: int, per_minute: int, bad_share: float) -&gt; None:
+    for _ in range(minutes):
+        alerts.clock.t += MINUTE
+        alerts.record(per_minute, round(per_minute * bad_share))
+
+
+if __name__ == "__main__":
+    day = BurnRateAlerts(ManualClock(), objective=0.99)
+    run(day, 6 * 60, per_minute=500, bad_share=0.002)
+    assert day.firing() == []                                  # background: 0.2% failures, the budget almost intact
+
+    detected = 0
+    while "page" not in day.firing():                          # the billing MCP server is down: every run fails
+        run(day, 1, per_minute=500, bad_share=1.0)
+        detected += 1
+    assert detected == 9 and day.firing() == ["page", "ticket"]
+    run(day, 3, per_minute=500, bad_share=1.0)
+    run(day, 6, per_minute=500, bad_share=0.002)               # the outage is fixed
+    assert day.firing() == ["ticket"] and day.burn_rate(HOUR) &gt; 14.4   # the page clears, the ticket stays
+
+    slow = BurnRateAlerts(ManualClock(), objective=0.99)
+    run(slow, 3 * 24 * 60, per_minute=300, bad_share=0.015)   # quiet degradation after a prompt change
+    assert slow.firing() == ["ticket"]
+
+    night = BurnRateAlerts(ManualClock(), objective=0.99)
+    run(night, 60, per_minute=2, bad_share=0.0)
+    night.record(1, 1)                                         # one failure out of eleven in 5 minutes
+    assert night.error_ratio(5 * MINUTE) &gt; 0.05                # a "5% in 5 minutes" threshold would wake the on-call engineer
+    assert night.firing() == []                                # the budget rule does not fire
+    print(f"outage: page at minute {detected}; degradation: ticket; night noise: silence")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="minutes: dict[int, tuple[int, int]]">line 38</span><p>Events are stored as per-minute counters. Three days occupy 4,320 cells at any traffic level, and a window of any length is computed as a sum of cells.</p></div>
+  <div><span class="at" data-anchor="return self.error_ratio(window_s) / (1 - self.objective)">line 53</span><p>The rate is normalised to the budget, so one rule suits SLOs with different objectives: a burn rate of 14.4 means 2% of the monthly budget in an hour at a 99% objective and at a 99.9% objective alike.</p></div>
+  <div><span class="at" data-anchor="if self.burn_rate(r.long_s) &gt;= r.burn and self.burn_rate(r.short_s) &gt;= r.burn]">line 57</span><p>Both windows must exceed the threshold. Under a total outage the one-hour window first exceeds 14.4 at the ninth minute, and five minutes after the fix the short window clears the page, although the one-hour window still remembers the outage.</p></div>
+  <div><span class="at" data-anchor="assert slow.firing() ==">line 82</span><p>A degradation to 1.3% failures does not page the on-call engineer, but over three days it consumes 13% of the budget and opens a ticket. Such degradations occur after a prompt edit or a change of model version and are taken apart in <a href="#ch-15" data-secref="15">Chapter 15</a>.</p></div>
+</div>
+</figure>
+
+<p>An alert reports that the budget is being spent but does not state the cause; the cause is found from traces. The TTFT histogram keeps exemplars next to its buckets, that is, identifiers of traces that fell into each bucket, and the on-call engineer opens a trace from the tail of the distribution. The diagram shows one such trace, opened from a consumer-market alert.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 356" role="img" aria-label="A timeline of one slow suggestion on a scale from zero to eight seconds: retrieval waits in a queue for a second and a half, the first model call takes 1.1 seconds, the first tool attempt fails on a timeout after two seconds, after a backoff the retry completes in 0.3 seconds, and the second model call delivers its first token at 6.4 seconds against an objective of 2.5 seconds" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar13c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <line x1="296" y1="34" x2="296" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="376" y1="34" x2="376" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="456" y1="34" x2="456" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="536" y1="34" x2="536" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="616" y1="34" x2="616" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="696" y1="34" x2="696" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="776" y1="34" x2="776" y2="282" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <text x="24" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">SPAN</text>
+  <line x1="416" y1="32" x2="416" y2="282" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="422" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--sD)">objective: first token ≤ 2.5 s</text>
+  <line x1="728" y1="32" x2="728" y2="282" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <text x="734" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">first token 6.4 s</text>
+
+  <text x="24" y="56" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">POST /assist</text>
+  <text x="24" y="92" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">invoke_agent assist</text>
+  <text x="24" y="128" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">retrieval kb-consumer</text>
+  <text x="24" y="164" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">chat model-flash · 1</text>
+  <text x="24" y="200" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">execute_tool get_charges</text>
+  <text x="24" y="236" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">execute_tool · retry</text>
+  <text x="24" y="272" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">chat model-flash · 2</text>
+
+  <rect x="216" y="44" width="624" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="226" y="56" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">answer ready at 7.8 s</text>
+  <rect x="224" y="80" width="616" height="16" rx="3" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <rect x="224" y="116" width="120" height="16" rx="3" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="284" y="128" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">queue 1.5 s</text>
+  <rect x="344" y="116" width="24" height="16" rx="3" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <rect x="368" y="152" width="88" height="16" rx="3" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="436" y="164" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">1.1 s</text>
+  <rect x="456" y="188" width="160" height="16" rx="3" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="536" y="200" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">timeout 2.0 s</text>
+  <path d="M616,204 V232 H624" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar13c)"/>
+  <text x="606" y="236" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">backoff 0.2 s</text>
+  <rect x="632" y="224" width="24" height="16" rx="3" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="662" y="236" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">0.3 s</text>
+  <rect x="656" y="260" width="184" height="16" rx="3" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <rect x="726" y="260" width="4" height="16" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <text x="691" y="272" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">0.9 s</text>
+  <text x="785" y="272" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">stream 1.4 s</text>
+
+  <line x1="216" y1="292" x2="866" y2="292" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar13c)"/>
+  <line x1="216" y1="288" x2="216" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="296" y1="288" x2="296" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="376" y1="288" x2="376" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="456" y1="288" x2="456" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="536" y1="288" x2="536" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="616" y1="288" x2="616" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="696" y1="288" x2="696" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="776" y1="288" x2="776" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="856" y1="288" x2="856" y2="296" stroke="currentColor" stroke-width="1.3"/>
+  <text x="216" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0</text>
+  <text x="296" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1</text>
+  <text x="376" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2</text>
+  <text x="456" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3</text>
+  <text x="536" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">4</text>
+  <text x="616" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">5</text>
+  <text x="696" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">6</text>
+  <text x="776" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">7</text>
+  <text x="856" y="310" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">8 s</text>
+
+  <text x="24" y="340" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Typical first token: 2.4 s. On top of it: retrieval queue +1.5 · timeout and backoff +2.2 · cache miss +0.3 s.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The tail of the latency distribution is determined by waits and retries. On top of the typical 2.4 seconds to the first token, this suggestion spent another 4.0: a second and a half in the retrieval queue, 2.2 on the tool timeout with its backoff and 0.3 on a cache miss in the second model call. Without a separate span for every operation, the whole latency of this suggestion would have been attributed to the model.</figcaption>
+</figure>
+
+<p>The analysis of the trace points to two fixes, and neither of them changes the model. The two-second timeout of the billing tool amounts to 80% of the 2.5-second objective, so it is cut to 600 milliseconds, with a fallback to an answer without charges if the tool does not respond within that time. The retrieval queue comes from a connection pool shared with incident triage, and suggestion retrieval gets a pool of its own. The same SLO serves as the check of the fixes: the burn rate of the latency budget returns below one.</p>
+
+<div class="warn"><b>Common mistake</b>Alerting on the monthly total of spending. Such an alert fires when the money has already been spent and does not point to the cause. Cost per successful task is observed the same way as latency, through a histogram by feature and tenant and a burn-rate rule. With such monitoring an agent loop that has doubled the number of steps is detected within an hour.</div>
+
+<h3 id="s-13-8" data-level="2"><span class="num">13.8</span>On Google Cloud: Cloud Trace and Agent Runtime tracing</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Cloud Trace</span>
+  <span class="tag">Cloud Monitoring</span>
+  <span class="tag">Agent Runtime</span>
+  <span class="tag">BigQuery</span>
+</div>
+
+<p data-level="2">The chapter's trace model carries over to Google Cloud without conversion, because Cloud Trace accepts OpenTelemetry data: the tracer sends spans over OTLP to the Telemetry API, and they are stored in a format generally consistent with OTLP. According to the documentation as of September 2026, spans stay in the <code>_Trace</code> bucket for thirty days; this matches the trace retention of Orion's policy and does not match the retention of the cost ledger, which therefore cannot be kept in the trace store.<a class="src" href="https://docs.cloud.google.com/trace/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, Cloud Trace overview</a> Cloud Logging entries carry the <code>trace</code> and <code>spanId</code> fields, through which a log line is linked to a span.<a class="src" href="https://docs.cloud.google.com/logging/docs/reference/v2/rest/v2/LogEntry" target="_blank" rel="noreferrer">cloud.google.com, LogEntry</a> Cloud Monitoring supports SLOs and burn-rate alerts: the documentation advises starting with a fast-burn rule at ten times the baseline with a one- or two-hour lookback and a slow-burn rule at twice the baseline with a 24-hour lookback, and the lookback of such rules cannot exceed 24 hours.<a class="src" href="https://docs.cloud.google.com/stackdriver/docs/solutions/slo-monitoring/alerting-on-budget-burn-rate" target="_blank" rel="noreferrer">cloud.google.com, alerting on burn rate</a> Orion's three-day rule is therefore evaluated outside Cloud Monitoring, from the same per-minute run counters.</p>
+
+<p data-level="2">ADK creates OpenTelemetry spans for agent, model and tool calls, named <code>invoke_agent</code>, <code>call_llm</code>, <code>generate_content</code> and <code>execute_tool</code>, and exports them to Cloud Trace.<a class="src" href="https://adk.dev/integrations/cloud-trace/" target="_blank" rel="noreferrer">adk.dev, Cloud Trace</a> In Gemini Enterprise Agent Platform (formerly Vertex AI) the 2026 documentation calls the managed agent runtime Agent Runtime, while the environment variables and the deployment command keep the earlier name, Agent Engine. For an ADK agent, telemetry is enabled at deployment by the <code>GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY</code> variable, the latest generative AI semantic conventions by <code>OTEL_SEMCONV_STABILITY_OPT_IN</code>, and the recording of prompts, responses and user identifiers by a separate variable, <code>OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT</code>; without it, traces contain neither prompts nor responses.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/tracing" target="_blank" rel="noreferrer">cloud.google.com, agent tracing</a> For Orion the decision is taken once: content recording by the runtime is switched off in production, and the sampling of <a href="#s-13-6" data-secref="13.6">Section 13.6</a> is done by the platform's own collector processor. The managed runtime does not record the tenant and feature attributes, so the platform adds them with its own span processor at the agent's entry point.</p>
+
+<p data-level="2">The provider's invoice is available as a Cloud Billing export to BigQuery, and the standard export contains resource labels, project labels and system labels.<a class="src" href="https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-tables/standard-usage" target="_blank" rel="noreferrer">cloud.google.com, billing export</a> Custom labels can be attached to <code>generateContent</code> and <code>streamGenerateContent</code> calls; they are forwarded to billing and let costs be grouped in reports and in the export. The limits on labels determine their place in the architecture: up to 64 labels per call, lowercase keys and values of up to 63 characters, no more than a thousand unique values per key over the life of the billing account, beyond which the key may be dropped without notice, and no personal data. Labels reach billing only with pay-as-you-go consumption, and requests on the provisioned throughput of <a href="#ch-14" data-secref="14">Chapter 14</a> ignore them without notice.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/add-labels-to-api-calls" target="_blank" rel="noreferrer">cloud.google.com, call labels</a> Labels therefore carry only the tenant and the feature and serve to reconcile the cost ledger with the export by day, while the user and the agent step are recorded only in the cost ledger.</p>
+
+<div class="aside" data-level="2"><b>Comparison with other tools</b>Langfuse and Phoenix accept the same OpenTelemetry data, can be deployed inside the customer's perimeter and add to traces what Cloud Trace lacks: viewing of prompts and responses, annotation and evaluations on spans.<a class="src" href="https://arize.com/docs/phoenix" target="_blank" rel="noreferrer">arize.com, Phoenix</a> Using them changes two decisions. A tool that stores prompts and responses becomes a store of personal data in the sense of Section 13.6, with all its retention periods and access rights, and the platform team decides where to host it together with the data protection officer. Langfuse computes cost from its own model definitions with prices and accounts for cache reads separately, so for chargeback the source of truth remains the cost ledger reconciled with the invoice, and the cost shown in the tool serves debugging.<a class="src" href="https://langfuse.com/docs/observability/features/token-and-cost-tracking" target="_blank" rel="noreferrer">langfuse.com, token and cost tracking</a></div>
+
+<h3 id="s-13-9" data-level="3"><span class="num">13.9</span>In depth: cache amortisation, spans across boundaries, sampling and cost</h3>
+
+<h4 data-level="3">Who pays for the cache write</h4>
+
+<p data-level="3">The prefixes of all five Orion business units begin with a shared part: the security policy, the answer format and the definitions of the platform tools, about two thousand tokens in all. A cache entry is valid only for the model that created it, so the shared part is cached and amortised separately for each model. The write of this prefix to the cache is paid for by the first request that arrives after the entry expires, and the cheap reads go to everyone who follows. If the cost of the write is charged to its author, a business unit's bill starts to depend on chance: network operations, whose night-time request is the first to call the same model after a pause, pays for a cache that the consumer unit then uses.</p>
+
+<p data-level="3">The amortisation rule distributes the cost of the write among its readers. The write event carries a hash of the prefix, the read events carry the same hash, and when the lifetime of the entry closes, its cost is distributed among the tenants in proportion to the tokens of that prefix they read. The cost of a write that nobody read stays with its author, and such writes show that the cache lifetime does not match the request rate. The rest of a business unit's prefix from <a href="#s-4-5" data-secref="4.5">Section 4.5</a> needs no amortisation, since its author and its readers coincide.</p>
+
+<p data-level="3">An example shows the scale. Writing a prefix of 2,000 tokens at a write price of 0.15 dollars per million costs 0.0003 dollars; during the five-minute lifetime of the entry the consumer unit reads it 400 times, the enterprise unit 80 times and network operations 20 times. Charging the author makes network operations' share of the write cost twenty-five times its share of the reads, whereas amortisation assigns it 4%. Within one window the sums amount to fractions of a cent, but there are hundreds of windows a day, and every line of the bill that cannot be traced back to usage events becomes a subject of dispute between business units.</p>
+
+<h4 data-level="3">Spans across process and organisation boundaries</h4>
+
+<p data-level="3">Within one organisation, context propagation comes down to discipline: every process reads the headers and passes them on. Across an organisational boundary, for example to a partner's agent reached over the A2A of <a href="#s-8-7" data-secref="8.7">Section 8.7</a>, one side's adherence to this rule does not guarantee that the trace continues. The partner may accept <code>traceparent</code> and continue the trace on its side, but its spans remain in its own store, and Orion sees only its own client span with the duration and the task identifier.</p>
+
+<p data-level="3">Orion does not see the partner's internal steps, its retries or its token usage: the cost arrives as an invoice under the contract. What is kept are the duration of the call, its status, the identifier of the remote task in the attributes of the client span, and the contract price of the task, which the cost ledger records as an event with the model "partner". Baggage does not cross the boundary: the names of business units and user pseudonyms are Orion's internal information, and the outbound gateway strips the baggage and leaves only <code>traceparent</code>, so that during the analysis of a shared incident both parties can refer to the same trace.</p>
+
+<h4 data-level="3">Trace sampling distorts cost accounting</h4>
+
+<p data-level="3">Traces are expensive to store, and at half a million requests a day sampling is inevitable. Head sampling at 5% keeps every twentieth trace, and a cost ledger built from the stored spans contains 5% of the spending. Tail sampling that keeps errors and slow requests is biased towards expensive runs, so no multiplier restores the total from it.</p>
+
+<p data-level="3">Hence the rule: content and logs may be sampled, while every usage event is recorded. An event is emitted at the same point where the span closes and goes to the cost ledger as a separate stream before the sampling decision is made. There is a second consequence as well: under the OpenTelemetry conventions a model call span covers the logical operation with all of the client's automatic retries, while the provider bills every attempt. A usage event is therefore emitted for every attempt: otherwise client retries, which have no spans of their own in the tree, would not reach the ledger either, and the reconciliation would diverge by their share.</p>
+
+<h4 data-level="3">Tokens per second across streaming and batch</h4>
+
+<p data-level="3">A speed in output tokens per second is meaningful only for a streaming call, which has a moment of the first token. For a non-streaming call, dividing output tokens by the total duration mixes generation with input processing and queueing, and a model with a long input receives an understated speed. In batch mode the quantity does not apply: a batch returns hours later at a reduced price, and it is characterised by throughput in tokens per hour and by the price of a token.</p>
+
+<p data-level="3">Two sources of distortion remain even within streaming calls. Reasoning models produce reasoning tokens that count as output and are billed but are not shown in the stream, so the visible speed drops while the speed of generation stays the same. A speed measured by the client includes the network and proxy buffering; a speed measured by the server does not. The call mode, whether streaming, non-streaming or batch, is therefore a mandatory dimension of the metric, and speeds of different modes are not compared with one another.</p>
+
+<h4 data-level="3">The trace store as a personal data store</h4>
+
+<p data-level="3">Even with content recording switched off, a trace contains information about people. Tool arguments include account numbers, the text of a retrieval query repeats the subscriber's question, an error message quotes the input, and a conversation identifier ties all of this to a session. The OpenTelemetry conventions mark tool arguments and the retrieval query text as opt-in attributes, but instrumentation libraries and developers often enable them for the convenience of debugging.</p>
+
+<p data-level="3">The consequence for the architecture is that the trace store is designed as a personal data store from the first day. It is hosted in a region that satisfies the residency requirements of the case file, rights to read traces are granted the same way as rights to read the CRM, retention is limited to thirty days, and pseudonyms are built with a key that rotates. The selective storage of full text mentioned in <a href="#s-4-8" data-secref="4.8">Section 4.8</a> is kept apart from traces: it passes through the policy of Section 13.6, is kept for seven days in a store with separate access rights, and the span refers to it by identifier. A data subject's erasure request is fulfilled by deleting records by pseudonym in that store and by the expiry of the retention period in the trace store.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why can cost per business unit not be recovered at the end of the month from the provider's invoice and the logs if the tenant attribute was not written onto the spans?</summary>
+<div class="ans"><p>The provider's invoice contains totals by model and day, and the logs contain lines with no link to a request or a tenant. The link between token usage and its consumer exists only at the moment of the call, when the request context is known; if it is not written onto the span and into the usage event then, there is nothing to derive it from later.</p></div>
+</details>
+<details>
+<summary>Why may content and logs be sampled, but usage events never?</summary>
+<div class="ans"><p>A cost ledger built from a sample contains only a fraction of the spending, and tail sampling is also biased towards expensive runs, so no multiplier restores the total. A representative sample is enough for debugging; billing needs every unit of usage, including every retry attempt.</p></div>
+</details>
+<details>
+<summary>Why does a burn-rate rule need two windows?</summary>
+<div class="ans"><p>The long window proves that the burn matters for the budget and keeps isolated failures at low traffic from paging the on-call engineer. The short window confirms that the burn is continuing right now and clears the alert soon after a fix, even though the long window still remembers the outage.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>An agentic request is a tree of operations, and the evidence of its behaviour is a trace in which every model call, tool call and retrieval and every agent step is represented by a span with a duration, a status and token usage.</li>
+<li>Metrics that reflect the nature of language models, namely TTFT, stream speed, cost per request, cache hit ratio and steps per run, are stored as histograms with shared bounds and are not sampled, and percentiles are computed after merging.</li>
+<li>The tenant attribute is set at the gateway from the identity and propagates with the trace context; the cost ledger prices events by the price list in force on the date of the event and is reconciled with the provider's invoice.</li>
+<li>Logs always keep cost and latency, numbers and identifiers only as keyed pseudonyms, and content only in a redacted sample of traces; alerts are built on the error budget burn rate over two windows.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-3" data-secref="3">Chapter 3: tokens, latency and the price list</a>
+<a href="#ch-12" data-secref="12">Chapter 12: the evaluation that needs these traces</a>
+<a href="#ch-14" data-secref="14">Chapter 14: capacity and cost levers</a>
+</p>
+</div>
+</section>

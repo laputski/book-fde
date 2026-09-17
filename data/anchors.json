@@ -1,0 +1,373 @@
+{
+  "_comment": "Every external claim the prose relies on: the job posts the book is calibrated against, the series it belongs to, and the protocol and vendor documentation behind the Google Cloud sections. tools/check_drift.py verifies that each source is still reachable (and, for job posts, still published) and reminds when a source is older than review_after_days. The prose is never edited by automation.",
+  "review_after_days": 120,
+  "sources": [
+    {
+      "id": "google-staff-fde",
+      "kind": "job",
+      "url": "https://www.google.com/about/careers/applications/jobs/results/124220019683795654-staff-forward-deployed-engineer-genai-google-cloud",
+      "expect": "Staff Forward Deployed Engineer",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "0",
+        "A"
+      ],
+      "note": "Staff Forward Deployed Engineer, GenAI, Google Cloud (Warsaw)"
+    },
+    {
+      "id": "google-fde-manager",
+      "kind": "job-withdrawn",
+      "url": "https://www.google.com/about/careers/applications/jobs/results/133446172076319430-forward-deployed-engineering-manager-generative-ai-google-cloud",
+      "expect": "Forward Deployed Engineering Manager",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "0",
+        "A",
+        "E",
+        "18"
+      ],
+      "note": "Forward Deployed Engineering Manager, Generative AI, Google Cloud (Zürich). Read in full on 2026-09-13; on 2026-09-17 the page answers \"Job not found. This job may have been taken down.\" and no Wayback Machine copy exists. Appendices A and E state the withdrawal and keep the paraphrase of 2026-09-13; check_drift.py will report this post as no longer published until a replacement post is chosen. Replaced as the live calibration source by google-fde-manager-ai on 2026-09-17."
+    },
+    {
+      "id": "google-fde-manager-ai",
+      "kind": "job",
+      "url": "https://www.google.com/about/careers/applications/jobs/results/108515830395740870",
+      "expect": "Forward Deployed Engineering Manager",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "A",
+        "E"
+      ],
+      "note": "Forward Deployed Engineering Manager, AI, Google Cloud (Singapore). Read in full on 2026-09-17: the same five responsibilities and preferred qualifications as the withdrawn Zürich post, plus 'Experience in industry agentic transformation'."
+    },
+    {
+      "id": "ragworld",
+      "kind": "site",
+      "url": "https://ragworld.org",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "0",
+        "5",
+        "E"
+      ],
+      "note": "RAG World registry; the page title calls it a registry of retrieval-augmented generation technologies"
+    },
+    {
+      "id": "book-python",
+      "kind": "repo",
+      "url": "https://github.com/laputski/book-python",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "0",
+        "E"
+      ],
+      "note": "Advanced Python for RAG"
+    },
+    {
+      "id": "causa-rag",
+      "kind": "repo",
+      "url": "https://github.com/laputski/causa-rag",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "5",
+        "12",
+        "B",
+        "E"
+      ],
+      "note": "A diagnostic bench for RAG"
+    },
+    {
+      "id": "mcp-spec",
+      "kind": "docs",
+      "url": "https://modelcontextprotocol.io/specification/latest",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "4",
+        "6",
+        "7",
+        "13",
+        "17",
+        "B"
+      ],
+      "note": "Model Context Protocol specification; the latest page is revision 2026-07-28"
+    },
+    {
+      "id": "a2a-spec",
+      "kind": "docs",
+      "url": "https://a2a-protocol.org/latest/specification/",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "8",
+        "13",
+        "B"
+      ],
+      "note": "Agent2Agent protocol; latest released version 1.0.0"
+    },
+    {
+      "id": "adk-docs",
+      "kind": "docs",
+      "url": "https://adk.dev/",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "6",
+        "7",
+        "8",
+        "9",
+        "11",
+        "13",
+        "17",
+        "B"
+      ],
+      "note": "Google Agent Development Kit (Python, TypeScript, Go, Java, Kotlin); google.github.io/adk-docs redirects here"
+    },
+    {
+      "id": "agent-engine-docs",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/runtime",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "7",
+        "8",
+        "13",
+        "17",
+        "B"
+      ],
+      "note": "Agent Runtime of Gemini Enterprise Agent Platform (formerly Vertex AI Agent Engine); the API resource keeps the name ReasoningEngine. Previous URL .../gemini-enterprise-agent-platform/scale is the section index \"Scale your agents\""
+    },
+    {
+      "id": "gemini-api-docs",
+      "kind": "docs",
+      "url": "https://ai.google.dev/gemini-api/docs",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "3",
+        "4",
+        "11",
+        "B"
+      ],
+      "note": "Gemini API (called Gemini Developer API on the page comparing it with Gemini Enterprise Agent Platform)"
+    },
+    {
+      "id": "vertex-eval-docs",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/evaluation-overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "12",
+        "B"
+      ],
+      "note": "Gen AI evaluation service overview (page title as of 2026-09-17); the Agent Platform name-changes table lists the new name Gemini Enterprise Agent Platform Evals; old cloud.google.com/vertex-ai URL redirects here"
+    },
+    {
+      "id": "vpc-sc-docs",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/vpc-service-controls/docs/overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "2",
+        "3",
+        "10",
+        "17",
+        "B"
+      ],
+      "note": "VPC Service Controls; old cloud.google.com URL redirects here"
+    },
+    {
+      "id": "otel-genai",
+      "kind": "docs",
+      "url": "https://github.com/open-telemetry/semantic-conventions-genai",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "13",
+        "B"
+      ],
+      "note": "OpenTelemetry GenAI semantic conventions; the opentelemetry.io page now says Moved"
+    },
+    {
+      "id": "langgraph-docs",
+      "kind": "docs",
+      "url": "https://docs.langchain.com/oss/python/langgraph/overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "6",
+        "7",
+        "8",
+        "9",
+        "B"
+      ],
+      "note": "LangGraph overview; langchain-ai.github.io/langgraph/ now says \"Documentation has moved\" and redirects here"
+    },
+    {
+      "id": "gcp-agent-platform-launch",
+      "kind": "docs",
+      "url": "https://cloud.google.com/blog/products/ai-machine-learning/introducing-gemini-enterprise-agent-platform",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "17",
+        "B"
+      ],
+      "note": "Google Cloud blog, 22 April 2026: Gemini Enterprise Agent Platform introduced as the evolution of Vertex AI"
+    },
+    {
+      "id": "gcp-agent-platform-name-changes",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "5",
+        "7",
+        "9",
+        "B",
+        "E"
+      ],
+      "note": "Gemini Enterprise Agent Platform name changes (previous and new names of Vertex AI products); page last updated 2026-09-16"
+    },
+    {
+      "id": "gcp-data-residency",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/data-residency",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "2",
+        "3",
+        "10",
+        "B"
+      ],
+      "note": "Agent Platform data residency: data at rest stays in the chosen location, ML processing location set by the endpoint, global endpoints give no residency guarantee"
+    },
+    {
+      "id": "gcp-context-caching",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "3",
+        "4",
+        "B"
+      ],
+      "note": "Context caching overview: implicit (default, 90% discount on cached tokens) and explicit caching (storage cost)"
+    },
+    {
+      "id": "gcp-batch-inference",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/batch-inference",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "3",
+        "14",
+        "B"
+      ],
+      "note": "Batch inference with Gemini (formerly batch prediction), 50% discount against real-time inference"
+    },
+    {
+      "id": "gcp-provisioned-throughput",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput/overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "3",
+        "13",
+        "14",
+        "17",
+        "B"
+      ],
+      "note": "Provisioned Throughput overview: fixed-cost, fixed-term subscription reserving throughput"
+    },
+    {
+      "id": "gcp-sessions",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/sessions",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "7",
+        "8",
+        "9",
+        "B"
+      ],
+      "note": "Agent Platform Sessions overview (formerly Vertex AI Agent Engine Sessions)"
+    },
+    {
+      "id": "gcp-memory-bank",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "4",
+        "7",
+        "9",
+        "B"
+      ],
+      "note": "Agent Platform Memory Bank (formerly Vertex AI Agent Engine Memory Bank)"
+    },
+    {
+      "id": "gcp-agent-search",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/vertex-ai-search",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "5",
+        "B"
+      ],
+      "note": "About Agent Search (formerly Vertex AI Search); data source access control is Preview (generative-ai-app-builder/docs/data-source-access-control, read 2026-09-17)"
+    },
+    {
+      "id": "gcp-vector-search",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/build/vector-search/overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "5",
+        "17",
+        "B"
+      ],
+      "note": "Vector Search on Agent Platform; Agent Retrieval (formerly Vector Search 2.0) at .../build/vector-search-2/overview"
+    },
+    {
+      "id": "gcp-model-armor",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/model-armor/overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "10",
+        "B"
+      ],
+      "note": "Model Armor overview: screening of LLM prompts and responses"
+    },
+    {
+      "id": "gcp-cloud-trace",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/trace/docs/overview",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "13",
+        "B"
+      ],
+      "note": "Cloud Trace overview"
+    },
+    {
+      "id": "gcp-distributed-cloud",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/distributed-cloud/docs",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "2",
+        "10",
+        "14",
+        "17",
+        "B"
+      ],
+      "note": "Google Distributed Cloud: connected, air-gapped, software only; Gemini on Distributed Cloud connected"
+    },
+    {
+      "id": "gcp-well-architected",
+      "kind": "docs",
+      "url": "https://docs.cloud.google.com/architecture/framework",
+      "checked_at": "2026-09-17",
+      "chapters": [
+        "17",
+        "B"
+      ],
+      "note": "Google Cloud Well-Architected Framework: six pillars and cross-pillar perspectives including AI and ML"
+    }
+  ]
+}

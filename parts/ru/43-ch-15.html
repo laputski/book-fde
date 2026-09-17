@@ -1,0 +1,1068 @@
+<!-- ────────────────────────── ГЛАВА 15 ────────────────────────── -->
+<section class="chapter" id="ch-15">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава пятнадцатая</p>
+    <span class="strata" role="img" aria-label="Слои D и F: оценка и наблюдаемость, люди и процесс">
+      <i></i><i></i><i></i><i data-s="D"></i><i></i><i data-s="F"></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-15"><span class="num">15</span>Надёжность, инциденты и отладка в production</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>отнести отказ AI-системы к классу симптома и найти изменившийся артефакт раньше дефекта;</li>
+<li>спроектировать лестницу деградации с выключателями, критериями входа и выхода;</li>
+<li>выпускать и откатывать модель, промпт, снимок индекса, схемы инструментов и конфигурацию одним release bundle;</li>
+<li>воспроизвести плохой ответ по трассе и найти виновный компонент бисекцией;</li>
+<li>вести коммуникацию с заказчиком во время инцидента и превращать постмортем в регрессионные примеры и детекторы.</li>
+</ul>
+</div>
+
+<h3 id="s-15-1"><span class="num">15.1</span>Задача: 09:10 в Meridian</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-2" data-secref="G.2">Досье CF2 · Meridian Health Network</a></span>
+  <span class="tag">редакции руководств</span>
+  <span class="tag">обход в 09:50</span>
+  <span class="tag">клиническая безопасность</span>
+  <span>сеть клиник</span>
+</div>
+
+<p>В понедельник в 09:10 заведующая терапевтическим отделением одной из клиник Meridian сообщает, что ассистент по руководствам из <a href="#ch-5" data-secref="5">главы 5</a> на вопросы о дозировании ссылается на редакцию 7, хотя действует редакция 8. Через пять минут такие же сообщения приходят из двух других клиник. В 09:50 начинается обход, на котором врачи сверяют назначения с ассистентом.</p>
+
+<p>Панели наблюдаемости из <a href="#ch-13" data-secref="13">главы 13</a> не показывают отклонений: ошибок нет, задержка обычная. Накануне в 22:00 вышла версия, прошедшая ворота релиза <a href="#ch-12" data-secref="12">главы 12</a>. Инцидент обнаружил клиницист.</p>
+
+<p>За сорок минут нужно убрать из ответов ссылки на отменённую редакцию, найти изменение и сказать заказчику, что известно. Затем нужно вернуть полный сервис с доказательством исправления. После разбора повторение такого инцидента должно обнаруживаться без клинициста.</p>
+
+<h3 id="s-15-2"><span class="num">15.2</span>Почему AI-системы отказывают по-новому</h3>
+
+<p>Методы классической надёжности разработаны для видимых отказов: процесс завершился аварийно, запрос не уложился в таймаут. Отказ AI-системы может выглядеть так: сервис работает, код ответа 200, а содержание ответа неверно. Пороги из <a href="#s-13-7" data-secref="13.7">раздела 13.7</a> такой отказ не обнаруживают, потому что измеряют факт ответа системы и не проверяют его содержание.</p>
+
+<p>Источники отказов тоже новые: обновление весов за стабильным alias из <a href="#s-3-8" data-secref="3.8">раздела 3.8</a>, правка промпта, ночная переиндексация из <a href="#s-5-8" data-secref="5.8">раздела 5.8</a>, новая схема инструмента. Код сервиса при этом не меняется. Меняется артефакт, от которого зависит содержание ответа.</p>
+
+<dl class="def">
+<dt>Тихая регрессия качества <span class="en">(silent quality regression)</span></dt>
+<dd>Ухудшение содержания ответов, при котором доступность, задержка и доля ошибок остаются в пределах целевых уровней. Её обнаруживают только проверки содержания: пробы с известным ответом, оценка выборки трасс, сообщения пользователей.</dd>
+<dt>Золотая проба <span class="en">(golden probe)</span></dt>
+<dd>Запрос с заранее известным правильным ответом, который выполняется по расписанию тем же путём, что и запросы пользователей. Проба сравнивает существенные свойства ответа, например документ и редакцию цитаты, поскольку формулировка ответа меняется от прогона к прогону.</dd>
+</dl>
+
+<p>Надёжность AI-системы в этой главе означает четыре свойства: обнаружение отказа по содержанию ответов, безопасную деградацию, откат всех артефактов одним действием и регулярную коммуникацию с заказчиком через одного ответственного.</p>
+
+<h3 id="s-15-3"><span class="num">15.3</span>Таксономия отказов</h3>
+
+<p>Отказы делятся на пять классов по симптому, то есть по тому, что пострадало, поскольку в момент жалобы причина ещё неизвестна. У каждого класса есть артефакты, изменение которых его обычно вызывает.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Класс</th><th>Симптом</th><th>Что обычно изменилось</th><th>Чем обнаруживается</th></tr></thead>
+<tbody>
+<tr><td>Качество</td><td>неверный ответ при коде 200</td><td>промпт, модель, снимок индекса, данные источника</td><td>золотые пробы, оценка трасс</td></tr>
+<tr><td>Задержка</td><td>медленный первый токен, лишние шаги</td><td>модель, конфигурация, схема инструмента</td><td>гистограммы из <a href="#s-13-4" data-secref="13.4">раздела 13.4</a></td></tr>
+<tr><td>Доступность</td><td>ошибки и таймауты</td><td>квота поставщика, конфигурация</td><td>алерты по бюджету ошибок</td></tr>
+<tr><td>Стоимость</td><td>выросла стоимость успешной задачи</td><td>промпт, модель, кэш</td><td>книга затрат из <a href="#s-13-5" data-secref="13.5">раздела 13.5</a></td></tr>
+<tr><td>Безопасность</td><td>ответ вне политики</td><td>промпт, схема инструмента, права в индексе</td><td>фильтры политики, аудит</td></tr>
+</tbody></table></div>
+
+<p>Поэтому триаж начинается с вопроса «что изменилось» и только затем переходит к вопросу «что сломалось», поскольку изменение находится быстрее, чем дефект. Изменение ищется в разнице манифестов активного и предыдущего выпуска и в атрибутах трассы плохого ответа. Пустая разница манифестов означает, что изменение пришло снаружи.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Дерево триажа: пять классов симптомов сходятся к вопросу, изменился ли bundle; если да, трасса и бисекция указывают компонент манифеста, и любой такой компонент устраняется откатом всего bundle к проверенному; если нет, изменение пришло снаружи, модель за alias закрепляется, а индекс при сменившихся данных источника замораживается; пока идёт триаж, возможность деградирует сразу" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar15a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">СИМПТОМ</text>
+  <text x="220" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЧТО ИЗМЕНИЛОСЬ</text>
+  <text x="450" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">КОМПОНЕНТ BUNDLE</text>
+  <text x="690" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">МИТИГАЦИЯ</text>
+
+  <rect x="20" y="40" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="58" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">качество</text>
+  <text x="32" y="74" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">200 OK, ответ неверен</text>
+  <rect x="20" y="92" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="110" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">задержка</text>
+  <text x="32" y="126" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">первый токен, p95</text>
+  <rect x="20" y="144" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="162" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">доступность</text>
+  <text x="32" y="178" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ошибки, таймауты</text>
+  <rect x="20" y="196" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="214" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">стоимость</text>
+  <text x="32" y="230" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">токены на задачу</text>
+  <rect x="20" y="248" width="156" height="42" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="32" y="266" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">безопасность</text>
+  <text x="32" y="282" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">политика, данные</text>
+
+  <path d="M176,61 H192 M176,113 H192 M176,165 H192 M176,217 H192 M176,269 H192 M192,61 V269" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="192" y1="165" x2="212" y2="165" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+
+  <rect x="220" y="40" width="164" height="56" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="302" y="63" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">какой компонент?</text>
+  <text x="302" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">трасса, бисекция</text>
+  <rect x="220" y="137" width="164" height="56" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="302" y="160" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">bundle изменился?</text>
+  <text x="302" y="179" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">diff манифестов</text>
+  <rect x="220" y="234" width="164" height="56" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="302" y="257" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">изменение снаружи</text>
+  <text x="302" y="276" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">поставщик, источник</text>
+
+  <line x1="302" y1="137" x2="302" y2="102" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <text x="312" y="124" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+  <line x1="302" y1="193" x2="302" y2="228" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <text x="312" y="216" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+
+  <rect x="450" y="36" width="180" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="462" y="52" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">модель</text>
+  <text x="462" y="67" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">model_version</text>
+  <rect x="450" y="82" width="180" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="462" y="98" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">промпт</text>
+  <text x="462" y="113" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">prompt_sha</text>
+  <rect x="450" y="128" width="180" height="38" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="462" y="144" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">снимок индекса</text>
+  <text x="462" y="159" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">index_snapshot</text>
+  <rect x="450" y="174" width="180" height="38" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="462" y="190" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">схемы инструментов</text>
+  <text x="462" y="205" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">tool_schemas</text>
+  <rect x="450" y="220" width="180" height="38" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="462" y="236" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">конфигурация</text>
+  <text x="462" y="251" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">config_sha</text>
+
+  <text x="450" y="284" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ВНЕ BUNDLE</text>
+  <rect x="450" y="296" width="180" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.5"/>
+  <text x="462" y="312" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">модель за alias</text>
+  <text x="462" y="327" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">веса сменил поставщик</text>
+  <rect x="450" y="342" width="180" height="38" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.5"/>
+  <text x="462" y="358" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">данные источника</text>
+  <text x="462" y="373" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">документы, права</text>
+
+  <path d="M384,68 H412 M412,55 V239" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <path d="M412,55 H442 M412,101 H442 M412,147 H442 M412,193 H442 M412,239 H442" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <path d="M384,262 H412 V361" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="412" y1="315" x2="442" y2="315" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <line x1="412" y1="361" x2="442" y2="361" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+
+  <path d="M630,55 H656 M630,101 H656 M630,147 H656 M630,193 H656 M630,239 H656 M656,55 V239" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <line x1="656" y1="147" x2="682" y2="147" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <rect x="690" y="117" width="174" height="60" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="777" y="142" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">откат всего bundle</text>
+  <text x="777" y="162" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">к проверенному</text>
+  <text x="777" y="198" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">частичный откат запрещён</text>
+
+  <line x1="630" y1="315" x2="682" y2="315" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <rect x="690" y="296" width="174" height="38" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="702" y="312" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">закрепить версию</text>
+  <text x="702" y="327" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">раздел 3.8</text>
+  <line x1="630" y1="361" x2="682" y2="361" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15a)"/>
+  <rect x="690" y="342" width="174" height="38" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="702" y="358" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">заморозить индекс</text>
+  <text x="702" y="373" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">раздел 5.8</text>
+
+  <path d="M192,269 V350 H184" fill="none" stroke="currentColor" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar15a)"/>
+  <text x="204" y="354" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">пока идёт триаж</text>
+  <rect x="20" y="326" width="156" height="48" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="32" y="346" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">деградировать сразу</text>
+  <text x="32" y="363" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">раздел 15.4</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Триаж выясняет, что изменилось, до того как выяснять, что сломалось. Разница манифестов делит возможные причины на компоненты bundle, которые устраняются откатом всего bundle, и изменения снаружи, которые устраняются закреплением версии и заморозкой индекса; деградация включается сразу, до результата любой из ветвей.</figcaption>
+</figure>
+
+<p>Разница манифестов существует, только если выпуск описан манифестом и активируется целиком.</p>
+
+<dl class="def">
+<dt>Release bundle, пакет выпуска <span class="en">(release bundle)</span></dt>
+<dd>Неизменяемая единица выпуска, объединяющая всё, от чего зависит ответ: закреплённую версию модели, хеш промпта, снимок индекса с версией построившего его парсера, версии схем инструментов и хеш конфигурации. Bundle описывается манифестом, проходит ворота релиза целиком и активируется или откатывается одним переключением.</dd>
+</dl>
+
+<p>На вопрос «что было активно в 09:10» реестр ниже отвечает по журналу активаций; без bundle ответить на него нельзя.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы выпускать изменения">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="16">
+      <figcaption><span class="file">naive_deploy.py</span></figcaption>
+      <pre><code>import hashlib
+
+CONFIG: dict[str, object] = {
+    "model": "model-pro",                          # alias: веса за ним меняет поставщик
+    "prompt": "Отвечай по руководствам и называй редакцию источника.",
+    "index": "guidelines-live",                    # имя живого индекса, а не снимок
+    "temperature": 0.2,
+}
+CHANGES: list[str] = []
+
+
+def edit(key: str, value: object) -&gt; None:
+    CONFIG[key] = value                            # прежнее значение потеряно
+    CHANGES.append(key)                            # ни времени, ни автора, ни значения
+
+
+def fingerprint() -&gt; str:
+    raw = "|".join(f"{key}={CONFIG[key]}" for key in sorted(CONFIG))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+
+
+if __name__ == "__main__":
+    friday = fingerprint()
+    edit("prompt", "Кратко: доза, кратность, источник. Пример: «G-12, редакция 7, раздел 4.2».")
+    edit("temperature", 0.0)
+    edit("temperature", 0.2)                       # «вернули как было»
+    # ночью переиндексация заменила содержимое guidelines-live, словарь этого не видит
+    monday = fingerprint()
+    assert monday != friday                        # поведение другое
+    assert CONFIG["index"] == "guidelines-live"    # смена корпуса не оставила следа
+    assert CHANGES == ["prompt", "temperature", "temperature"]      # когда и что именно, неизвестно
+    assert "Отвечай по руководствам" not in str(CONFIG["prompt"])  # пятничный промпт не вернуть
+    print("пятничное состояние потеряно, жалобу в 09:10 не с чем сопоставить")</code></pre>
+    </figure>
+    <p>Правка на месте стирает прежнее значение. Журнал хранит ключи без времени, и жалобу в 09:10 не с чем сопоставить. Имя индекса осталось прежним после смены содержимого.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">release_bundle.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import hashlib
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from pydantic import BaseModel, ConfigDict
+
+
+def sha(text: str) -&gt; str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+class Manifest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    model_version: str                              # закреплённая версия, не alias
+    prompt_sha: str                                 # хеш содержимого промпта
+    index_snapshot: str                             # неизменяемый снимок, не имя индекса
+    parser_version: str                             # парсер PDF, построивший снимок
+    tool_schemas: tuple[tuple[str, str], ...]       # (инструмент, хеш схемы)
+    config_sha: str
+
+    def bundle_id(self) -&gt; str:
+        return "b-" + sha(self.model_dump_json())
+
+    def diff(self, other: Manifest) -&gt; list[str]:
+        mine, theirs = self.model_dump(), other.model_dump()
+        return sorted(key for key in mine if mine[key] != theirs[key])
+
+
+@dataclass
+class Registry:
+    now: Callable[[], str]
+    bundles: dict[str, Manifest] = field(default_factory=dict)
+    gate: dict[str, bool] = field(default_factory=dict)             # итог ворот оценки
+    active: str = ""
+    history: list[tuple[str, str, str]] = field(default_factory=list)   # (когда, было, стало)
+
+    def register(self, manifest: Manifest) -&gt; str:
+        self.bundles[manifest.bundle_id()] = manifest
+        return manifest.bundle_id()
+
+    def record_gate(self, bundle_id: str, passed: bool) -&gt; None:
+        self.gate[bundle_id] = passed
+
+    def activate(self, bundle_id: str) -&gt; None:
+        if self.gate.get(bundle_id) is not True:
+            raise PermissionError(f"{bundle_id}: комбинация не проходила ворота оценки")
+        self.history.append((self.now(), self.active, bundle_id))
+        self.active = bundle_id                     # одно присваивание: все компоненты сразу
+
+    def rollback(self) -&gt; str:
+        previous = self.history[-1][1]
+        self.activate(previous)
+        return previous
+
+    def active_at(self, moment: str) -&gt; str:
+        switched = [to for when, _, to in self.history if when &lt;= moment]
+        return switched[-1] if switched else ""
+
+
+if __name__ == "__main__":
+    clock = {"t": "2026-09-12T22:00"}
+    reg = Registry(now=lambda: clock["t"])
+    old_prompt = "Отвечай по руководствам и называй редакцию источника."
+    new_prompt = "Кратко: доза, кратность, источник. Пример: «G-12, редакция 7, раздел 4.2»."
+    r118 = Manifest(model_version="model-pro-2026-06-01", prompt_sha=sha(old_prompt),
+                    index_snapshot="snap-2026-09-12", parser_version="pdfparse-2.8",
+                    tool_schemas=(("search_guidelines", sha("q: str, dept: str")),),
+                    config_sha=sha("temperature=0.2"))
+    good = reg.register(r118)
+    reg.record_gate(good, passed=True)
+    reg.activate(good)
+
+    clock["t"] = "2026-09-13T22:00"
+    r119 = r118.model_copy(update={"prompt_sha": sha(new_prompt), "index_snapshot": "snap-2026-09-13"})
+    bad = reg.register(r119)
+    reg.record_gate(bad, passed=True)               # в наборе нет вопросов по редакции 8
+    reg.activate(bad)
+
+    assert reg.active_at("2026-09-14T09:10") == bad
+    assert reg.bundles[bad].diff(reg.bundles[good]) == ["index_snapshot", "prompt_sha"]
+
+    mixed = reg.register(r119.model_copy(update={"prompt_sha": sha(old_prompt)}))
+    try:
+        reg.activate(mixed)                         # частичный откат: вернуть только промпт
+        raise AssertionError("непроверенная комбинация активировалась")
+    except PermissionError:
+        pass
+
+    clock["t"] = "2026-09-14T10:05"
+    assert reg.rollback() == good and reg.active == good
+    assert reg.bundles[reg.active].diff(r118) == []         # все компоненты вернулись вместе
+    assert reg.active_at("2026-09-14T09:10") == bad         # история не переписана
+    print("bundle переключается и откатывается целиком, непроверенная смесь отвергнута")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="index_snapshot: str">строка 18</span><p>Снимок назван идентификатором неизменяемой копии. Имя индекса, в который пишет ночная переиндексация, для этого не подходит: через сутки оно указывает на другой корпус.</p></div>
+        <div><span class="at" data-anchor="self.active = bundle_id">строка 50</span><p>Переключение сводится к одному присваиванию: нет момента, когда промпт уже новый, а индекс ещё старый. Обработчик читает активный bundle один раз и пишет его идентификатор в трассу.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается адресуемости: у продуманного состояния есть идентификатор и журнал активаций.</p>
+    <p>Второе различие касается единицы отката: наивный откат возвращает ключ, если кто-то помнит значение, продуманный возвращает все компоненты сразу.</p>
+    <p>Третье различие касается предмета проверки: ворота оценивают комбинацию, и реестр не активирует комбинацию, которую ворота не оценивали.</p>
+  </div>
+</div>
+
+<p>В Meridian триаж занял восемь минут. Активный в 09:10 bundle R-119 отличался от R-118 хешем промпта и снимком индекса. Трассы показали фрагменты редакции 8 в выдаче поиска, и под подозрением оказался промпт: его новый пример ответа был составлен по редакции 7, и модель переносила оттуда номер редакции.</p>
+
+<h3 id="s-15-4"><span class="num">15.4</span>Лестница деградации</h3>
+
+<p>Пока причина не найдена, каждый ответ несёт тот же риск. Остановка сервиса лишает врачей и исправной части: поиск в Meridian работал верно, ошибалась генерация. Безопасная деградация отключает ненадёжную часть и оставляет надёжную.</p>
+
+<dl class="def">
+<dt>Лестница деградации <span class="en">(degradation ladder)</span></dt>
+<dd>Упорядоченный набор режимов одной возможности, в котором каждая следующая ступень зависит от меньшего числа компонентов. Вниз система переходит по заранее записанному критерию входа, вверх только по доказательству, которого требует критерий выхода.</dd>
+<dt>Выключатель <span class="en">(kill switch)</span></dt>
+<dd>Флаг, изменяемый во время работы без выкладки кода, который переводит конкретную возможность на заданную ступень. Каждое переключение попадает в журнал аудита с временем, автором и причиной.<a class="src" href="https://martinfowler.com/articles/feature-toggles.html" target="_blank" rel="noreferrer">Hodgson, Feature Toggles, 2017</a></dd>
+</dl>
+
+<p>Лестница ответов о дозировании в Meridian имеет четыре ступени. Ступень 0 означает полный агент, ступень 1 ответ по источникам, то есть дословные фрагменты с цитатами без генерации. Ступень 2 показывает список документов, ступень 3 уведомление и маршрут к дежурному специалисту.</p>
+
+<p>Критерии записаны до инцидента: ступень 1 включается по пробам или выключателем, ступень 2 по полноте поиска, ступень 3 по ошибкам поиска. Подъём идёт по одной ступени после трёх зелёных прогонов подряд. К полному агенту нужен ещё чистый прогон трасс инцидента. Прогоны для выхода запускаются один за другим, без ожидания расписания проб.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Автомат лестницы деградации из четырёх ступеней сверху вниз: полный агент, ответ по источникам, результаты поиска, уведомление с маршрутом к человеку; справа стрелки вниз с критериями входа по пробам, полноте и ошибкам поиска, слева пунктирные стрелки вверх по одной ступени после трёх зелёных прогонов подряд, а выключатель ведёт от полного агента в обход всех ступеней к нижней" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar15b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="270" y="52" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ВЫХОД ПО ДОКАЗАТЕЛЬСТВУ</text>
+  <text x="602" y="52" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ВХОД ПО КРИТЕРИЮ</text>
+
+  <rect x="330" y="60" width="220" height="52" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="440" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">0 · полный агент</text>
+  <text x="440" y="101" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">генерация и инструменты</text>
+  <rect x="330" y="150" width="220" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="440" y="172" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">1 · ответ по источникам</text>
+  <text x="440" y="191" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">дословные фрагменты, цитаты</text>
+  <rect x="330" y="240" width="220" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="440" y="262" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">2 · результаты поиска</text>
+  <text x="440" y="281" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">список документов</text>
+  <rect x="330" y="330" width="220" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="440" y="352" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">3 · уведомление и человек</text>
+  <text x="440" y="371" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">маршрут к дежурному</text>
+
+  <g data-step="1" data-caption="Вниз по критерию входа: каждая ступень опирается на меньшее число компонентов, и сигнал о неисправности компонента переводит возможность на ступень, которая от него не зависит.">
+    <path d="M550,98 H590 V164 H558" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <path d="M550,188 H590 V254 H558" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <path d="M550,278 H590 V344 H558" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <text x="602" y="127" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">генерация под сомнением</text>
+    <text x="602" y="143" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">пробы &lt; 0.95</text>
+    <text x="602" y="217" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">поиск под сомнением</text>
+    <text x="602" y="233" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">полнота &lt; 0.85</text>
+    <text x="602" y="307" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">поиск недоступен</text>
+    <text x="602" y="323" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ошибки &gt; 0.05</text>
+  </g>
+
+  <g data-step="2" data-caption="Выключатель переводит возможность через несколько ступеней без выкладки и задаёт наивысшую ступень, выше которой сигналы возможность не поднимают.">
+    <path d="M500,60 V30 H840 V370 H558" fill="none" stroke="var(--sF)" stroke-width="1.4" marker-end="url(#ar15b)"/>
+    <text x="670" y="22" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">выключатель: через ступени, без выкладки</text>
+  </g>
+
+  <g data-step="3" data-caption="Вверх только по доказательству и только на одну ступень: три зелёных прогона подряд, а для полного агента ещё и трассы инцидента без ошибки.">
+    <path d="M330,164 H280 V98 H322" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar15b)"/>
+    <path d="M330,254 H280 V188 H322" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar15b)"/>
+    <path d="M330,344 H280 V278 H322" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar15b)"/>
+    <text x="268" y="127" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">пробы и трассы инцидента</text>
+    <text x="268" y="143" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3 зелёных прогона подряд</text>
+    <text x="268" y="217" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">полнота восстановлена</text>
+    <text x="268" y="233" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3 прогона подряд</text>
+    <text x="268" y="307" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">поиск отвечает</text>
+    <text x="268" y="323" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3 прогона подряд</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Лестница несимметрична: вниз система идёт сразу и через ступени, по записанному критерию или выключателю, а вверх только по одной ступени и только с доказательством, потому что ошибочный подъём снова выдаёт клиницистам непроверенные ответы.</figcaption>
+</figure>
+
+<p>В Meridian выключатель перевёл ответы о дозировании на ступень 1 в 09:22. Сводки по протоколам остались на ступени 0: выключатели заведены для каждой возможности отдельно.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">kill_switch.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import IntEnum
+
+PROBES_MIN = 0.95           # доля золотых проб с верным отпечатком
+RECALL_MIN = 0.85           # полнота поиска на контрольных вопросах
+SEARCH_ERRORS_MAX = 0.05    # доля ошибок сервиса поиска
+
+
+class Rung(IntEnum):
+    FULL_AGENT = 0
+    RETRIEVAL_ONLY = 1
+    SEARCH_RESULTS = 2
+    STATIC_NOTICE = 3
+
+
+@dataclass(frozen=True)
+class Signals:
+    probe_pass_rate: float
+    retrieval_recall: float
+    search_error_rate: float
+    replay_clean: bool          # трассы инцидента больше не дают ошибки
+
+
+@dataclass(frozen=True)
+class AuditEvent:
+    at: float
+    capability: str
+    before: Rung
+    after: Rung
+    actor: str
+    reason: str
+
+
+def entry_rung(s: Signals) -&gt; Rung:
+    """Критерии входа: самая высокая ступень, которую допускают сигналы."""
+    if s.search_error_rate &gt; SEARCH_ERRORS_MAX:
+        return Rung.STATIC_NOTICE
+    if s.retrieval_recall &lt; RECALL_MIN:
+        return Rung.SEARCH_RESULTS
+    if s.probe_pass_rate &lt; PROBES_MIN:
+        return Rung.RETRIEVAL_ONLY
+    return Rung.FULL_AGENT
+
+
+@dataclass
+class CapabilitySwitch:
+    capability: str
+    now: Callable[[], float]
+    exit_runs: int = 3                              # зелёных прогонов подряд для подъёма
+    rung: Rung = Rung.FULL_AGENT
+    forced: Rung = Rung.FULL_AGENT                  # наивысшая ступень, разрешённая человеком
+    green: int = 0
+    audit: list[AuditEvent] = field(default_factory=list)
+
+    def _move(self, to: Rung, actor: str, reason: str) -&gt; None:
+        self.audit.append(AuditEvent(self.now(), self.capability, self.rung, to, actor, reason))
+        self.rung, self.green = to, 0
+
+    def kill(self, to: Rung, actor: str, reason: str) -&gt; None:
+        self.forced = to
+        if to &gt; self.rung:
+            self._move(to, actor, reason)
+
+    def release(self, actor: str) -&gt; None:
+        self.audit.append(AuditEvent(self.now(), self.capability, self.rung, self.rung,
+                                     actor, "выключатель снят, подъём только по сигналам"))
+        self.forced = Rung.FULL_AGENT
+
+    def evidence(self, s: Signals) -&gt; bool:
+        """Доказательство подъёма: к полному агенту ещё и чистые трассы инцидента."""
+        return s.replay_clean or self.rung &gt; Rung.RETRIEVAL_ONLY
+
+    def observe(self, s: Signals) -&gt; Rung:
+        floor = max(entry_rung(s), self.forced)
+        if floor &gt; self.rung:
+            self._move(floor, "auto", f"вход: сигналы требуют ступень {floor.value}")
+        elif floor &lt; self.rung and self.evidence(s):
+            self.green += 1
+            if self.green &gt;= self.exit_runs:        # выход: по одной ступени за раз
+                self._move(Rung(self.rung - 1), "auto", f"выход: {self.exit_runs} зелёных прогона")
+        else:
+            self.green = 0
+        return self.rung
+
+
+if __name__ == "__main__":
+    clock = {"t": 9 * 3600 + 22 * 60}               # 09:22 в секундах от полуночи
+    dosing = CapabilitySwitch("dosing_answers", now=lambda: clock["t"])
+    summaries = CapabilitySwitch("protocol_summaries", now=lambda: clock["t"])
+    dosing.kill(Rung.RETRIEVAL_ONLY, "дежурный инженер", "цитаты редакции 7 вместо 8")
+    assert dosing.rung is Rung.RETRIEVAL_ONLY and summaries.rung is Rung.FULL_AGENT
+
+    healthy = Signals(probe_pass_rate=1.0, retrieval_recall=0.93, search_error_rate=0.0,
+                      replay_clean=True)
+    for _ in range(5):
+        dosing.observe(healthy)
+    assert dosing.rung is Rung.RETRIEVAL_ONLY       # выключатель держит, пока его не сняли
+
+    clock["t"] += 60 * 60
+    dosing.release("дежурный инженер")
+    dosing.observe(healthy)
+    dosing.observe(Signals(1.0, 0.93, 0.0, replay_clean=False))     # без доказательства: сброс
+    dosing.observe(healthy)
+    dosing.observe(healthy)
+    assert dosing.rung is Rung.RETRIEVAL_ONLY
+    assert dosing.observe(healthy) is Rung.FULL_AGENT
+
+    assert dosing.observe(Signals(1.0, 0.93, 0.2, replay_clean=True)) is Rung.STATIC_NOTICE
+    assert [e.after for e in dosing.audit] == [Rung.RETRIEVAL_ONLY, Rung.RETRIEVAL_ONLY,
+                                               Rung.FULL_AGENT, Rung.STATIC_NOTICE]
+    assert dosing.audit[0].at == 9 * 3600 + 22 * 60 and dosing.audit[0].actor == "дежурный инженер"
+    print("вниз по критерию сразу, вверх по одной ступени и только с доказательством")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="floor = max(entry_rung(s), self.forced)">строка 77</span><p>Выключатель ограничивает подъём: возможность не поднимается выше ступени, заданной человеком, а сигналы по-прежнему могут опустить её ниже. Поэтому человек может запретить подъём, но не может удержать возможность на ступени, которую сигналы признали опасной.</p></div>
+  <div><span class="at" data-anchor="elif floor &lt; self.rung and self.evidence(s):">строка 80</span><p>Подъём к полному агенту требует двух доказательств: сигналы допускают ступень выше, и трассы инцидента больше не дают ошибки. Прогон без второго условия сбрасывает счёт; нижним ступеням достаточно сигналов.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Проектировать деградацию во время инцидента. Ступень, которую ни разу не включали, отказывает при первом включении: уведомление ссылается на удалённую страницу, режим фрагментов не проходит проверку прав. Каждая ступень включается на учениях до выхода в production.</div>
+
+<div class="note" data-level="2">Переключение выключателя проходит аудит, но не ворота релиза: каждая ступень проверена заранее как режим bundle, и переход не создаёт новой комбинации.</div>
+
+<h3 id="s-15-5"><span class="num">15.5</span>Release bundle</h3>
+
+<p>Артефакты ответа меняются с разной скоростью: модель раз в квартал, промпт раз в неделю, снимок индекса каждую ночь. Выпускаемые порознь, они образуют непроверенную комбинацию. Поэтому изменение любого из них порождает новый bundle.</p>
+
+<p>Ночной снимок в Meridian автоматически порождает bundle, который проходит сокращённые ворота: регрессионный срез и золотые пробы, около двадцати минут. Версия парсера PDF записывается в манифест, потому что тот же корпус, разобранный другим парсером, является другим индексом.</p>
+
+<p>Частичный откат возвращает только компонент, признанный причиной, например промпт. Пара «промпт R-118 и снимок R-119» при этом ворот не проходила, и её поведение на остальных вопросах неизвестно. Реестр из листинга <code>release_bundle.py</code> такую пару не активирует.</p>
+
+<p>В 10:05 Meridian откатил весь bundle на R-118, приняв индекс на сутки старше, в котором редакция 8 уже была. Отозванные документы не вернулись: журнал надгробий из <a href="#s-5-8" data-secref="5.8">раздела 5.8</a> читается в момент запроса. Исправленный промпт вышел днём в R-120.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Записывать в манифест изменяемые имена: alias модели, имя живого индекса, ветку с промптом. Через неделю те же имена указывают на другие артефакты, и откат возвращает систему, отличную от вчерашней. Каждое поле манифеста является хешем содержимого или идентификатором неизменяемого снимка.</div>
+
+<h3 id="s-15-6"><span class="num">15.6</span>Отладка по трассам</h3>
+
+<p>Митигация прекратила вред. Для объяснения его причины нужно воспроизвести плохой ответ вне production. Трасса из <a href="#s-13-3" data-secref="13.3">раздела 13.3</a> это позволяет, если хранит всё, от чего ответ зависел.</p>
+
+<p>Для воспроизведения нужны пять элементов: вопрос и роль клинициста; версии возвращённых фрагментов, поскольку повторный запрос к изменившемуся индексу вернёт другие фрагменты; идентификатор bundle; температура и зерно; попадания в кэши и результаты инструментов, сохранённые как в журнале из <a href="#s-9-8" data-secref="9.8">раздела 9.8</a>.</p>
+
+<p>Воспроизведённый ответ позволяет бисекцию: компоненты плохого bundle по одному подставляются в хороший, и каждая комбинация прогоняется в стенде отладки на трассах инцидента. В Meridian полный R-119 давал неверную цитату на 21 трассе из 23, «R-118 с промптом R-119» тоже на 21, «R-118 со снимком R-119» ни на одной. Ответ модели является случайной выборкой, поэтому воспроизведение измеряется долей повторных прогонов, в которых ошибка появляется.</p>
+
+<p>Исправление проверяется механизмом, который обнаружит и следующий инцидент. Золотые пробы по расписанию сводят каждый ответ к отпечатку из документа, редакции цитаты и фактов и сравнивают распределение с прогоном ворот. В 10:20 на R-118 прошли все 23 трассы и двадцать проб с добавленной утром проверкой редакции.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">drift_detector.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import re
+from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Probe:
+    id: str
+    question: str
+    expected_citation: str              # документ@редакция#раздел
+    facts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Answer:
+    text: str
+    citations: tuple[str, ...]
+
+
+def normalize(text: str) -&gt; str:
+    return " ".join(re.sub(r"[^\w]+", " ", text.lower()).split())
+
+
+def parse(citation: str) -&gt; tuple[str, str, str]:
+    doc, rest = citation.split("@", 1)
+    edition, section = rest.split("#", 1)
+    return doc, edition, section
+
+
+def fingerprint(probe: Probe, answer: Answer) -&gt; str:
+    """Класс ответа: не текст целиком, а то, что обязано совпасть."""
+    doc, edition, _ = parse(probe.expected_citation)
+    cited = [parse(c) for c in answer.citations]
+    if not cited:
+        return "no_citation"
+    if any(d == doc and e != edition for d, e, _ in cited):
+        return "wrong_edition"
+    if probe.expected_citation not in answer.citations:
+        return "wrong_source"
+    text = normalize(answer.text)
+    return "ok" if all(normalize(f) in text for f in probe.facts) else "facts_missing"
+
+
+def shift(baseline: Counter[str], current: Counter[str]) -&gt; float:
+    """Расстояние полной вариации между двумя распределениями отпечатков."""
+    nb, nc = sum(baseline.values()), sum(current.values())
+    keys = baseline.keys() | current.keys()
+    return sum(abs(baseline[k] / nb - current[k] / nc) for k in keys) / 2
+
+
+@dataclass
+class Canary:
+    probes: Sequence[Probe]
+    ask: Callable[[str], Answer]                    # тот же путь, что у вопроса клинициста
+    now: Callable[[], float]
+    baseline: Counter[str]                          # отпечатки на прогоне ворот этого bundle
+    every_s: float = 900.0
+    threshold: float = 0.10
+    last_run: float = float("-inf")
+    alerts: list[str] = field(default_factory=list)
+
+    def tick(self, bundle_id: str) -&gt; float | None:
+        if self.now() - self.last_run &lt; self.every_s:
+            return None
+        self.last_run = self.now()
+        prints = {p.id: fingerprint(p, self.ask(p.question)) for p in self.probes}
+        current = Counter(prints.values())
+        distance = shift(self.baseline, current)
+        if distance &gt; self.threshold:
+            classes = ", ".join(f"{k}={v}" for k, v in sorted(current.items()))
+            broken = ", ".join(sorted(pid for pid, fp in prints.items() if fp != "ok"))
+            self.alerts.append(f"{bundle_id}: сдвиг {distance:.2f}; {classes}; пробы {broken}")
+        return distance
+
+
+if __name__ == "__main__":
+    probes = [Probe(f"p{i:02d}", f"вопрос {i} о дозировании по G-{10 + i % 4}",
+                    f"G-{10 + i % 4}@8#4.{i % 3}", (f"факт {i}",)) for i in range(20)]
+    by_question = {p.question: p for p in probes}
+    live = {"prompt": "p-3f2a"}
+
+    def ask(question: str) -&gt; Answer:
+        probe = by_question[question]
+        citation = probe.expected_citation
+        if live["prompt"] == "p-9c41" and citation.startswith("G-12@"):
+            citation = citation.replace("@8#", "@7#")      # пример в промпте из редакции 7
+        return Answer(f"Согласно источнику: {probe.facts[0]}.", (citation,))
+
+    clock = {"t": 0.0}
+    canary = Canary(probes, ask, now=lambda: clock["t"], baseline=Counter({"ok": 20}))
+    assert canary.tick("R-118") == 0.0 and not canary.alerts
+    live["prompt"] = "p-9c41"
+    clock["t"] = 300.0
+    assert canary.tick("R-119") is None                    # по расписанию ещё рано
+    clock["t"] = 900.0
+    assert canary.tick("R-119") == 0.25
+    assert canary.alerts == ["R-119: сдвиг 0.25; ok=15, wrong_edition=5; пробы p02, p06, p10, p14, p18"]
+    print("пробы по расписанию заметили сдвиг отпечатков и назвали пробы")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def fingerprint(probe: Probe, answer: Answer)">строка 33</span><p>Отпечаток сравнивает инварианты ответа, поскольку формулировка меняется от прогона к прогону и на неизменном bundle.</p></div>
+  <div><span class="at" data-anchor="threshold: float = 0.10">строка 61</span><p>Порог выражен сдвигом распределения. Одна случайно отклонившаяся проба из двадцати даёт 0.05 и не вызывает дежурного, пять проб одного руководства дают 0.25.</p></div>
+</div>
+</figure>
+
+<h3 id="s-15-7"><span class="num">15.7</span>Коммуникация с заказчиком</h3>
+
+<p>При отсутствии сообщений в первые минуты заказчик исходит из худшего предположения. Поэтому первое сообщение уходит за несколько минут и содержит четыре части: что известно, что делается, что делать пользователю сейчас, когда следующее обновление. Неустановленная причина не называется: опровергнутая через час гипотеза подрывает доверие сильнее, чем сообщение «причина устанавливается».</p>
+
+<p>Первое сообщение Meridian ушло в 09:14 заведующим отделениями и главному врачу по информатизации: часть ответов о дозировании ссылается на редакцию 7, ответы переводятся в режим фрагментов, дозировку сверять по документу, следующее обновление в 09:30. Дальше обновления приходят в обещанное время, даже без новостей.</p>
+
+<p>Заказчику пишет один человек, ответственный за коммуникацию; методика Google SRE называет эту роль публичным лицом группы реагирования.<a class="src" href="https://sre.google/sre-book/managing-incidents/" target="_blank" rel="noreferrer">Google SRE Book, Managing Incidents</a> Не обещаются сроки до подтверждения причины и отсутствие повторений, и не называются виновные. Обещается только то, что команда контролирует: время следующего обновления, режим сервиса и критерий возврата.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 372" role="img" aria-label="Временная шкала инцидента с 09:10 до 10:30 в трёх дорожках: инженерия отмечает жалобу в 09:10, разницу манифестов в 09:18, подтверждение бисекцией в 09:55, откат на R-118 в 10:05 и проверку в 10:20; ответы о дозировании переходят на ступень 1 в 09:22 и возвращаются в полный режим в 10:25, так что обход в 09:50 идёт на фрагментах с цитатами; сообщения заведующим и главному врачу по информатизации уходят в 09:14, 09:30 и 10:00, отбой в 10:30" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar15c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="40" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ИНЖЕНЕРИЯ</text>
+  <line x1="440" y1="30" x2="440" y2="226" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="446" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">обход в 09:50</text>
+
+  <rect x="35" y="40" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="52" y="49" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">жалоба клинициста</text>
+  <text x="52" y="64" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:10</text>
+  <rect x="115" y="74" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="132" y="83" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">diff манифестов, трассы</text>
+  <text x="132" y="98" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:18 · изменён промпт</text>
+  <rect x="485" y="108" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="502" y="117" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">бисекция подтвердила промпт</text>
+  <text x="502" y="132" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:55 · 21 из 23 трасс</text>
+  <rect x="585" y="40" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="602" y="49" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">откат bundle на R-118</text>
+  <text x="602" y="64" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:05</text>
+  <rect x="735" y="74" width="10" height="10" rx="2" fill="none" stroke="var(--sD)" stroke-width="1.4"/>
+  <text x="728" y="83" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">пробы и трассы</text>
+  <text x="728" y="98" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:20 · 20/20, 23/23</text>
+
+  <text x="40" y="162" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ОТВЕТЫ О ДОЗИРОВАНИИ</text>
+  <rect x="40" y="172" width="120" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="100" y="193" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">0 · с ошибкой</text>
+  <rect x="160" y="172" width="630" height="34" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="176" y="193" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">1 · ответ по источникам с цитатами</text>
+  <rect x="790" y="172" width="50" height="34" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="815" y="193" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">0</text>
+  <text x="164" y="224" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:22 · выключатель, ступень 1</text>
+  <text x="790" y="224" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:25 · выход по доказательству</text>
+
+  <text x="40" y="254" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">КОММУНИКАЦИЯ: ЗАВЕДУЮЩИЕ, ГЛАВНЫЙ ВРАЧ ПО ИНФОРМАТИЗАЦИИ</text>
+  <rect x="75" y="264" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="92" y="273" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">первое сообщение</text>
+  <text x="92" y="288" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:14 · далее 09:30</text>
+  <rect x="235" y="298" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="252" y="307" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">обновление: ступень 1</text>
+  <text x="252" y="322" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:30 · далее 10:00</text>
+  <rect x="535" y="264" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="552" y="273" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">обновление: причина, откат</text>
+  <text x="552" y="288" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:00 · далее 10:30</text>
+  <rect x="835" y="298" width="10" height="10" rx="2" fill="none" stroke="var(--sF)" stroke-width="1.4"/>
+  <text x="828" y="307" text-anchor="end" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">отбой с доказательством</text>
+  <text x="828" y="322" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:30</text>
+
+  <line x1="40" y1="346" x2="856" y2="346" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar15c)"/>
+  <path d="M40,342 V350 M240,342 V350 M440,342 V350 M640,342 V350 M840,342 V350" fill="none" stroke="currentColor" stroke-width="1.3"/>
+  <text x="40" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:10</text>
+  <text x="240" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:30</text>
+  <text x="440" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:50</text>
+  <text x="640" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:10</text>
+  <text x="840" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">10:30</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Деградация предшествует диагностике, и заказчик получает сообщения о том и другом: ответы о дозировании переведены на безопасную ступень до обхода и за полчаса до подтверждения причины, а каждое сообщение заказчику называло время следующего.</figcaption>
+</figure>
+
+<p>Журнал инцидента ведётся типизированной хронологией. Сообщения строятся по шаблону, который не пропускает обновление без времени следующего или от второго отправителя.</p>
+
+<figure class="code" data-fold="26">
+<figcaption><span class="file">incident_log.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from datetime import datetime, timedelta
+from enum import StrEnum
+from itertools import pairwise
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+PROMISES = ("больше не повторится", "исправлено окончательно", "по вине")
+
+
+class Kind(StrEnum):
+    DETECTED = "detected"
+    MITIGATED = "mitigated"
+    UPDATE_SENT = "update_sent"
+    ROLLED_BACK = "rolled_back"
+    VERIFIED = "verified"
+    RESOLVED = "resolved"
+
+
+class Event(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    at: datetime
+    kind: Kind
+    summary: str
+    bundle_id: str = ""
+
+
+class Update(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    at: datetime
+    sender: str
+    audience: tuple[str, ...]
+    known: str = Field(min_length=10)               # что известно
+    doing: str = Field(min_length=10)               # что делается
+    advice: str = Field(min_length=10)              # что делать клиницисту сейчас
+    next_update_at: datetime | None = None
+    final: bool = False
+
+    @model_validator(mode="after")
+    def cadence(self) -&gt; Update:
+        if not self.final and self.next_update_at is None:
+            raise ValueError("обновление без времени следующего обновления")
+        if self.next_update_at is not None and self.next_update_at &lt;= self.at:
+            raise ValueError("следующее обновление назначено в прошлом")
+        return self
+
+
+def render(u: Update) -&gt; str:
+    body = f"{u.known} {u.doing} {u.advice}".lower()
+    if promised := [p for p in PROMISES if p in body]:
+        raise ValueError(f"обещание или обвинение в тексте: {promised}")
+    status = "восстановлен" if u.final else "идёт работа"
+    tail = "Инцидент закрыт." if u.final else f"Следующее обновление в {u.next_update_at:%H:%M}."
+    return (f"[{u.at:%H:%M}] Ассистент по руководствам: {status}\nЧто известно: {u.known}\n"
+            f"Что делаем: {u.doing}\nЧто делать сейчас: {u.advice}\n{tail}")
+
+
+class Incident(BaseModel):
+    id: str
+    comms_lead: str                                 # единственный голос для заказчика
+    events: list[Event] = Field(default_factory=list)
+    sent: list[Update] = Field(default_factory=list)
+
+    def log(self, at: datetime, kind: Kind, summary: str, bundle_id: str = "") -&gt; None:
+        if self.events and at &lt; self.events[-1].at:
+            raise ValueError("события записываются в порядке времени")
+        self.events.append(Event(at=at, kind=kind, summary=summary, bundle_id=bundle_id))
+
+    def send(self, u: Update) -&gt; str:
+        if u.sender != self.comms_lead:
+            raise PermissionError("заказчику пишет только ответственный за коммуникацию")
+        text = render(u)
+        self.sent.append(u)
+        self.log(u.at, Kind.UPDATE_SENT, ", ".join(u.audience))
+        return text
+
+    def since_detection(self, kind: Kind) -&gt; timedelta:
+        return next(e.at for e in self.events if e.kind is kind) - self.events[0].at
+
+
+if __name__ == "__main__":
+    lead = "руководитель engagement"
+    leads = ("заведующие отделениями", "главный врач по информатизации")
+
+    def at(hhmm: str) -&gt; datetime:
+        hour, minute = map(int, hhmm.split(":"))
+        return datetime(2026, 9, 14, hour, minute)
+
+    def update(hhmm: str, known: str, doing: str, advice: str, nxt: str = "",
+               sender: str = lead) -&gt; Update:
+        return Update(at=at(hhmm), sender=sender, audience=leads, known=known, doing=doing,
+                      advice=advice, next_update_at=at(nxt) if nxt else None, final=not nxt)
+
+    inc = Incident(id="INC-0914", comms_lead=lead)
+    inc.log(at("09:10"), Kind.DETECTED, "цитаты редакции 7 вместо 8", "R-119")
+    first = inc.send(update("09:14", "часть ответов о дозировании ссылается на редакцию 7 вместо 8",
+                            "переводим ответы о дозировании в режим фрагментов с цитатами",
+                            "сверяйте дозировку по открытому документу", nxt="09:30"))
+    assert first.endswith("Следующее обновление в 09:30.")
+    try:
+        Update(at=at("09:20"), sender=lead, audience=leads, known="причина устанавливается",
+               doing="сравниваем выпуски", advice="сверяйте по документу")
+        raise AssertionError("обновление без времени следующего прошло проверку")
+    except ValidationError:
+        pass
+    try:
+        inc.send(update("09:21", "причина найдена в промпте", "исправляем промпт сейчас",
+                        "ждите исправления", nxt="09:30", sender="дежурный инженер"))
+        raise AssertionError("второй голос прошёл")
+    except PermissionError:
+        pass
+
+    inc.log(at("09:22"), Kind.MITIGATED, "выключатель: ступень 1", "R-119")
+    inc.send(update("09:30", "ответы о дозировании показывают фрагменты действующей редакции",
+                    "сравниваем выпуск R-119 с предыдущим", "режим фрагментов безопасен для обхода",
+                    nxt="10:00"))
+    inc.send(update("10:00", "причина в изменении промпта выпуска R-119",
+                    "откатываем выпуск целиком на R-118", "режим фрагментов сохраняется", nxt="10:30"))
+    inc.log(at("10:05"), Kind.ROLLED_BACK, "R-119 -&gt; R-118", "R-118")
+    inc.log(at("10:20"), Kind.VERIFIED, "пробы 20 из 20, трассы инцидента 23 из 23", "R-118")
+    last = inc.send(update("10:30", "ответы о дозировании снова ссылаются на редакцию 8",
+                           "полный режим возвращён в 10:25 после проверки",
+                           "разбор инцидента пришлём до пятницы"))
+    inc.log(at("10:30"), Kind.RESOLVED, "отбой", "R-118")
+
+    assert last.endswith("Инцидент закрыт.")
+    assert inc.since_detection(Kind.UPDATE_SENT) == timedelta(minutes=4)
+    assert inc.since_detection(Kind.MITIGATED) == timedelta(minutes=12)
+    assert all(a.next_update_at is not None and b.at &lt;= a.next_update_at for a, b in pairwise(inc.sent))
+    print("хронология записана, каждое обновление назначает следующее и приходит вовремя")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if not self.final and self.next_update_at is None:">строка 42</span><p>Обновление без времени следующего отвергается валидацией, поэтому проверка не зависит от внимания отправителя. Время следующего обновления является обещанием, которое команда может выполнить при любом ходе инцидента.</p></div>
+  <div><span class="at" data-anchor="if u.sender != self.comms_lead:">строка 71</span><p>Единственный отправитель закреплён в коде: инженер сообщает гипотезу ответственному за коммуникацию, и опровергнутая гипотеза не передаётся за пределы команды.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Отправлять отбой сразу после отката. Откат вернул проверенный bundle, но кэш ответов и отставшая реплика могут возвращать прежние ответы. Отбой отправляется после проверки на пробах и трассах инцидента и называет, чем исправление подтверждено.</div>
+
+<h3 id="s-15-8"><span class="num">15.8</span>Постмортем в evals</h3>
+
+<p>Инцидент закончен, когда его повторение обнаруживается автоматически. Поэтому из постмортема в систему переходят регрессионные примеры и детектор. Без них постмортем остаётся документом, который не меняет проверок системы.</p>
+
+<dl class="def">
+<dt>Постмортем без поиска виновных <span class="en">(blameless postmortem)</span></dt>
+<dd>Письменный разбор инцидента, который устанавливает способствующие причины в системе и процессе, не обвиняя людей, и завершается действиями с владельцами и сроками. Формат исходит из того, что участники действовали разумно при доступной им информации.<a class="src" href="https://sre.google/sre-book/postmortem-culture/" target="_blank" rel="noreferrer">Google SRE Book, Postmortem Culture</a></dd>
+</dl>
+
+<p>Причины в Meridian названы в терминах системы. Пример в промпте был составлен по отменённой редакции, и это ничем не проверялось. Набор не содержал вопросов по недавно сменившимся редакциям, поэтому ворота пропустили R-119. Пробы проверяли наличие цитаты, но не её редакцию.</p>
+
+<p>Трассы инцидента становятся примерами с происхождением, ожидаемой и запрещённой цитатой; несколько трасс с одним вопросом дают один пример. Регрессионный срез проверяется с нулевым допуском. Интервал из <a href="#s-12-8" data-secref="12.8">раздела 12.8</a> к нему не применяется, поскольку каждый пример среза соответствует уже случившейся ошибке. Детектором стала проба на редакцию для недавно обновлённых руководств.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">postmortem_to_eval.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+from collections.abc import Callable, Sequence
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+
+class Finding(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    incident_id: str
+    trace_id: str
+    question: str
+    bad_citation: str
+    expected_citation: str
+    facts: tuple[str, ...]
+
+
+class EvalCase(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    id: str
+    question: str
+    expected_citation: str
+    forbidden_citations: tuple[str, ...]
+    facts: tuple[str, ...]
+    slice: str
+    provenance: str                                 # инцидент и трасса, откуда пришёл пример
+
+
+class ActionItem(BaseModel):
+    title: str = Field(min_length=10)
+    owner: str = Field(min_length=3)                # роль или имя владельца действия
+    due: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class Postmortem(BaseModel):
+    incident_id: str
+    causes: tuple[str, ...]                         # способствующие причины в системе и процессе
+    findings: tuple[Finding, ...]
+    actions: tuple[ActionItem, ...] = Field(min_length=1)
+
+    def blameless(self, staff: Sequence[str]) -&gt; bool:
+        return not any(name.lower() in cause.lower() for name in staff for cause in self.causes)
+
+
+def to_cases(pm: Postmortem) -&gt; list[EvalCase]:
+    first: dict[str, Finding] = {}
+    for f in pm.findings:                           # один вопрос из разных трасс: один пример
+        first.setdefault(f"{f.question}|{f.expected_citation}", f)
+    return [EvalCase(id="reg-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:8],
+                     question=f.question, expected_citation=f.expected_citation,
+                     forbidden_citations=(f.bad_citation,), facts=f.facts,
+                     slice=f"regression/{f.incident_id}", provenance=f"{f.incident_id}/{f.trace_id}")
+            for key, f in first.items()]
+
+
+Ask = Callable[[str], tuple[str, tuple[str, ...]]]
+
+
+def passes(case: EvalCase, ask: Ask) -&gt; bool:
+    text, citations = ask(case.question)
+    return (case.expected_citation in citations
+            and not set(case.forbidden_citations) &amp; set(citations)
+            and all(fact.lower() in text.lower() for fact in case.facts))
+
+
+def regression_gate(cases: Sequence[EvalCase], ask: Ask) -&gt; list[str]:
+    """Нулевой допуск: любой проваленный пример из инцидента блокирует выпуск."""
+    return [case.id for case in cases if not passes(case, ask)]
+
+
+if __name__ == "__main__":
+    questions = ["дозирование по G-12, группа A", "дозирование по G-12, группа B", "кратность по G-12"]
+    traces = [(f"tr-{n:03d}", questions[n % 3]) for n in range(7)]
+    pm = Postmortem(
+        incident_id="INC-0914",
+        causes=("пример ответа в промпте составлен по отменённой редакции",
+                "в оценочном наборе нет вопросов по редакциям младше 30 дней",
+                "золотые пробы не проверяли номер редакции в цитате"),
+        findings=tuple(Finding(incident_id="INC-0914", trace_id=t, question=q,
+                               bad_citation="G-12@7#4.2", expected_citation="G-12@8#4.2",
+                               facts=("группа",)) for t, q in traces),
+        actions=(ActionItem(title="проверять редакции в примерах промпта при сборке bundle",
+                            owner="руководитель платформы", due="2026-09-21"),))
+    assert pm.blameless(staff=["Петров", "Сидорова"])
+    assert not pm.model_copy(update={"causes": ("ошибка Петрова при правке промпта",)}).blameless(["Петров"])
+    try:
+        ActionItem(title="разобраться с промптами", owner="", due="скоро")
+        raise AssertionError("действие без владельца и срока принято")
+    except ValidationError:
+        pass
+
+    cases = to_cases(pm)
+    assert len(cases) == 3 and cases[0].provenance == "INC-0914/tr-000"
+
+    def r119(question: str) -&gt; tuple[str, tuple[str, ...]]:
+        return f"{question}: группа A, см. источник", ("G-12@7#4.2",)
+
+    def r120(question: str) -&gt; tuple[str, tuple[str, ...]]:
+        return f"{question}: группа A, см. источник", ("G-12@8#4.2",)
+
+    assert regression_gate(cases, r119) == [case.id for case in cases]     # промпт R-119 не пройдёт
+    assert regression_gate(cases, r120) == []
+    print("находки стали примерами с происхождением, регрессионный срез держит нулевой допуск")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="provenance: str">строка 27</span><p>Происхождение связывает пример с инцидентом и трассой: через год по проваленному примеру найдётся постмортем, а удаление трассы по запросу пациента найдёт пример.</p></div>
+  <div><span class="at" data-anchor="forbidden_citations=(f.bad_citation,)">строка 52</span><p>Пример хранит случившуюся ошибку как запрещённую цитату: ответ, где рядом с редакцией 8 стоит редакция 7, проваливается так же, как ответ без редакции 8.</p></div>
+</div>
+</figure>
+
+<h3 id="s-15-9" data-level="3"><span class="num">15.9</span>Вглубь: тихое обновление модели, новый парсер, частичный откат</h3>
+
+<h4 data-level="3">Тихое обновление модели за стабильным alias</h4>
+
+<p data-level="3">Точность GPT-4 в определении простых чисел упала с 84 % в марте 2023 года до 51 % в июне, и авторы измерения заключили, что поведение «той же» службы меняется за короткое время.<a class="src" href="https://arxiv.org/abs/2307.09009" target="_blank" rel="noreferrer">Chen, Zaharia, Zou, 2023</a> Bundle закрепляет генеративную модель, но за alias остаются соседние зависимости: модель эмбеддингов, переранжировщик. Сдвиг отпечатков при неизменном манифесте относит инцидент к нижней ветви триажа.</p>
+
+<h4 data-level="3">Индекс, пересобранный новым парсером</h4>
+
+<p data-level="3">Новая версия парсера PDF потеряла строки таблиц, переходящих через страницу. Полнота на общем наборе почти не изменилась, а ответы о дозировании остались без нужных строк. Поэтому версия парсера входит в манифест, а ворота сравнивают число строк таблиц между снимками; сериализация строк описана в <a href="#s-5-11" data-secref="5.11">разделе 5.11</a>.</p>
+
+<h4 data-level="3">Частичный откат</h4>
+
+<p data-level="3">В системе без реестра дежурный вернул только промпт, а схема поиска в новом bundle уже переименовала аргумент отделения. Пример в старом промпте использовал прежнее имя, вызовы не проходили проверку схемы, и агент отвечал без поиска. Если такая комбинация нужна, она собирается как новый bundle и проходит ворота.</p>
+
+<h4 data-level="3">Воспроизведение плохого ответа</h4>
+
+<p data-level="3">Нулевая температура не гарантирует повторяемости: авторы исследования называют главной причиной зависимость вычислений от размера батча, который меняется с нагрузкой сервера.<a class="src" href="https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/" target="_blank" rel="noreferrer">He, Thinking Machines Lab, 2025</a> Кэш ответов с ключом без идентификатора bundle после отката отдаёт ответы плохого bundle. Попадания в кэш промптов тоже пишутся в трассу: они объясняют разницу в задержке между оригиналом и повтором. Фрагменты поиска и результаты инструментов берутся из трассы.</p>
+
+<h4 data-level="3">Постмортем, когда заказчик требует имя</h4>
+
+<p data-level="3">Главный врач по информатизации спрашивает, кто изменил промпт. Имя не объясняет, почему процесс пропустил изменение, и побуждает команду скрывать изменения. Заказчику предъявляются причины, действия с владельцами и детектор, а за постмортем отвечает руководитель engagement. Если нормы клинической безопасности требуют назначенного ответственного, он указывается владельцем действий, а в списке причин имена людей не указываются.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему откат одного промпта рискованнее отката всего bundle, хотя меняет меньше?</summary>
+<div class="ans"><p>Ворота оценивают комбинации. Старый промпт проверялся со старым снимком и схемами, а его пара с новыми компонентами не проверялась, и её поведение неизвестно.</p></div>
+</details>
+<details>
+<summary>Почему деградация до ответа по источникам была в Meridian безопасной и когда она была бы бесполезной?</summary>
+<div class="ans"><p>Поиск возвращал верные фрагменты, а ошибалась генерация, от которой ступень 1 не зависит. При испорченном снимке индекса нужна была бы ступень 2 или 3.</p></div>
+</details>
+<details>
+<summary>Что содержит первое сообщение заказчику и чего в нём быть не должно?</summary>
+<div class="ans"><p>Что известно, что делается, что делать пользователю сейчас и время следующего обновления. В нём нет неподтверждённой причины, сроков исправления, обещаний и имён.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>AI-системы отказывают тихо, при доступном сервисе; обнаружение требует проверок содержания, а триаж начинается с того, что изменилось в манифесте и трассе.</li>
+<li>Лестница деградации с выключателями отключает ненадёжную часть и оставляет надёжную: вниз по критерию, вверх по доказательству.</li>
+<li>Все артефакты ответа выпускаются и откатываются одним bundle; частичный откат создаёт комбинацию, которую никто не оценивал.</li>
+<li>Первое сообщение заказчику уходит за минуты и называет время следующего; постмортем заканчивается регрессионными примерами, детектором и действиями с владельцами.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-12" data-secref="12">Глава 12: ворота, через которые проходит bundle</a>
+<a href="#ch-13" data-secref="13">Глава 13: трассы и алерты для триажа</a>
+<a href="#ch-16" data-secref="16">Глава 16: от полевых паттернов к модулям</a>
+</p>
+</div>
+</section>

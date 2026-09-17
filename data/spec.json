@@ -1,0 +1,1704 @@
+{
+  "_comment": "The source of truth for the book's structure. Every chapter file, section id, listing name and diagram count is checked against this file by tools/check_isomorphism.py. Edit it together with the chapter; never let the two drift.",
+  "slug": "fde-advanced",
+  "title": {
+    "ru": "Forward Deployed Engineering",
+    "en": "Forward Deployed Engineering"
+  },
+  "subtitle": {
+    "ru": "От прототипа к production у заказчика",
+    "en": "From Prototype to Customer Production"
+  },
+  "layers": {
+    "A": {
+      "ru": "системы и данные заказчика",
+      "en": "customer systems and data"
+    },
+    "B": {
+      "ru": "модель и агентный слой",
+      "en": "model and agent layer"
+    },
+    "C": {
+      "ru": "инструменты и действия",
+      "en": "tools and actions"
+    },
+    "D": {
+      "ru": "оценка и наблюдаемость",
+      "en": "evaluation and observability"
+    },
+    "E": {
+      "ru": "безопасность и управление",
+      "en": "security and governance"
+    },
+    "F": {
+      "ru": "люди и процесс",
+      "en": "people and process"
+    },
+    "G": {
+      "ru": "продукт и обратная связь",
+      "en": "product and feedback"
+    }
+  },
+  "parts": [
+    {
+      "id": "part-1",
+      "num": 1,
+      "file": "09-part-1",
+      "title": {
+        "ru": "Поле",
+        "en": "The Field"
+      },
+      "chapters": [
+        1,
+        2
+      ]
+    },
+    {
+      "id": "part-2",
+      "num": 2,
+      "file": "19-part-2",
+      "title": {
+        "ru": "Фундамент в поле",
+        "en": "Foundations in the Field"
+      },
+      "chapters": [
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "id": "part-3",
+      "num": 3,
+      "file": "29-part-3",
+      "title": {
+        "ru": "Агентные системы",
+        "en": "Agentic Systems"
+      },
+      "chapters": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "id": "part-4",
+      "num": 4,
+      "file": "39-part-4",
+      "title": {
+        "ru": "Эксплуатация",
+        "en": "Production Operations"
+      },
+      "chapters": [
+        12,
+        13,
+        14,
+        15
+      ]
+    },
+    {
+      "id": "part-5",
+      "num": 5,
+      "file": "49-part-5",
+      "title": {
+        "ru": "Поле как система",
+        "en": "The Field as a System"
+      },
+      "chapters": [
+        16,
+        17,
+        18
+      ]
+    },
+    {
+      "num": 6,
+      "id": "part-6",
+      "file": "69-part-6",
+      "private": true,
+      "chapters": [
+        19,
+        20,
+        21,
+        22
+      ]
+    },
+    {
+      "id": "part-app",
+      "num": 0,
+      "file": "89-part-app",
+      "title": {
+        "ru": "Приложения",
+        "en": "Appendices"
+      },
+      "chapters": []
+    }
+  ],
+  "chapters": [
+    {
+      "num": 0,
+      "id": "ch-0",
+      "file": "01-ch-00",
+      "layers": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G"
+      ],
+      "gcloud": false,
+      "case": null,
+      "diagrams": 1,
+      "listings": [],
+      "title": {
+        "ru": "Как устроена эта книга",
+        "en": "How This Book Works"
+      },
+      "sections": [
+        {
+          "id": "s-0-1",
+          "ru": "Для кого и для каких ролей",
+          "en": "Who this book is for"
+        },
+        {
+          "id": "s-0-2",
+          "ru": "Три уровня раскрытия",
+          "en": "Three levels of detail"
+        },
+        {
+          "id": "s-0-3",
+          "ru": "Семь слоёв системы у заказчика",
+          "en": "The seven layers of a customer system"
+        },
+        {
+          "id": "s-0-4",
+          "ru": "Досье заказчиков",
+          "en": "The case files"
+        },
+        {
+          "id": "s-0-5",
+          "ru": "Листинги и их проверка",
+          "en": "Listings and how they are verified"
+        },
+        {
+          "id": "s-0-6",
+          "ru": "Диаграммы",
+          "en": "Diagrams"
+        },
+        {
+          "id": "s-0-7",
+          "ru": "Серия ragworld",
+          "en": "The ragworld series"
+        },
+        {
+          "id": "s-0-8",
+          "ru": "Порядок чтения по ролям",
+          "en": "Reading order by role"
+        }
+      ]
+    },
+    {
+      "num": 1,
+      "id": "ch-1",
+      "file": "10-ch-01",
+      "layers": [
+        "F",
+        "G"
+      ],
+      "gcloud": false,
+      "case": "CF1",
+      "diagrams": 3,
+      "listings": [
+        "naive_plan",
+        "engagement",
+        "decision_log",
+        "conversation_to_artifact"
+      ],
+      "title": {
+        "ru": "Инженер-дипломат",
+        "en": "The Engineer-Diplomat"
+      },
+      "sections": [
+        {
+          "id": "s-1-1",
+          "ru": "Задача: первый день в Nordbank",
+          "en": "The task: day one at Nordbank"
+        },
+        {
+          "id": "s-1-2",
+          "ru": "Почему консалтинговая схема не завершает последнюю милю",
+          "en": "Why the consulting scheme does not complete the last mile"
+        },
+        {
+          "id": "s-1-3",
+          "ru": "Анатомия engagement",
+          "en": "Anatomy of an engagement"
+        },
+        {
+          "id": "s-1-4",
+          "ru": "Discovery как инженерная работа",
+          "en": "Discovery as engineering"
+        },
+        {
+          "id": "s-1-5",
+          "ru": "Поставка в первый день",
+          "en": "Shipping on day one"
+        },
+        {
+          "id": "s-1-6",
+          "ru": "Три лояльности и петля в продукт",
+          "en": "Three loyalties and the loop into product"
+        },
+        {
+          "id": "s-1-7",
+          "ru": "Отказ от роли системного интегратора",
+          "en": "Refusing the systems-integrator role"
+        },
+        {
+          "id": "s-1-8",
+          "ru": "Операционная модель engagement",
+          "en": "The engagement operating model"
+        },
+        {
+          "id": "s-1-9",
+          "ru": "Вглубь: теневой SOW, доступ, модели выхода",
+          "en": "In depth: the shadow SOW, access, exit models"
+        }
+      ]
+    },
+    {
+      "num": 2,
+      "id": "ch-2",
+      "file": "11-ch-02",
+      "layers": [
+        "A",
+        "F"
+      ],
+      "gcloud": true,
+      "case": "CF1",
+      "diagrams": 3,
+      "listings": [
+        "naive_requirements",
+        "requirements",
+        "ontology",
+        "roi_model",
+        "scope_memo"
+      ],
+      "title": {
+        "ru": "Discovery, требования и scoping",
+        "en": "Discovery, Requirements and Scoping"
+      },
+      "sections": [
+        {
+          "id": "s-2-1",
+          "ru": "Задача: «ассистент для 400 операторов»",
+          "en": "The task: \"an assistant for 400 agents\""
+        },
+        {
+          "id": "s-2-2",
+          "ru": "Почему проекты останавливаются на этапе scoping",
+          "en": "Why projects stall at scoping"
+        },
+        {
+          "id": "s-2-3",
+          "ru": "Протокол discovery-интервью",
+          "en": "The discovery interview protocol"
+        },
+        {
+          "id": "s-2-4",
+          "ru": "Онтология заказчика прежде модели",
+          "en": "Customer ontology before the model"
+        },
+        {
+          "id": "s-2-5",
+          "ru": "Извлечение ограничений",
+          "en": "Constraint extraction"
+        },
+        {
+          "id": "s-2-6",
+          "ru": "Воркшоп scoping",
+          "en": "The scoping workshop"
+        },
+        {
+          "id": "s-2-7",
+          "ru": "Метрики успеха и гипотеза ROI",
+          "en": "Success metrics and the ROI hypothesis"
+        },
+        {
+          "id": "s-2-8",
+          "ru": "Меморандум на одну страницу",
+          "en": "The one-page scope memo"
+        },
+        {
+          "id": "s-2-9",
+          "ru": "На Google Cloud: инструменты discovery",
+          "en": "On Google Cloud: discovery tooling"
+        },
+        {
+          "id": "s-2-10",
+          "ru": "Вглубь: нетестируемые требования, аппаратные ограничения, контрфактуал",
+          "en": "In depth: untestable requirements, hardware constraints, the counterfactual"
+        }
+      ]
+    },
+    {
+      "num": 3,
+      "id": "ch-3",
+      "file": "20-ch-03",
+      "layers": [
+        "B",
+        "D"
+      ],
+      "gcloud": true,
+      "case": "CF3",
+      "diagrams": 2,
+      "listings": [
+        "naive_extract",
+        "extract",
+        "model_router",
+        "failure_taxonomy",
+        "cost_meter"
+      ],
+      "title": {
+        "ru": "Фундаментальные модели как компоненты production",
+        "en": "Foundation Models as Production Components"
+      },
+      "sections": [
+        {
+          "id": "s-3-1",
+          "ru": "Задача: таможенные документы TKL",
+          "en": "The task: TKL customs documents"
+        },
+        {
+          "id": "s-3-2",
+          "ru": "Почему вызов модели является зависимостью с контрактом",
+          "en": "Why a model call is a dependency with a contract"
+        },
+        {
+          "id": "s-3-3",
+          "ru": "Токены, окна, задержка и стоимость",
+          "en": "Tokens, windows, latency and cost"
+        },
+        {
+          "id": "s-3-4",
+          "ru": "Структурированный вывод",
+          "en": "Structured output"
+        },
+        {
+          "id": "s-3-5",
+          "ru": "Tool calling как контракт",
+          "en": "Tool calling as a contract"
+        },
+        {
+          "id": "s-3-6",
+          "ru": "Выбор и маршрутизация моделей",
+          "en": "Model selection and routing"
+        },
+        {
+          "id": "s-3-7",
+          "ru": "Модель отказов",
+          "en": "The failure model"
+        },
+        {
+          "id": "s-3-8",
+          "ru": "Версии, закрепление и кэш промптов",
+          "en": "Versions, pinning and prompt caching"
+        },
+        {
+          "id": "s-3-9",
+          "ru": "На Google Cloud: Gemini API и Gemini Enterprise Agent Platform",
+          "en": "On Google Cloud: the Gemini API and Gemini Enterprise Agent Platform"
+        },
+        {
+          "id": "s-3-10",
+          "ru": "Вглубь: усечение, ремонт, alias, токенизация кириллицы",
+          "en": "In depth: truncation, repair, aliases, Cyrillic tokenisation"
+        }
+      ]
+    },
+    {
+      "num": 4,
+      "id": "ch-4",
+      "file": "21-ch-04",
+      "layers": [
+        "B"
+      ],
+      "gcloud": true,
+      "case": "CF4",
+      "diagrams": 3,
+      "listings": [
+        "naive_context",
+        "context_assembler",
+        "prompt_registry",
+        "memory_summarizer",
+        "context_audit"
+      ],
+      "title": {
+        "ru": "Context engineering",
+        "en": "Context Engineering"
+      },
+      "sections": [
+        {
+          "id": "s-4-1",
+          "ru": "Задача: agent-assist в Orion",
+          "en": "The task: agent assist at Orion"
+        },
+        {
+          "id": "s-4-2",
+          "ru": "Почему состав контекста влияет на ответ сильнее формулировок",
+          "en": "Why the composition of the context affects the answer more than wording"
+        },
+        {
+          "id": "s-4-3",
+          "ru": "Анатомия контекста",
+          "en": "Anatomy of the context"
+        },
+        {
+          "id": "s-4-4",
+          "ru": "Бюджет и усечение по приоритету",
+          "en": "Budgeting and priority truncation"
+        },
+        {
+          "id": "s-4-5",
+          "ru": "Порядок ради кэша",
+          "en": "Ordering for the cache"
+        },
+        {
+          "id": "s-4-6",
+          "ru": "Память и суммаризация",
+          "en": "Memory and summarisation"
+        },
+        {
+          "id": "s-4-7",
+          "ru": "Инструкции как код",
+          "en": "Instructions as code"
+        },
+        {
+          "id": "s-4-8",
+          "ru": "Прозрачность контекста",
+          "en": "Context transparency"
+        },
+        {
+          "id": "s-4-9",
+          "ru": "На Google Cloud: context caching и Memory Bank",
+          "en": "On Google Cloud: context caching and Memory Bank"
+        },
+        {
+          "id": "s-4-10",
+          "ru": "Вглубь: инвалидация кэша, две зоны, отравление памяти",
+          "en": "In depth: cache invalidation, the two zones, memory poisoning"
+        }
+      ]
+    },
+    {
+      "num": 5,
+      "id": "ch-5",
+      "file": "22-ch-05",
+      "layers": [
+        "A",
+        "B",
+        "E"
+      ],
+      "gcloud": true,
+      "case": "CF2",
+      "diagrams": 3,
+      "listings": [
+        "naive_rag",
+        "ingest_pipeline",
+        "acl_retrieval",
+        "hybrid_search",
+        "retrieval_eval",
+        "incremental_index"
+      ],
+      "title": {
+        "ru": "Пайплайны данных и retrieval",
+        "en": "Data Pipelines and Retrieval"
+      },
+      "sections": [
+        {
+          "id": "s-5-1",
+          "ru": "Задача: поиск по руководствам Meridian",
+          "en": "The task: guideline search at Meridian"
+        },
+        {
+          "id": "s-5-2",
+          "ru": "Почему RAG является задачей data engineering",
+          "en": "Why RAG is a data-engineering problem"
+        },
+        {
+          "id": "s-5-3",
+          "ru": "Готовность данных и ingestion",
+          "en": "Data readiness and ingestion"
+        },
+        {
+          "id": "s-5-4",
+          "ru": "Chunking и метаданные",
+          "en": "Chunking and metadata"
+        },
+        {
+          "id": "s-5-5",
+          "ru": "Embeddings и хранилища",
+          "en": "Embeddings and stores"
+        },
+        {
+          "id": "s-5-6",
+          "ru": "Гибридный поиск и reranking",
+          "en": "Hybrid retrieval and reranking"
+        },
+        {
+          "id": "s-5-7",
+          "ru": "ACL-aware retrieval",
+          "en": "ACL-aware retrieval"
+        },
+        {
+          "id": "s-5-8",
+          "ru": "Свежесть и инкрементальность",
+          "en": "Freshness and incremental indexing"
+        },
+        {
+          "id": "s-5-9",
+          "ru": "Измерение retrieval",
+          "en": "Measuring retrieval"
+        },
+        {
+          "id": "s-5-10",
+          "ru": "На Google Cloud: Agent Search, Vector Search, AlloyDB",
+          "en": "On Google Cloud: Agent Search, Vector Search, AlloyDB"
+        },
+        {
+          "id": "s-5-11",
+          "ru": "Вглубь: утечка через reranker, ACL на уровне chunk, миграция embeddings",
+          "en": "In depth: reranker leakage, chunk-level ACL, embedding migration"
+        }
+      ]
+    },
+    {
+      "num": 6,
+      "id": "ch-6",
+      "file": "23-ch-06",
+      "layers": [
+        "A",
+        "C",
+        "E"
+      ],
+      "gcloud": true,
+      "case": "CF1",
+      "diagrams": 3,
+      "listings": [
+        "naive_tool",
+        "mcp_server",
+        "legacy_adapter",
+        "tool_auth",
+        "idempotent_write",
+        "result_shaping"
+      ],
+      "title": {
+        "ru": "Соединительная ткань: API, legacy и MCP-серверы",
+        "en": "Connective Tissue: APIs, Legacy Silos and MCP Servers"
+      },
+      "sections": [
+        {
+          "id": "s-6-1",
+          "ru": "Задача: core banking через MCP",
+          "en": "The task: core banking through MCP"
+        },
+        {
+          "id": "s-6-2",
+          "ru": "Почему интеграция является продуктом FDE",
+          "en": "Why the integration layer is the FDE's product"
+        },
+        {
+          "id": "s-6-3",
+          "ru": "Инвентаризация silo",
+          "en": "Inventory of the silo"
+        },
+        {
+          "id": "s-6-4",
+          "ru": "MCP: инструменты, ресурсы, транспорты",
+          "en": "MCP: tools, resources, transports"
+        },
+        {
+          "id": "s-6-5",
+          "ru": "Проектирование инструментов для моделей",
+          "en": "Designing tools for models"
+        },
+        {
+          "id": "s-6-6",
+          "ru": "Адаптеры legacy",
+          "en": "Adapters for legacy systems"
+        },
+        {
+          "id": "s-6-7",
+          "ru": "Периметр и идентичность",
+          "en": "The perimeter and identity"
+        },
+        {
+          "id": "s-6-8",
+          "ru": "Действия записи",
+          "en": "Write actions"
+        },
+        {
+          "id": "s-6-9",
+          "ru": "На Google Cloud: MCP на Cloud Run, Private Service Connect, Secret Manager",
+          "en": "On Google Cloud: MCP on Cloud Run, Private Service Connect, Secret Manager"
+        },
+        {
+          "id": "s-6-10",
+          "ru": "Вглубь: многоуровневые повторы, confused deputy, дрейф схем",
+          "en": "In depth: stacked retries, the confused deputy, schema drift"
+        }
+      ]
+    },
+    {
+      "num": 7,
+      "id": "ch-7",
+      "file": "30-ch-07",
+      "layers": [
+        "B",
+        "C"
+      ],
+      "gcloud": true,
+      "case": "CF3",
+      "diagrams": 3,
+      "listings": [
+        "naive_agent",
+        "agent_loop",
+        "tool_registry",
+        "budget",
+        "parallel_tools",
+        "two_frameworks"
+      ],
+      "title": {
+        "ru": "Одиночный агент: ReAct, инструменты, отказы",
+        "en": "The Single Agent: ReAct, Tools and Failure"
+      },
+      "sections": [
+        {
+          "id": "s-7-1",
+          "ru": "Задача: агент исключений по отправлениям",
+          "en": "The task: the shipment-exception agent"
+        },
+        {
+          "id": "s-7-2",
+          "ru": "Почему агент представляет собой цикл с бюджетом",
+          "en": "Why an agent is a loop with a budget"
+        },
+        {
+          "id": "s-7-3",
+          "ru": "Цикл ReAct как автомат",
+          "en": "The ReAct loop as a state machine"
+        },
+        {
+          "id": "s-7-4",
+          "ru": "Схемы инструментов и параллельные вызовы",
+          "en": "Tool schemas and parallel calls"
+        },
+        {
+          "id": "s-7-5",
+          "ru": "Бюджеты",
+          "en": "Budgets"
+        },
+        {
+          "id": "s-7-6",
+          "ru": "Ошибки инструментов",
+          "en": "Tool errors"
+        },
+        {
+          "id": "s-7-7",
+          "ru": "Структурированный ответ и уверенность",
+          "en": "Structured answers and confidence"
+        },
+        {
+          "id": "s-7-8",
+          "ru": "Фреймворки: ADK, LangGraph, CrewAI",
+          "en": "Frameworks: ADK, LangGraph, CrewAI"
+        },
+        {
+          "id": "s-7-9",
+          "ru": "На Google Cloud: ADK и Agent Runtime",
+          "en": "On Google Cloud: ADK and Agent Runtime"
+        },
+        {
+          "id": "s-7-10",
+          "ru": "Вглубь: двойной побочный эффект, скрытые зависимости, детекция петель",
+          "en": "In depth: the double side effect, hidden dependencies, loop detection"
+        }
+      ]
+    },
+    {
+      "num": 8,
+      "id": "ch-8",
+      "file": "31-ch-08",
+      "layers": [
+        "B",
+        "C"
+      ],
+      "gcloud": true,
+      "case": "CF4",
+      "diagrams": 3,
+      "listings": [
+        "naive_multi",
+        "supervisor",
+        "reflection",
+        "graph_runtime",
+        "a2a_card",
+        "permission_scopes"
+      ],
+      "title": {
+        "ru": "Мультиагентные системы",
+        "en": "Multi-Agent Systems"
+      },
+      "sections": [
+        {
+          "id": "s-8-1",
+          "ru": "Задача: триаж инцидента в Orion",
+          "en": "The task: incident triage at Orion"
+        },
+        {
+          "id": "s-8-2",
+          "ru": "Почему мультиагентность нужна ради изоляции",
+          "en": "Why a multi-agent system is built for isolation"
+        },
+        {
+          "id": "s-8-3",
+          "ru": "Топологии",
+          "en": "Topologies"
+        },
+        {
+          "id": "s-8-4",
+          "ru": "Иерархическое делегирование",
+          "en": "Hierarchical delegation"
+        },
+        {
+          "id": "s-8-5",
+          "ru": "Рефлексия и критик",
+          "en": "Reflection and the critic"
+        },
+        {
+          "id": "s-8-6",
+          "ru": "Изоляция контекста и передача",
+          "en": "Context isolation and handoff"
+        },
+        {
+          "id": "s-8-7",
+          "ru": "A2A и межорганизационные агенты",
+          "en": "A2A and cross-organisation agents"
+        },
+        {
+          "id": "s-8-8",
+          "ru": "Выбор фреймворка",
+          "en": "Choosing a framework"
+        },
+        {
+          "id": "s-8-9",
+          "ru": "На Google Cloud: деревья агентов ADK и A2A",
+          "en": "On Google Cloud: ADK agent trees and A2A"
+        },
+        {
+          "id": "s-8-10",
+          "ru": "Вглубь: гонки состояния, взрыв делегирования, критик-соглашатель",
+          "en": "In depth: state races, delegation explosion, the agreeable critic"
+        }
+      ]
+    },
+    {
+      "num": 9,
+      "id": "ch-9",
+      "file": "32-ch-09",
+      "layers": [
+        "B",
+        "C",
+        "E"
+      ],
+      "gcloud": true,
+      "case": "CF1",
+      "diagrams": 3,
+      "listings": [
+        "naive_state",
+        "checkpoint_store",
+        "hitl_interrupt",
+        "replay",
+        "memory_bank",
+        "retention"
+      ],
+      "title": {
+        "ru": "Состояние, память и долгоживущие агенты",
+        "en": "State, Memory and Long-Running Agents"
+      },
+      "sections": [
+        {
+          "id": "s-9-1",
+          "ru": "Задача: KYC-ремедиация",
+          "en": "The task: KYC remediation"
+        },
+        {
+          "id": "s-9-2",
+          "ru": "Почему агенты останавливаются, падают и возобновляются",
+          "en": "Why agents pause, crash and resume"
+        },
+        {
+          "id": "s-9-3",
+          "ru": "Модель состояния",
+          "en": "The state model"
+        },
+        {
+          "id": "s-9-4",
+          "ru": "Семантика checkpoint и resume",
+          "en": "Checkpoint and resume semantics"
+        },
+        {
+          "id": "s-9-5",
+          "ru": "Человек в цикле",
+          "en": "The human in the loop"
+        },
+        {
+          "id": "s-9-6",
+          "ru": "Долговечное исполнение",
+          "en": "Durable execution"
+        },
+        {
+          "id": "s-9-7",
+          "ru": "Долговременная память",
+          "en": "Long-term memory"
+        },
+        {
+          "id": "s-9-8",
+          "ru": "Аудит и replay",
+          "en": "Audit and replay"
+        },
+        {
+          "id": "s-9-9",
+          "ru": "На Google Cloud: Agent Platform Sessions и Memory Bank",
+          "en": "On Google Cloud: Agent Platform Sessions and Memory Bank"
+        },
+        {
+          "id": "s-9-10",
+          "ru": "Вглубь: окно двойного исполнения, смена модели, PII в checkpoint",
+          "en": "In depth: the double-execution window, model change, PII in checkpoints"
+        }
+      ]
+    },
+    {
+      "num": 10,
+      "id": "ch-10",
+      "file": "33-ch-10",
+      "layers": [
+        "E",
+        "C"
+      ],
+      "gcloud": true,
+      "case": "CF5",
+      "diagrams": 3,
+      "listings": [
+        "naive_security",
+        "policy_layer",
+        "injection_guard",
+        "dlp_gateway",
+        "residency_config",
+        "audit_event"
+      ],
+      "title": {
+        "ru": "Безопасность, суверенитет и governance",
+        "en": "Security, Sovereignty and Governance"
+      },
+      "sections": [
+        {
+          "id": "s-10-1",
+          "ru": "Задача: ассистент для граждан Northgate",
+          "en": "The task: the Northgate citizen assistant"
+        },
+        {
+          "id": "s-10-2",
+          "ru": "Почему агент является новым principal",
+          "en": "Why an agent is a new principal"
+        },
+        {
+          "id": "s-10-3",
+          "ru": "Модель угроз",
+          "en": "The threat model"
+        },
+        {
+          "id": "s-10-4",
+          "ru": "Границы доверия и недоверенный контент",
+          "en": "Trust boundaries and untrusted content"
+        },
+        {
+          "id": "s-10-5",
+          "ru": "Идентичность и минимальные права",
+          "en": "Identity and least privilege"
+        },
+        {
+          "id": "s-10-6",
+          "ru": "Суверенитет данных",
+          "en": "Data sovereignty"
+        },
+        {
+          "id": "s-10-7",
+          "ru": "Governance и аудит",
+          "en": "Governance and audit"
+        },
+        {
+          "id": "s-10-8",
+          "ru": "Фильтры и red-teaming",
+          "en": "Filters and red-teaming"
+        },
+        {
+          "id": "s-10-9",
+          "ru": "На Google Cloud: VPC Service Controls, CMEK, Model Armor",
+          "en": "On Google Cloud: VPC Service Controls, CMEK, Model Armor"
+        },
+        {
+          "id": "s-10-10",
+          "ru": "Вглубь: эксфильтрация через аргументы, тихий откат периметра, AI Act",
+          "en": "In depth: exfiltration through arguments, the silent perimeter fallback, the AI Act"
+        }
+      ]
+    },
+    {
+      "num": 11,
+      "id": "ch-11",
+      "file": "34-ch-11",
+      "layers": [
+        "F",
+        "C",
+        "B"
+      ],
+      "gcloud": true,
+      "case": "CF2",
+      "diagrams": 2,
+      "listings": [
+        "naive_stream",
+        "event_stream",
+        "approval_flow",
+        "voice_turn",
+        "explanation",
+        "trust_metrics"
+      ],
+      "title": {
+        "ru": "Интерфейсы агентных систем",
+        "en": "Interfaces for Agentic Systems"
+      },
+      "sections": [
+        {
+          "id": "s-11-1",
+          "ru": "Задача: клинический ассистент и голосовой приём",
+          "en": "The task: the clinical assistant and voice intake"
+        },
+        {
+          "id": "s-11-2",
+          "ru": "Почему интерфейс входит в систему безопасности",
+          "en": "Why the interface is part of safety"
+        },
+        {
+          "id": "s-11-3",
+          "ru": "Примитивы прозрачности",
+          "en": "Transparency primitives"
+        },
+        {
+          "id": "s-11-4",
+          "ru": "UX одобрений",
+          "en": "Approval UX"
+        },
+        {
+          "id": "s-11-5",
+          "ru": "Стриминг событий",
+          "en": "Streaming events"
+        },
+        {
+          "id": "s-11-6",
+          "ru": "Голос в реальном времени",
+          "en": "Real-time voice"
+        },
+        {
+          "id": "s-11-7",
+          "ru": "Объяснимость и калибровка доверия",
+          "en": "Explainability and trust calibration"
+        },
+        {
+          "id": "s-11-8",
+          "ru": "На Google Cloud: Live API и стриминг",
+          "en": "On Google Cloud: the Live API and streaming"
+        },
+        {
+          "id": "s-11-9",
+          "ru": "Вглубь: barge-in и побочные эффекты, недостоверные объяснения, усталость от одобрений",
+          "en": "In depth: barge-in and side effects, unfaithful explanations, approval fatigue"
+        }
+      ]
+    },
+    {
+      "num": 12,
+      "id": "ch-12",
+      "file": "40-ch-12",
+      "layers": [
+        "D"
+      ],
+      "gcloud": true,
+      "case": "CF1",
+      "diagrams": 2,
+      "listings": [
+        "naive_eval",
+        "eval_runner",
+        "llm_judge",
+        "trajectory_eval",
+        "contamination_check",
+        "ci_gate"
+      ],
+      "title": {
+        "ru": "Пайплайны оценки",
+        "en": "Evaluation Pipelines"
+      },
+      "sections": [
+        {
+          "id": "s-12-1",
+          "ru": "Задача: ворота релиза Nordbank",
+          "en": "The task: the Nordbank release gate"
+        },
+        {
+          "id": "s-12-2",
+          "ru": "Почему оценка служит воротами, а не отчётом",
+          "en": "Why evaluation is a gate, not a report"
+        },
+        {
+          "id": "s-12-3",
+          "ru": "Что оценивать",
+          "en": "What to evaluate"
+        },
+        {
+          "id": "s-12-4",
+          "ru": "Наборы из поля",
+          "en": "Building eval sets from the field"
+        },
+        {
+          "id": "s-12-5",
+          "ru": "Метрики",
+          "en": "Metrics"
+        },
+        {
+          "id": "s-12-6",
+          "ru": "LLM-судья и калибровка",
+          "en": "The LLM judge and calibration"
+        },
+        {
+          "id": "s-12-7",
+          "ru": "Оценка агентов",
+          "en": "Evaluating agents"
+        },
+        {
+          "id": "s-12-8",
+          "ru": "CI-ворота и онлайн-оценка",
+          "en": "CI gates and online evaluation"
+        },
+        {
+          "id": "s-12-9",
+          "ru": "На Google Cloud: Gen AI Evaluation Service",
+          "en": "On Google Cloud: the Gen AI Evaluation Service"
+        },
+        {
+          "id": "s-12-10",
+          "ru": "Вглубь: контаминация, смещения судьи, малые выборки, недетерминизм",
+          "en": "In depth: contamination, judge bias, small samples, non-determinism"
+        }
+      ]
+    },
+    {
+      "num": 13,
+      "id": "ch-13",
+      "file": "41-ch-13",
+      "layers": [
+        "D"
+      ],
+      "gcloud": true,
+      "case": "CF4",
+      "diagrams": 3,
+      "listings": [
+        "naive_logging",
+        "tracing",
+        "metrics",
+        "cost_ledger",
+        "redaction",
+        "slo_alerts"
+      ],
+      "title": {
+        "ru": "Наблюдаемость, трассировка и стоимость",
+        "en": "Observability, Tracing and Cost"
+      },
+      "sections": [
+        {
+          "id": "s-13-1",
+          "ru": "Задача: платформа для пяти бизнес-единиц Orion",
+          "en": "The task: Orion's five business units"
+        },
+        {
+          "id": "s-13-2",
+          "ru": "Почему без трасс нет доказательств",
+          "en": "Why traces are the evidence"
+        },
+        {
+          "id": "s-13-3",
+          "ru": "Модель трассы",
+          "en": "The trace model"
+        },
+        {
+          "id": "s-13-4",
+          "ru": "LLM-native метрики",
+          "en": "LLM-native metrics"
+        },
+        {
+          "id": "s-13-5",
+          "ru": "Атрибуция стоимости",
+          "en": "Cost attribution"
+        },
+        {
+          "id": "s-13-6",
+          "ru": "Безопасное логирование",
+          "en": "Logging content safely"
+        },
+        {
+          "id": "s-13-7",
+          "ru": "SLO и алерты",
+          "en": "SLOs and alerting"
+        },
+        {
+          "id": "s-13-8",
+          "ru": "На Google Cloud: Cloud Trace и трассировка Agent Runtime",
+          "en": "On Google Cloud: Cloud Trace and Agent Runtime tracing"
+        },
+        {
+          "id": "s-13-9",
+          "ru": "Вглубь: амортизация кэша, спаны через границы, выборка и стоимость",
+          "en": "In depth: cache amortisation, spans across boundaries, sampling and cost"
+        }
+      ]
+    },
+    {
+      "num": 14,
+      "id": "ch-14",
+      "file": "42-ch-14",
+      "layers": [
+        "B",
+        "A",
+        "D"
+      ],
+      "gcloud": true,
+      "case": "CF6",
+      "diagrams": 3,
+      "listings": [
+        "naive_scaling",
+        "capacity_model",
+        "gpu_sizing",
+        "batch_queue",
+        "cascade_router",
+        "edge_sync"
+      ],
+      "title": {
+        "ru": "Производительность, масштаб, стоимость и аппаратура",
+        "en": "Performance, Scale, Cost and Hardware"
+      },
+      "sections": [
+        {
+          "id": "s-14-1",
+          "ru": "Задача: четырнадцать заводов Helix",
+          "en": "The task: Helix's fourteen plants"
+        },
+        {
+          "id": "s-14-2",
+          "ru": "Почему масштаб сводится к планированию мощности",
+          "en": "Why scale is capacity planning"
+        },
+        {
+          "id": "s-14-3",
+          "ru": "Модель мощности",
+          "en": "The capacity model"
+        },
+        {
+          "id": "s-14-4",
+          "ru": "Инженерия задержки",
+          "en": "Latency engineering"
+        },
+        {
+          "id": "s-14-5",
+          "ru": "Батч против онлайна",
+          "en": "Batch versus online"
+        },
+        {
+          "id": "s-14-6",
+          "ru": "Аппаратура и сайзинг",
+          "en": "Hardware and sizing"
+        },
+        {
+          "id": "s-14-7",
+          "ru": "Каскады и маршрутизация",
+          "en": "Cascades and routing"
+        },
+        {
+          "id": "s-14-8",
+          "ru": "Рычаги стоимости",
+          "en": "Cost levers"
+        },
+        {
+          "id": "s-14-9",
+          "ru": "На Google Cloud: provisioned throughput, TPU, Google Distributed Cloud",
+          "en": "On Google Cloud: provisioned throughput, TPU, Google Distributed Cloud"
+        },
+        {
+          "id": "s-14-10",
+          "ru": "Вглубь: квота как общий ресурс, KV-кэш, спекулятивные вызовы, изолированные сети",
+          "en": "In depth: quota as a shared resource, the KV cache, speculative calls, air-gapped sites"
+        }
+      ]
+    },
+    {
+      "num": 15,
+      "id": "ch-15",
+      "file": "43-ch-15",
+      "layers": [
+        "D",
+        "F"
+      ],
+      "gcloud": false,
+      "case": "CF2",
+      "diagrams": 3,
+      "listings": [
+        "naive_deploy",
+        "release_bundle",
+        "kill_switch",
+        "drift_detector",
+        "incident_log",
+        "postmortem_to_eval"
+      ],
+      "title": {
+        "ru": "Надёжность, инциденты и отладка в production",
+        "en": "Reliability, Incidents and Debugging in Production"
+      },
+      "sections": [
+        {
+          "id": "s-15-1",
+          "ru": "Задача: 09:10 в Meridian",
+          "en": "The task: 09:10 at Meridian"
+        },
+        {
+          "id": "s-15-2",
+          "ru": "Почему AI-системы отказывают по-новому",
+          "en": "Why AI systems fail in new ways"
+        },
+        {
+          "id": "s-15-3",
+          "ru": "Таксономия отказов",
+          "en": "A failure taxonomy"
+        },
+        {
+          "id": "s-15-4",
+          "ru": "Лестница деградации",
+          "en": "The degradation ladder"
+        },
+        {
+          "id": "s-15-5",
+          "ru": "Release bundle",
+          "en": "The release bundle"
+        },
+        {
+          "id": "s-15-6",
+          "ru": "Отладка по трассам",
+          "en": "Debugging with traces"
+        },
+        {
+          "id": "s-15-7",
+          "ru": "Коммуникация с заказчиком",
+          "en": "Communicating with the customer"
+        },
+        {
+          "id": "s-15-8",
+          "ru": "Постмортем в evals",
+          "en": "From postmortem to evals"
+        },
+        {
+          "id": "s-15-9",
+          "ru": "Вглубь: тихое обновление модели, новый парсер, частичный откат",
+          "en": "In depth: the silent model update, the new parser, the partial rollback"
+        }
+      ]
+    },
+    {
+      "num": 16,
+      "id": "ch-16",
+      "file": "50-ch-16",
+      "layers": [
+        "G",
+        "F"
+      ],
+      "gcloud": false,
+      "case": "CF6",
+      "diagrams": 2,
+      "listings": [
+        "naive_copy",
+        "client_module",
+        "pattern_registry",
+        "feature_request",
+        "business_case",
+        "acceptance_criteria"
+      ],
+      "title": {
+        "ru": "От полевых паттернов к модулям и бизнес-ценности",
+        "en": "From Field Patterns to Reusable Modules and Business Value"
+      },
+      "sections": [
+        {
+          "id": "s-16-1",
+          "ru": "Задача: модуль из трёх engagements",
+          "en": "The task: a module from three engagements"
+        },
+        {
+          "id": "s-16-2",
+          "ru": "Почему ценность Staff растёт нелинейно",
+          "en": "Why the value of Staff work grows non-linearly"
+        },
+        {
+          "id": "s-16-3",
+          "ru": "Добыча паттернов",
+          "en": "Pattern mining"
+        },
+        {
+          "id": "s-16-4",
+          "ru": "Модуль и multi-client deployment",
+          "en": "The module and multi-client deployment"
+        },
+        {
+          "id": "s-16-5",
+          "ru": "Feature request с доказательствами",
+          "en": "The evidence-backed feature request"
+        },
+        {
+          "id": "s-16-6",
+          "ru": "Бизнес-кейс и ROI",
+          "en": "The business case and ROI"
+        },
+        {
+          "id": "s-16-7",
+          "ru": "SOW, приёмка и выход",
+          "en": "SOW, acceptance and exit"
+        },
+        {
+          "id": "s-16-8",
+          "ru": "Текст для нетехнических читателей и change management",
+          "en": "Writing for non-engineers and change management"
+        },
+        {
+          "id": "s-16-9",
+          "ru": "Вглубь: преждевременная абстракция, дрейф конфигураций, ROI без базы",
+          "en": "In depth: premature abstraction, configuration drift, ROI without a baseline"
+        }
+      ]
+    },
+    {
+      "num": 17,
+      "id": "ch-17",
+      "file": "51-ch-17",
+      "layers": [
+        "A",
+        "B",
+        "G"
+      ],
+      "gcloud": true,
+      "case": "CF5",
+      "diagrams": 3,
+      "listings": [
+        "naive_slides",
+        "reference_architecture",
+        "tco_model",
+        "adr_generator",
+        "architecture_review"
+      ],
+      "title": {
+        "ru": "Трек архитектора: reference architectures и TCO",
+        "en": "The Architect Track: Reference Architectures and TCO"
+      },
+      "sections": [
+        {
+          "id": "s-17-1",
+          "ru": "Задача: целевая архитектура на три года",
+          "en": "The task: a three-year target architecture"
+        },
+        {
+          "id": "s-17-2",
+          "ru": "Почему архитектура является набором решений",
+          "en": "Why architecture is a set of decisions"
+        },
+        {
+          "id": "s-17-3",
+          "ru": "Reference architectures",
+          "en": "Reference architectures"
+        },
+        {
+          "id": "s-17-4",
+          "ru": "Точки вариации",
+          "en": "Variation points"
+        },
+        {
+          "id": "s-17-5",
+          "ru": "Совокупная стоимость владения",
+          "en": "Total cost of ownership"
+        },
+        {
+          "id": "s-17-6",
+          "ru": "Build, buy, partner",
+          "en": "Build, buy, partner"
+        },
+        {
+          "id": "s-17-7",
+          "ru": "Привязка к вендору и стратегии выхода",
+          "en": "Vendor lock-in and exit strategies"
+        },
+        {
+          "id": "s-17-8",
+          "ru": "ADR и архитектурное ревью",
+          "en": "ADRs and architecture review"
+        },
+        {
+          "id": "s-17-9",
+          "ru": "На Google Cloud: well-architected для агентных систем",
+          "en": "On Google Cloud: well-architected for agentic systems"
+        },
+        {
+          "id": "s-17-10",
+          "ru": "Вглубь: скрытые затраты in-tenancy, цены на токены, мультиоблако без драйвера",
+          "en": "In depth: hidden in-tenancy costs, token prices, multi-cloud without a driver"
+        }
+      ]
+    },
+    {
+      "num": 18,
+      "id": "ch-18",
+      "file": "52-ch-18",
+      "layers": [
+        "F",
+        "G"
+      ],
+      "gcloud": false,
+      "case": null,
+      "diagrams": 3,
+      "listings": [
+        "naive_standards",
+        "standards_check",
+        "interview_rubric",
+        "staffing_model",
+        "benchmark_suite",
+        "roadmap_input"
+      ],
+      "title": {
+        "ru": "Руководство Forward Deployed Engineering",
+        "en": "Leading Forward Deployed Engineering"
+      },
+      "sections": [
+        {
+          "id": "s-18-1",
+          "ru": "Задача: региональный squad",
+          "en": "The task: a regional squad"
+        },
+        {
+          "id": "s-18-2",
+          "ru": "Почему руководитель squad строит систему процедур",
+          "en": "Why the squad lead builds a system of procedures"
+        },
+        {
+          "id": "s-18-3",
+          "ru": "Стандарты и benchmarks",
+          "en": "Standards and benchmarks"
+        },
+        {
+          "id": "s-18-4",
+          "ru": "Процесс найма",
+          "en": "The hiring process"
+        },
+        {
+          "id": "s-18-5",
+          "ru": "Staffing и утилизация",
+          "en": "Staffing and utilisation"
+        },
+        {
+          "id": "s-18-6",
+          "ru": "Партнёрство с Sales",
+          "en": "Partnering with Sales"
+        },
+        {
+          "id": "s-18-7",
+          "ru": "Устранение пробелов в навыках",
+          "en": "Closing skill gaps"
+        },
+        {
+          "id": "s-18-8",
+          "ru": "Вход в roadmap и брифы для высшего руководства",
+          "en": "Roadmap input and executive briefs"
+        },
+        {
+          "id": "s-18-9",
+          "ru": "Менторство и co-building",
+          "en": "Mentoring and co-building"
+        },
+        {
+          "id": "s-18-10",
+          "ru": "Вглубь: дрейф калибровки, утилизация против паттернов, выгорание",
+          "en": "In depth: calibration drift, utilisation versus patterns, burnout"
+        }
+      ]
+    },
+    {
+      "num": 19,
+      "id": "ch-19",
+      "file": "70-ch-19",
+      "private": true
+    },
+    {
+      "num": 20,
+      "id": "ch-20",
+      "file": "71-ch-20",
+      "private": true
+    },
+    {
+      "num": 21,
+      "id": "ch-21",
+      "file": "72-ch-21",
+      "private": true
+    },
+    {
+      "num": 22,
+      "id": "ch-22",
+      "file": "73-ch-22",
+      "private": true
+    }
+  ],
+  "appendices": [
+    {
+      "letter": "A",
+      "id": "app-a",
+      "file": "90-app-a",
+      "generated": false,
+      "title": {
+        "ru": "Карта требований вакансий",
+        "en": "Map to the Job Requirements"
+      }
+    },
+    {
+      "letter": "B",
+      "id": "app-b",
+      "file": "91-app-b",
+      "generated": false,
+      "title": {
+        "ru": "Справочник инструментов",
+        "en": "Framework and Tool Reference"
+      }
+    },
+    {
+      "letter": "C",
+      "id": "app-c",
+      "file": "92-app-c",
+      "generated": true,
+      "host": "glossary",
+      "title": {
+        "ru": "Глоссарий",
+        "en": "Glossary"
+      }
+    },
+    {
+      "letter": "D",
+      "id": "app-d",
+      "file": "93-app-d",
+      "generated": true,
+      "host": "antipatterns",
+      "title": {
+        "ru": "Индекс ошибок",
+        "en": "Index of Mistakes"
+      }
+    },
+    {
+      "letter": "E",
+      "id": "app-e",
+      "file": "94-app-e",
+      "generated": false,
+      "title": {
+        "ru": "Источники",
+        "en": "Sources"
+      }
+    },
+    {
+      "letter": "F",
+      "id": "app-f",
+      "file": "95-app-f",
+      "generated": false,
+      "title": {
+        "ru": "План чтения по ролям",
+        "en": "Reading Plan by Role"
+      }
+    },
+    {
+      "letter": "G",
+      "id": "app-g",
+      "file": "96-app-g",
+      "generated": false,
+      "title": {
+        "ru": "Досье заказчиков",
+        "en": "Case Files"
+      }
+    },
+    {
+      "id": "app-q",
+      "file": "97-app-q",
+      "private": true,
+      "letter": "Q"
+    }
+  ],
+  "cases": [
+    {
+      "code": "CF1",
+      "name": "Nordbank Regional",
+      "sector": {
+        "ru": "региональный банк",
+        "en": "regional retail bank"
+      }
+    },
+    {
+      "code": "CF2",
+      "name": "Meridian Health Network",
+      "sector": {
+        "ru": "сеть клиник",
+        "en": "hospital network"
+      }
+    },
+    {
+      "code": "CF3",
+      "name": "Transkontinent Logistics",
+      "sector": {
+        "ru": "логистика",
+        "en": "logistics"
+      }
+    },
+    {
+      "code": "CF4",
+      "name": "Orion Telecom",
+      "sector": {
+        "ru": "телеком",
+        "en": "telecom"
+      }
+    },
+    {
+      "code": "CF5",
+      "name": "City of Northgate",
+      "sector": {
+        "ru": "муниципалитет",
+        "en": "municipal government"
+      }
+    },
+    {
+      "code": "CF6",
+      "name": "Helix Manufacturing",
+      "sector": {
+        "ru": "производство",
+        "en": "manufacturing"
+      }
+    }
+  ]
+}

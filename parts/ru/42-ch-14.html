@@ -1,0 +1,1030 @@
+<!-- ────────────────────────── ГЛАВА 14 ────────────────────────── -->
+<section class="chapter" id="ch-14">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава четырнадцатая</p>
+    <span class="strata" role="img" aria-label="Слои A, B и D: системы заказчика, модель и агентный слой, оценка и наблюдаемость">
+      <i data-s="A"></i><i data-s="B"></i><i></i><i data-s="D"></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-14"><span class="num">14</span>Производительность, масштаб, стоимость и аппаратура</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>переводить объём заказчика из документов в сутки в токены пиковой минуты, единицы выделенной мощности и месячную стоимость с проверкой размерностей;</li>
+<li>выбирать между управляемым эндпоинтом, provisioned throughput, self-hosting в облаке и edge по четырём ответам заказчика;</li>
+<li>рассчитывать, сколько одновременных последовательностей модели с открытыми весами помещается в память ускорителя;</li>
+<li>ставить батч в провал суточной кривой и защищать онлайн-нагрузку приоритетом, резервом и обратным давлением;</li>
+<li>строить каскад моделей и измерять долю эскалаций, смешанную стоимость и пропущенные ошибки.</li>
+</ul>
+</div>
+
+<h3 id="s-14-1"><span class="num">14.1</span>Задача: четырнадцать заводов Helix</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-6" data-secref="G.6">Досье CF6 · Helix Manufacturing</a></span>
+  <span class="tag">14 заводов</span>
+  <span class="tag">3 без сети</span>
+  <span class="tag">edge GPU</span>
+  <span>производство</span>
+</div>
+
+<p>Helix Manufacturing выпускает узлы гидравлики на четырнадцати заводах. Инженерам по качеству и техникам нужен ассистент, который объясняет дефект, найденный камерой на линии, по журналу обслуживания станка и каталогу запчастей и отвечает на вопросы об отказах по истории нарядов. На одиннадцати заводах, связанных с облаком, это около 48 000 обращений в сутки, и четверть из них приходится на три часа после начала утренней смены в 06:00.</p>
+
+<p>Три завода изолированы от сети: там выпускаются изделия под экспортным контролем, и руководитель OT-безопасности не допускает никаких внешних соединений. На этих площадках модель с открытыми весами работает на GPU завода, а пакеты модели и результаты переносятся на носителе; связанные заводы обслуживает центральный парк в облаке. Кроме того, заводы выгружают наряды, акты осмотра и сертификаты поставщиков: два миллиона документов в месяц, которые не нужно обрабатывать немедленно.</p>
+
+<p>Директор по производству поставил три требования: объяснение дефекта начинает появляться на терминале быстрее двух секунд в 95 % случаев, документы за сутки обработаны к следующей утренней смене, месячный счёт за модели предсказуем с точностью до десяти процентов. В главе эти требования переведены в расчёт мощности, выбор места исполнения, планировщик батча, каскад моделей и процедуру обновления изолированных площадок.</p>
+
+<h3 id="s-14-2"><span class="num">14.2</span>Почему масштаб сводится к планированию мощности</h3>
+
+<p>Веб-сервис масштабируется добавлением экземпляров: процессорное время дёшево и доступно за минуты. Масштабирование системы с языковой моделью ограничено другими ресурсами: в квоту поставщика на токены в минуту, в выделенную мощность, оплаченную на срок, в память ускорителей, которые поставляются неделями, и в людей, способных эксплуатировать сервинг моделей.</p>
+
+<dl class="def">
+<dt>Квота <span class="en">(quota)</span></dt>
+<dd>Верхний предел потребления, который поставщик устанавливает на проект, регион и модель: токенов в минуту, запросов в минуту или того и другого. Квота задаёт верхний предел и не гарантирует мощность: при нехватке общей мощности поставщика запрос в пределах квоты может получить отказ.</dd>
+<dt>Выделенная пропускная способность <span class="en">(provisioned throughput)</span></dt>
+<dd>Мощность обработки токенов, закреплённая за заказчиком на срок за фиксированную плату. Она оплачивается независимо от использования, запросы в её пределах обслуживаются раньше запросов с оплатой за токены, а измеряется в токенах в секунду после пересчёта входа и выхода по коэффициентам поставщика.</dd>
+</dl>
+
+<p>Поэтому планирование начинается с трёх величин: числа токенов в пиковую минуту, мощности, которая их обслужит, и стоимости её простоя в остальные часы. Эти величины вычисляются арифметикой над профилем нагрузки. Нагрузочный тест в последний месяц проекта этот расчёт не заменяет: тест показывает, что квоты не хватает, но не показывает, какую мощность покупать. Первое решение касается места исполнения модели, и у Helix оно принимается трижды: для онлайн-ассистента, для батча документов и для изолированных площадок.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Дерево решений о размещении модели из четырёх вопросов: запрет на вывод данных с площадки ведёт к edge, отсутствие команды эксплуатации ведёт к выбору между управляемым эндпоинтом и provisioned throughput по форме нагрузки и p95, а наличие команды и объём, окупающий ускорители, ведут к self-hosting в облаке" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar14a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="260" y="20" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Данные вправе покинуть площадку?</text>
+  <text x="440" y="60" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">резидентность · связность</text>
+
+  <rect x="676" y="20" width="190" height="52" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="771" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">edge на площадке</text>
+  <text x="771" y="60" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">open weights · 14.6</text>
+  <line x1="620" y1="46" x2="668" y2="46" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="644" y="38" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+  <text x="771" y="92" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Helix: 3 изолированных завода</text>
+
+  <line x1="440" y1="72" x2="440" y2="106" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="450" y="93" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+
+  <rect x="260" y="114" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="136" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Есть команда эксплуатации сервинга?</text>
+  <text x="440" y="154" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">дежурства · обновления · драйверы</text>
+
+  <path d="M440,166 V190 H210 V206" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <path d="M440,190 H670 V206" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="325" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+  <text x="555" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+
+  <rect x="30" y="214" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="210" y="236" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Стабильная база или жёсткий p95 в пик?</text>
+  <text x="210" y="254" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">форма суточной кривой · SLO</text>
+
+  <rect x="490" y="214" width="360" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="670" y="236" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">Объём окупает собственные ускорители?</text>
+  <text x="670" y="254" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">загрузка ускорителей · цена токена</text>
+
+  <line x1="490" y1="240" x2="398" y2="240" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14a)"/>
+  <text x="444" y="232" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+
+  <path d="M210,266 V290 H110 V310" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <path d="M210,290 H310 V310" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="160" y="284" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">нет</text>
+  <text x="260" y="284" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+  <line x1="670" y1="266" x2="670" y2="310" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14a)"/>
+  <text x="680" y="293" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">да</text>
+
+  <rect x="18" y="318" width="184" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="110" y="341" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">управляемый эндпоинт</text>
+  <text x="110" y="359" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">оплата за токены · 14.3</text>
+  <rect x="218" y="318" width="184" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="310" y="341" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">provisioned throughput</text>
+  <text x="310" y="359" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">подписка · 14.3, 14.9</text>
+  <rect x="578" y="318" width="184" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="670" y="341" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">self-hosted в облаке</text>
+  <text x="670" y="359" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">GKE, GPU, TPU · 14.6</text>
+  <text x="310" y="392" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">Helix: онлайн, 11 заводов</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Место исполнения выводится из четырёх ответов заказчика: резидентность исключает облако целиком, отсутствие собственной команды эксплуатации исключает self-hosting, форма суточной кривой определяет выбор между оплатой за токены и подпиской на мощность, а объём определяет, окупаются ли собственные ускорители.</figcaption>
+</figure>
+
+<p>Порядок вопросов существенен. Резидентность проверяется первой, потому что отрицательный ответ отменяет остальные: для трёх заводов Helix облако исключено при любом результате расчёта стоимости. Вопрос об эксплуатации предшествует вопросу об объёме, потому что расчёт стоимости self-hosting без команды дежурств не учитывает простоя при отказе драйвера в ночную смену, когда устранить отказ некому.</p>
+
+<h3 id="s-14-3"><span class="num">14.3</span>Модель мощности</h3>
+
+<p>Модель мощности переводит объём из единиц заказчика в единицы поставщика. Цепочка одна для всех вариантов размещения: документы в сутки умножаются на токены на документ, делятся на секунды суток, умножаются на отношение пика к среднему и сравниваются с мощностью одной единицы. Токены введены в <a href="#s-3-3" data-secref="3.3">разделе 3.3</a>, а здесь добавляется одно обстоятельство: поставщики пересчитывают выходной токен в несколько входных, потому что выход занимает мощность дольше.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Шаг расчёта для онлайн-ассистента Helix</th><th>Значение</th><th>Размерность</th></tr></thead>
+<tbody>
+<tr><td>Обращений в сутки</td><td>48 000</td><td>doc</td></tr>
+<tr><td>Токенов на обращение: вход 3 200 плюс выход 300 с коэффициентом 4</td><td>4 400</td><td>tok/doc</td></tr>
+<tr><td>Средняя нагрузка: 48 000 × 4 400 / 86 400</td><td>2 444</td><td>tok/s</td></tr>
+<tr><td>Час утренней смены: средняя × 2.4</td><td>5 867</td><td>tok/s</td></tr>
+<tr><td>Пиковая минута: 5 867 × 60</td><td>352 000</td><td>tok</td></tr>
+<tr><td>Единиц мощности по 700 tok/s на пиковый час</td><td>9</td><td>gsu</td></tr>
+</tbody></table></div>
+
+<p>Наивная реализация обходится без этого расчёта, и о нехватке квоты сообщает ответ 429.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы обработать объём">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="18">
+      <figcaption><span class="file">naive_scaling.py</span></figcaption>
+      <pre><code>from dataclasses import dataclass, field
+
+TPM_QUOTA = 100_000                   # квота проекта: токенов в минуту на модель
+
+
+class QuotaExceeded(Exception):
+    """Ответ 429: квота токенов в минуту исчерпана."""
+
+
+@dataclass
+class FakeModel:
+    """Модель за квотой в скользящую минуту; часы в миллисекундах."""
+    now_ms: int = 0
+    window: list[tuple[int, int]] = field(default_factory=list)
+
+    def generate(self, prompt_tokens: int, max_output: int) -&gt; str:
+        self.window = [(t, n) for t, n in self.window if self.now_ms - t &lt; 60_000]
+        cost = prompt_tokens + max_output
+        if sum(n for _, n in self.window) + cost &gt; TPM_QUOTA:
+            self.now_ms += 50                  # отказ приходит быстро
+            raise QuotaExceeded("429 RESOURCE_EXHAUSTED")
+        self.window.append((self.now_ms, cost))
+        self.now_ms += 500                     # ответ модели
+        return '{"defect": "scratch", "severity": 2}'
+
+
+def process_backlog(docs: list[int], model: FakeModel) -&gt; tuple[int, int]:
+    done = failed = 0
+    for tokens in docs:                        # один документ, один вызов, без пауз
+        try:
+            model.generate(tokens, max_output=100)
+            done += 1
+        except QuotaExceeded:
+            failed += 1                        # документ потерян, следующий идёт сразу
+    return done, failed
+
+
+if __name__ == "__main__":
+    backlog = [1_100] * 1_000                  # утренняя выгрузка нарядов одного завода
+    done, failed = process_backlog(backlog, FakeModel())
+    assert (done, failed) == (249, 751)         # три четверти выгрузки потеряны
+    print(f"обработано {done}, потеряно на квоте {failed}")</code></pre>
+    </figure>
+    <p>Цикл не учитывает ни квоту, ни собственный расход. Утренняя выгрузка одного завода исчерпывает квоту за сорок секунд, и из тысячи документов 249 обработаны, а 751 потерян: отказ приходит за 50 мс, и остаток каждой минуты уходит на 370 отказов. Квота общая с онлайн-ассистентом, поэтому инженер у линии получает те же 429.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">capacity_model.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Q:
+    """Число с размерностью: складываются только величины одной размерности."""
+    value: float
+    dims: tuple[tuple[str, int], ...] = ()
+
+    def _join(self, other: Q, sign: int) -&gt; tuple[tuple[str, int], ...]:
+        acc = dict(self.dims)
+        for name, power in other.dims:
+            acc[name] = acc.get(name, 0) + sign * power
+        return tuple(sorted((n, p) for n, p in acc.items() if p))
+
+    def __add__(self, other: Q) -&gt; Q:
+        if self.dims != other.dims:
+            raise TypeError(f"нельзя сложить {self.dims} и {other.dims}")
+        return Q(self.value + other.value, self.dims)
+
+    def __mul__(self, other: Q | float) -&gt; Q:
+        if isinstance(other, Q):
+            return Q(self.value * other.value, self._join(other, 1))
+        return Q(self.value * other, self.dims)
+
+    def __truediv__(self, other: Q) -&gt; Q:
+        return Q(self.value / other.value, self._join(other, -1))
+
+
+def q(value: float, **dims: int) -&gt; Q:
+    return Q(value, tuple(sorted(dims.items())))
+
+
+DAY, MONTH = q(86_400, s=1), q(30 * 86_400, s=1)
+# Нагрузка по часам суток в десятых долях среднего: ночной провал и два пика смен.
+PROFILE = (3, 3, 3, 3, 3, 5, 15, 24, 22, 18, 15, 13, 10, 11, 19, 17, 14, 11, 8, 6, 5, 4, 5, 3)
+
+
+@dataclass(frozen=True)
+class Workload:
+    docs_per_day: Q            # doc
+    input_per_doc: Q           # tok/doc
+    output_per_doc: Q          # tok/doc
+
+
+@dataclass(frozen=True)
+class Tariff:
+    """Условный прайс и пересчёт пропускной способности, не цены поставщика."""
+    input_usd: Q               # usd/tok
+    output_usd: Q              # usd/tok
+    output_weight: float       # во сколько входных токенов обходится один выходной
+    per_gsu: Q                 # tok/s на единицу выделенной мощности
+    gsu_month_usd: Q           # usd за единицу в месяц
+
+
+def average_rate(w: Workload, t: Tariff) -&gt; Q:
+    per_doc = w.input_per_doc + w.output_per_doc * t.output_weight
+    return per_doc * w.docs_per_day / DAY
+
+
+def units_for(rate: Q, t: Tariff) -&gt; int:
+    need = rate / t.per_gsu
+    assert need.dims == (("gsu", 1),), need.dims
+    return math.ceil(need.value)
+
+
+def monthly_cost(w: Workload, t: Tariff, units: int) -&gt; Q:
+    """Подписка на units единиц плюс перелив сверх неё по цене за токены."""
+    capacity = t.per_gsu * q(units, gsu=1)
+    load = [average_rate(w, t).value * p / 10 for p in PROFILE]
+    spill = sum(max(0.0, x - capacity.value) for x in load) / sum(load)
+    per_doc = w.input_per_doc * t.input_usd + w.output_per_doc * t.output_usd
+    paygo = per_doc * w.docs_per_day / DAY * MONTH
+    return t.gsu_month_usd * q(units, gsu=1) + paygo * spill
+
+
+if __name__ == "__main__":
+    online = Workload(q(48_000, doc=1), q(3_200, tok=1, doc=-1), q(300, tok=1, doc=-1))
+    tariff = Tariff(q(0.30e-6, usd=1, tok=-1), q(2.50e-6, usd=1, tok=-1), 4.0,
+                    q(700, tok=1, s=-1, gsu=-1), q(560, usd=1, gsu=-1))
+    avg = average_rate(online, tariff)
+    peak, floor = avg * (max(PROFILE) / 10), avg * (min(PROFILE) / 10)
+    assert avg.dims == (("s", -1), ("tok", 1)) and round(avg.value) == 2_444
+    assert round((peak * q(60, s=1)).value) == 352_000      # токенов в пиковую минуту
+    try:
+        mixed = online.docs_per_day + online.input_per_doc
+        raise AssertionError(f"документы сложились с токенами: {mixed}")
+    except TypeError:
+        pass
+    plans = {"paygo": 0, "floor": units_for(floor, tariff), "peak": units_for(peak, tariff)}
+    cost = {name: monthly_cost(online, tariff, n) for name, n in plans.items()}
+    assert plans == {"paygo": 0, "floor": 2, "peak": 9}
+    assert all(c.dims == (("usd", 1),) for c in cost.values())
+    assert cost["floor"].value &lt; cost["paygo"].value &lt; cost["peak"].value
+    assert cost["peak"].value &gt; 2 * cost["paygo"].value      # гарантия пика дороже самих токенов
+    print("единиц:", plans, "долларов в месяц:", {k: round(c.value) for k, c in cost.items()})</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="dims: tuple[tuple[str, int], ...] = ()">строка 11</span><p>Размерность хранится как набор единиц со степенями: токены в секунду записываются как <code>tok</code> в первой степени и <code>s</code> в минус первой. Умножение складывает степени, деление вычитает, сложение требует совпадения, и ошибка единиц останавливает расчёт до того, как попадёт в заказ мощности.</p></div>
+        <div><span class="at" data-anchor="output_weight: float">строка 54</span><p>Коэффициент пересчёта выходного токена поставщик задаёт таблицей для каждой модели. В листинге выходной токен стоит четырёх входных, и 300 выходных токенов обращения занимают больше трети мощности, которую занимают 3 200 входных.</p></div>
+        <div><span class="at" data-anchor="spill = sum(">строка 74</span><p>Перелив считается по часам профиля: нагрузка сверх подписки обслуживается по цене за токены. Минутные всплески часовой профиль сглаживает; для них у поставщика есть собственное окно учёта (<a href="#s-14-9" data-secref="14.9">раздел 14.9</a>).</p></div>
+        <div><span class="at" data-anchor="assert cost[&quot;floor&quot;].value">строка 97</span><p>Подписка на пиковый час стоит вдвое больше оплаты за токены, потому что большую часть суток простаивает. Подписка на ночной минимум немного дешевле оплаты за токены, но почти ничего не гарантирует. Выбранный план лежит между ними; он дороже оплаты за токены, и разница оплачивает гарантию мощности в часы пиков.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается момента, когда обнаруживается нехватка мощности: в наивном цикле её показывают отказы посреди выгрузки, в модели мощности арифметика до заказа.</p>
+    <p>Второе различие касается единиц: наивный код хранит документы и токены как числа без размерности, модель мощности хранит размерность вместе с числом и не допускает сложения величин разной размерности.</p>
+    <p>Третье различие касается предмета решения: наивный код решает, как обработать документ, модель мощности решает, какую мощность купить и во что обойдётся её простой.</p>
+  </div>
+</div>
+
+<p>Helix выбирает промежуточный план: пять единиц, 3 500 токенов в секунду, или 1.43 средней нагрузки. Подписка обслуживает 88 % онлайн-токенов, перелив в пики смен оплачивается по цене за токены, и счёт в условном прайсе листинга составляет 3 105 долларов в месяц против 2 462 при полной оплате за токены. Доплата оплачивает гарантию для утренней смены, а <a href="#s-14-5" data-secref="14.5">раздел 14.5</a> показывает, как ночной батч использует простаивающую мощность и возвращает большую часть доплаты.</p>
+
+<p>Для собственного ускорителя цепочка заканчивается другой единицей: мощность определяется памятью, то есть числом последовательностей заданной длины, которые модель обслуживает одновременно.</p>
+
+<dl class="def">
+<dt>KV-кэш <span class="en">(key-value cache)</span></dt>
+<dd>Сохранённые ключи и значения слоёв внимания для уже обработанных токенов последовательности. Кэш избавляет модель от пересчёта всего префикса при порождении каждого нового токена и растёт линейно с длиной контекста и числом одновременных последовательностей, поэтому при длинных контекстах и многих одновременных последовательностях может занимать больше памяти, чем веса.</dd>
+</dl>
+
+<p>Память сервинга складывается из весов и кэша. Веса занимают число параметров, умноженное на байты на параметр: 2 байта при 16 битах, 1 при 8, около 0.55 при 4 битах с масштабами групп. Кэш одной последовательности равен произведению двух (ключ и значение), числа слоёв, числа KV-голов, размера головы, байтов на элемент и длины контекста. Число одновременных последовательностей равно памяти, свободной после весов и резерва, делённой на кэш одной последовательности.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">gpu_sizing.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+GIB = 2**30
+
+
+@dataclass(frozen=True)
+class ModelShape:
+    """Иллюстративные размеры плотного трансформера, а не конкретная модель."""
+    params_b: float            # миллиарды параметров
+    layers: int
+    kv_heads: int              # головы ключей и значений; при GQA их меньше голов запроса
+    head_dim: int
+
+
+@dataclass(frozen=True)
+class Precision:
+    weight_bytes: float        # байт на параметр: 2 для 16 бит, 1 для 8, около 0.55 для 4 бит
+    kv_bytes: float            # байт на элемент KV-кэша
+
+
+def weights_gib(m: ModelShape, p: Precision) -&gt; float:
+    return m.params_b * 1e9 * p.weight_bytes / GIB
+
+
+def kv_gib(m: ModelShape, p: Precision, context: int) -&gt; float:
+    """Ключ и значение × слои × KV-головы × размер головы × байты × токены."""
+    return 2 * m.layers * m.kv_heads * m.head_dim * p.kv_bytes * context / GIB
+
+
+def max_sequences(m: ModelShape, p: Precision, gpu_gib: float, context: int,
+                  reserve: float = 0.10, runtime_gib: float = 1.5) -&gt; int:
+    """Сколько последовательностей полной длины помещается в память одновременно."""
+    free = gpu_gib * (1 - reserve) - runtime_gib - weights_gib(m, p)
+    return max(0, math.floor(free / kv_gib(m, p, context)))
+
+
+if __name__ == "__main__":
+    mid = ModelShape(params_b=30, layers=60, kv_heads=8, head_dim=128)
+    small = ModelShape(params_b=8, layers=32, kv_heads=8, head_dim=128)
+    fp16, int8 = Precision(2.0, 2.0), Precision(1.0, 2.0)
+    int4, int4_kv8 = Precision(0.55, 2.0), Precision(0.55, 1.0)
+
+    assert round(weights_gib(mid, fp16), 1) == 55.9
+    assert round(kv_gib(mid, fp16, 32_000), 2) == 7.32         # одна длинная последовательность
+    assert max_sequences(mid, fp16, 80, 32_000) == 1
+    assert max_sequences(mid, int8, 80, 32_000) == 5            # 8 бит: впятеро больше
+    assert max_sequences(mid, int8, 80, 4_000) == 46            # короткий контекст: в девять раз больше
+    assert max_sequences(mid, int4_kv8, 80, 32_000) == 15
+    # На длинном контексте кэш вмещённых последовательностей больше самих весов.
+    assert 5 * kv_gib(mid, int8, 32_000) &gt; weights_gib(mid, int8)
+
+    # Узел завода: карта на 24 ГиБ, контекст 8 тыс. токенов.
+    assert max_sequences(small, int8, 24, 8_000) == 12
+    assert max_sequences(small, fp16, 24, 8_000) == 5
+    assert max_sequences(mid, int4, 24, 8_000) == 2
+    assert max_sequences(mid, fp16, 24, 8_000) == 0             # веса не помещаются вовсе
+    fits = {name: max_sequences(mid, p, 80, 32_000)
+            for name, p in (("fp16", fp16), ("int8", int8), ("int4+kv8", int4_kv8))}
+    print("последовательностей на 80 ГиБ при 32 тыс. токенов:", fits)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="kv_heads: int">строка 14</span><p>При групповом внимании (GQA) несколько голов запроса делят одну пару ключей и значений, поэтому в формулу кэша входит число KV-голов. Модель с 64 головами запроса и 8 KV-головами хранит в восемь раз меньший кэш, чем такая же модель без группировки.</p></div>
+  <div><span class="at" data-anchor="reserve: float = 0.10">строка 34</span><p>Резерв и накладные расходы среды исполнения вычитаются до расчёта кэша: фрагментация памяти, активации, контекст драйвера. Десять процентов и полтора гигабайта здесь условны; фактические значения берутся из замера сервера модели под нагрузкой.</p></div>
+  <div><span class="at" data-anchor="4_000) == 46">строка 50</span><p>Длина контекста меняет ответ сильнее квантизации: те же 8 бит при 4 000 токенах вмещают 46 последовательностей вместо пяти. Мощность собственной модели указывается вместе с длиной контекста, поскольку без неё число последовательностей не определено.</p></div>
+  <div><span class="at" data-anchor="max_sequences(small, int8, 24, 8_000) == 12">строка 56</span><p>Узел завода Helix: модель на 8 млрд параметров в 8 битах на карте 24 ГиБ обслуживает 12 последовательностей по 8 000 токенов. Модель на 30 млрд в 4 битах помещается на ту же карту с двумя последовательностями, и выбор между ними определяется оценкой качества, поскольку по памяти подходят обе.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Покупать мощность по средней нагрузке или по тесту с равномерным потоком. Средняя нагрузка Helix в 2.4 раза ниже часа утренней смены, и мощность, рассчитанная по средней, отказывает в часы утренней смены, когда обращений больше всего. Для собственных ускорителей та же ошибка принимает форму расчёта по короткому контексту: один запрос с полным журналом станка вытесняет десяток коротких.</div>
+
+<h3 id="s-14-4"><span class="num">14.4</span>Инженерия задержки</h3>
+
+<p>Требование Helix записано как p95 времени до первого токена ниже двух секунд; метрики распределения задержки описаны в <a href="#s-13-4" data-secref="13.4">разделе 13.4</a>. Медиану определяет типичный запрос, а p95 определяют редкие события, и у каждого из них свой приём.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Источник хвоста</th><th>Механизм</th><th>Приём</th></tr></thead>
+<tbody>
+<tr><td>Очередь у поставщика в пик</td><td>запрос ждёт свободной мощности</td><td>выделенная мощность, батч вне пика</td></tr>
+<tr><td>Промах кэша префикса</td><td>вход обрабатывается целиком</td><td>стабильный префикс, <a href="#s-3-8" data-secref="3.8">раздел 3.8</a></td></tr>
+<tr><td>Длинный ответ</td><td>выходные токены порождаются по одному</td><td>поток, лимит выхода, краткая схема</td></tr>
+<tr><td>Последовательные вызовы</td><td>задержки складываются</td><td>параллельные независимые вызовы</td></tr>
+<tr><td>Повтор после 429</td><td>к задержке добавляются ожидание и второй вызов</td><td>лимитер до вызова вместо повтора после</td></tr>
+<tr><td>Большая модель на простом кейсе</td><td>порождение медленнее</td><td>каскад, <a href="#s-14-7" data-secref="14.7">раздел 14.7</a></td></tr>
+</tbody></table></div>
+
+<p>Поток не сокращает полное время ответа, но переносит требование на первый токен: техник видит начало объяснения через секунду, а конец через шесть. Кэш префикса сокращает ту же величину.</p>
+
+<p>При параллельных вызовах задержка результата равна максимуму задержек вызовов, и у этого максимума свой хвост. Результат пяти независимых вызовов укладывается во время t с вероятностью F(t) в пятой степени, где F(t) является функцией распределения задержки одного вызова. Чтобы результат имел p95, каждый вызов должен укладываться с вероятностью 0.95 в степени одна пятая, около 0.99: p95 разветвления равен p99 одного вызова.</p>
+
+<p>Хвост сокращает и дублирование: второй экземпляр запроса отправляется, если первый не ответил за заданное время. Приём сокращает задержку ценой дополнительных токенов и действует только при независимых задержках (<a href="#s-14-10" data-secref="14.10">раздел 14.10</a>).</p>
+
+<h3 id="s-14-5"><span class="num">14.5</span>Батч против онлайна</h3>
+
+<p>Работа делится на два класса по тому, ждёт ли её человек: запрос техника теряет ценность через секунды, наряд за вчерашнюю смену не теряет её до утра. Без приоритета мощность получает запрос, пришедший первым, а выгрузка документов приходит первой.</p>
+
+<dl class="def">
+<dt>Обратное давление <span class="en">(backpressure)</span></dt>
+<dd>Сигнал от потребителя к производителю о том, что очередь заполнена и новую работу нужно придержать. Производитель, получивший отказ в постановке, замедляется или ждёт, вместо того чтобы наращивать очередь без предела или отправлять работу в обход неё.</dd>
+</dl>
+
+<p>У батча три источника экономии: асинхронная обработка поставщика со скидкой и сроком исполнения в часах, выделенная мощность, простаивающая ночью, и собственные ускорители, простаивающие по той же кривой. Правило размещения во всех трёх случаях одно.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 340" role="img" aria-label="Суточная кривая онлайн-нагрузки с 12:00 до 12:00 на фоне квоты проекта и линии выделенной мощности: в пики смен кривая поднимается выше подписки и переливается в оплату за токены, а в ночном провале с 22:00 до 06:00 свободная мощность под линией подписки заполнена столбцами батча" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar14b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="70" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">НАГРУЗКА В ДОЛЯХ СРЕДНЕЙ ОНЛАЙН-НАГРУЗКИ</text>
+  <rect x="370" y="40" width="240" height="240" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="490" y="58" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">окно батча 22:00–06:00</text>
+
+  <line x1="70" y1="40" x2="70" y2="280" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="70" y1="280" x2="790" y2="280" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="64" y1="70" x2="70" y2="70" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="64" y1="140" x2="70" y2="140" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="64" y1="210" x2="70" y2="210" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <text x="58" y="74" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">3×</text>
+  <text x="58" y="144" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">2×</text>
+  <text x="58" y="214" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">1×</text>
+  <text x="58" y="284" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0</text>
+  <text x="70" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">12:00</text>
+  <text x="160" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">15:00</text>
+  <text x="250" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">18:00</text>
+  <text x="340" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">21:00</text>
+  <text x="430" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">00:00</text>
+  <text x="520" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">03:00</text>
+  <text x="610" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">06:00</text>
+  <text x="700" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">09:00</text>
+  <text x="790" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">12:00</text>
+
+  <line x1="70" y1="70" x2="790" y2="70" stroke="currentColor" stroke-width="1.4"/>
+  <text x="78" y="62" font-family="Inter,sans-serif" font-size="11" fill="currentColor">квота проекта: оплата за токены</text>
+  <line x1="70" y1="180" x2="790" y2="180" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="378" y="173" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--sB)">выделенная мощность: 5 единиц</text>
+
+  <rect x="133" y="150" width="24" height="27" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="163" y="164" width="24" height="13" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="643" y="115" width="24" height="62" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="673" y="129" width="24" height="48" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <rect x="703" y="157" width="24" height="20" rx="2" fill="var(--muted)" opacity="0.85"/>
+  <text x="196" y="160" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">перелив: оплата за токены</text>
+
+  <rect x="373" y="189" width="24" height="53" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="403" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="433" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="463" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="493" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="523" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="553" y="189" width="24" height="67" rx="2" fill="var(--sB)" opacity="0.85"/>
+  <rect x="583" y="189" width="24" height="53" rx="2" fill="var(--sB)" opacity="0.85"/>
+
+  <path d="M70,210 H100 V203 H130 V147 H160 V161 H190 V182 H220 V203 H250 V224 H280 V238 H310 V245 H340 V252 H370 V245 H400 V259 H580 V245 H610 V175 H640 V112 H670 V126 H700 V154 H730 V175 H760 V189 H790" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <text x="676" y="104" font-family="Inter,sans-serif" font-size="11" fill="currentColor">пик смены: 2.4 × средней</text>
+
+  <path d="M226,268 H362" fill="none" stroke="var(--sB)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14b)"/>
+  <text x="220" y="272" text-anchor="end" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">документы за день</text>
+  <text x="490" y="326" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">батч: 67 млн токенов за ночь, 88 % свободной мощности окна</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Батч размещается в ночном провале суточной кривой: подписка на мощность, рассчитанная на базу, днём дополняется оплатой за токены, а ночью простаивает, и документы, отложенные в окно 22:00–06:00, повышают её загрузку с 61 до 83 % без изменения нагрузки в пики смен.</figcaption>
+</figure>
+
+<p>Два миллиона документов в месяц по 800 входных и 50 выходных токенов дают 67 млн пересчитанных токенов за ночь. Свободная мощность пяти единиц в окне 22:00–06:00 составляет 76 млн, и батч занимает 88 % её, оставляя резерв ночной смене. Асинхронная обработка тех же документов стоила бы 365 долларов в месяц, так что подписка с ночным батчем обходится на 278 долларов дороже, чем оплата за токены вместе с асинхронной обработкой.</p>
+
+<p>Батч в общей мощности требует планировщика с тремя правилами. Онлайн-запрос проходит вперёд любой очереди документов. Батч не тратит резерв ведра токенов. Очередь батча ограничена, и при отказе в постановке выгрузка приостанавливается, а документ остаётся у производителя.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">batch_queue.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import heapq
+from dataclasses import dataclass, field
+
+ONLINE, BATCH = 0, 1                       # меньшее число извлекается раньше
+
+
+@dataclass
+class TokenBucket:
+    """Лимитер по токенам: скорость пополнения и ёмкость для всплесков."""
+    rate: float                            # токенов в секунду: квота в минуту / 60
+    burst: float                           # сколько можно потратить разом
+    level: float = 0.0
+    updated: float = 0.0
+
+    def take(self, n: int, now: float, keep: float = 0.0) -&gt; bool:
+        self.level = min(self.burst, self.level + (now - self.updated) * self.rate)
+        self.updated = now
+        if self.level - n &lt; keep:
+            return False
+        self.level -= n
+        return True
+
+
+@dataclass(order=True)
+class Job:
+    priority: int
+    seq: int
+    tokens: int = field(compare=False)
+    name: str = field(compare=False)
+
+
+@dataclass
+class Scheduler:
+    bucket: TokenBucket
+    batch_limit: int                       # длина очереди батча, после которой отказ
+    online_reserve: float                  # токены ведра, недоступные батчу
+    heap: list[Job] = field(default_factory=list)
+    seq: int = 0
+    batch_waiting: int = 0
+
+    def submit(self, name: str, tokens: int, priority: int) -&gt; bool:
+        if tokens &gt; self.bucket.burst:
+            raise ValueError(f"{name}: {tokens} токенов не пройдут лимитер никогда")
+        if priority == BATCH and self.batch_waiting &gt;= self.batch_limit:
+            return False                   # обратное давление: производитель ждёт
+        self.seq += 1
+        heapq.heappush(self.heap, Job(priority, self.seq, tokens, name))
+        if priority == BATCH:
+            self.batch_waiting += 1
+        return True
+
+    def dispatch(self, now: float) -&gt; list[str]:
+        sent: list[str] = []
+        while self.heap:
+            job = self.heap[0]
+            keep = 0.0 if job.priority == ONLINE else self.online_reserve
+            if not self.bucket.take(job.tokens, now, keep):
+                break                      # голова очереди ждёт пополнения
+            heapq.heappop(self.heap)
+            if job.priority == BATCH:
+                self.batch_waiting -= 1
+            sent.append(job.name)
+        return sent
+
+
+if __name__ == "__main__":
+    bucket = TokenBucket(rate=1_000, burst=12_000, level=12_000)
+    sched = Scheduler(bucket, batch_limit=20, online_reserve=5_000)
+    accepted = [sched.submit(f"b{i}", 1_200, BATCH) for i in range(30)]
+    assert accepted.count(False) == 10                  # десять документов не приняты
+    assert sched.dispatch(now=0.0) == [f"b{i}" for i in range(5)]
+    assert bucket.level &gt;= 5_000                        # резерв онлайна не тронут
+
+    sched.submit("inspect-17", 3_500, ONLINE)           # запрос инженера у линии
+    assert sched.dispatch(now=0.5)[0] == "inspect-17"   # вперёд пятнадцати документов батча
+
+    sent, t = 5, 0.5
+    while sched.heap:
+        t += 1.0
+        sent += len(sched.dispatch(now=t))
+    assert (sent, t) == (20, 20.5)
+    assert sched.submit("b30", 1_200, BATCH)            # очередь освободилась
+    print(f"батч из 20 документов прошёл за {t:.1f} с, онлайн не ждал")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if tokens &gt; self.bucket.burst:">строка 44</span><p>Задание больше ёмкости ведра не пройдёт никогда, и планировщик отказывает сразу. Без этой проверки такой документ оставался бы в голове очереди бесконечно и блокировал бы все задания за ним.</p></div>
+  <div><span class="at" data-anchor="self.batch_waiting &gt;= self.batch_limit">строка 46</span><p>Отказ в постановке реализует обратное давление. Производитель получает его до вызова модели и сохраняет документ у себя, поэтому длина очереди ограничена, и документ не теряется, как терялся в наивном цикле.</p></div>
+  <div><span class="at" data-anchor="keep = 0.0 if job.priority == ONLINE">строка 58</span><p>Резерв действует только против батча: онлайн-запрос вправе взять последний токен ведра. Приоритет в куче определяет порядок заданий, а резерв определяет, сколько токенов остаётся онлайну, когда первым в очереди оказался батч.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Отправлять батч через тот же клиент и ту же квоту, что и онлайн, полагаясь на повторы при 429. Отказанный документ возвращается к поставщику раньше, чем освободилась мощность, и онлайн-запросы получают отказы наравне с батчем. Батч отделяется от онлайна до вызова: приоритетом, резервом и ограниченной очередью.</div>
+
+<h3 id="s-14-6"><span class="num">14.6</span>Аппаратура и сайзинг</h3>
+
+<p>Расчёт раздела 14.3 определяет, сколько последовательностей помещается в память. Выбор аппаратуры требует ответа ещё на три вопроса: какой ускоритель подходит нагрузке, какой потерей качества квантизация экономит память и что меняется, когда ускоритель установлен в шкафу цеха.</p>
+
+<p>TPU исполняют граф, скомпилированный XLA, и наиболее эффективны на больших пакетах с постоянными формами тензоров; запросы разной длины раскладываются по корзинам длин, иначе каждая новая форма означает перекомпиляцию. GPU поддерживаются большинством серверов моделей с открытыми весами и выпускаются в исполнениях от стоек до карт в промышленных корпусах. Центральному парку Helix подходят оба варианта, изолированному цеху только GPU.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Точность весов и кэша</th><th>Веса модели на 30 млрд</th><th>Последовательностей по 32 000 токенов на 80 ГиБ</th><th>Что проверять на наборе заказчика</th></tr></thead>
+<tbody>
+<tr><td>16 бит</td><td>55.9 ГиБ</td><td>1</td><td>эталон качества</td></tr>
+<tr><td>8 бит</td><td>27.9 ГиБ</td><td>5</td><td>редкие классы дефектов</td></tr>
+<tr><td>4 бита</td><td>15.4 ГиБ</td><td>7</td><td>числа и коды запчастей в ответе</td></tr>
+<tr><td>4 бита, кэш 8 бит</td><td>15.4 ГиБ</td><td>15</td><td>качество на длинном контексте</td></tr>
+</tbody></table></div>
+
+<p>Квантизация уменьшает занимаемую память ценой качества, и допустимую потерю качества определяет оценочный набор заказчика. Для Helix основной риск связан с редкими классами: трещина встречается в сотни раз реже царапины, и потеря точности на ней не видна в средней метрике, поэтому каждая точность проходит ворота с отдельным порогом по редким классам (<a href="#s-12-8" data-secref="12.8">раздел 12.8</a>).</p>
+
+<p>Ускоритель в цеху подчинён ограничениям, которых в облаке нет. Шкаф OT на линии Helix имеет бюджет питания полтора киловатта на всё оборудование, и сервер с картой на 300 ватт занимает его треть. Пыль, масляный туман и температура до 35 °C требуют закрытого корпуса и снижают допустимую мощность карты. Без сети нет реестра образов, лицензионных серверов, телеметрии и замены карты за часы, поэтому узел проектируется с запасом и без внешних зависимостей.</p>
+
+<p>Узел изолированного завода Helix состоит из двух карт по 24 ГиБ и модели на 8 млрд параметров в 8 битах: днём по 12 последовательностей на карту для объяснения дефектов, ночью батч документов завода. Вторая карта служит и запасом на случай отказа первой. Модель и её обновления приходят на завод, как любой груз, через пост контроля.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 384" role="img" aria-label="Поток данных между облаком и изолированным заводом через воздушный зазор: пакет модели после оценки и подписи переносится на носителе, завод проверяет подпись и хеш, оценивает пакет на своём наборе и активирует его, модель на edge GPU пишет обезличенные результаты в outbox, выгрузка на носителе попадает в центр, где записи принимаются по идентификатору без дублей, а ошибки возвращаются в наборы для оценки" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar14c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="14" y="40" width="276" height="310" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="26" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">Облако: центральный парк</text>
+  <rect x="310" y="40" width="260" height="310" rx="8" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="322" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--muted)">Воздушный зазор: носитель</text>
+  <rect x="590" y="40" width="276" height="310" rx="8" fill="none" stroke="var(--sA)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="602" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sA)">Изолированный завод P12</text>
+
+  <rect x="34" y="60" width="236" height="50" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="152" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">оценка и реестр</text>
+  <text x="152" y="99" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">версия · sha256 · подпись</text>
+  <rect x="34" y="171" width="236" height="50" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="152" y="193" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">наборы из поля</text>
+  <text x="152" y="210" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">метки и ошибки заводов</text>
+  <rect x="34" y="282" width="236" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="152" y="304" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">приём результатов</text>
+  <text x="152" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">дедупликация по id</text>
+
+  <rect x="330" y="60" width="220" height="50" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="440" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">носитель: пакет v5</text>
+  <text x="440" y="99" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">манифест · веса · подпись</text>
+  <rect x="330" y="282" width="220" height="50" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="440" y="304" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">носитель: выгрузка</text>
+  <text x="440" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">только обезличенные записи</text>
+
+  <rect x="610" y="60" width="236" height="50" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="728" y="82" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">проверка подписи и хеша</text>
+  <text x="728" y="99" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">не сходится: отказ</text>
+  <rect x="610" y="134" width="236" height="50" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="728" y="156" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">офлайн-оценка и активация</text>
+  <text x="728" y="173" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">ворота · прошлая версия</text>
+  <rect x="610" y="208" width="236" height="50" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="728" y="230" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">инференс на edge GPU</text>
+  <text x="728" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">камеры · MES · журналы</text>
+  <rect x="610" y="282" width="236" height="50" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="728" y="304" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">outbox</text>
+  <text x="728" y="321" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">белый список полей · id</text>
+
+  <g data-step="1" data-caption="Центр выпускает пакет после оценки: манифест с версией и хешем весов подписывается ключом выпуска, и пакет уходит на носителе.">
+    <line x1="270" y1="85" x2="322" y2="85" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="550" y1="85" x2="602" y2="85" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+  </g>
+  <g data-step="2" data-caption="Завод проверяет подпись и хеш, прогоняет пакет на собственном эталонном наборе и активирует его, сохраняя прежнюю версию для отката.">
+    <line x1="728" y1="110" x2="728" y2="126" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+  </g>
+  <g data-step="3" data-caption="Модель обрабатывает кадры и журналы на месте, а результаты попадают в outbox без имён и с идентификатором, выведенным из содержимого.">
+    <line x1="728" y1="184" x2="728" y2="200" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="728" y1="258" x2="728" y2="274" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+  </g>
+  <g data-step="4" data-caption="Выгрузка уходит на носителе; центр принимает записи по идентификатору, повтор не создаёт дубля, а размеченные ошибки возвращаются в наборы для следующей оценки.">
+    <line x1="610" y1="307" x2="558" y2="307" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="330" y1="307" x2="278" y2="307" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar14c)"/>
+    <line x1="152" y1="282" x2="152" y2="229" stroke="var(--sD)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14c)"/>
+    <line x1="152" y1="171" x2="152" y2="118" stroke="var(--sD)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar14c)"/>
+  </g>
+  <text x="440" y="374" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Через зазор проходят только два объекта: подписанный пакет внутрь и обезличенные записи наружу.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Изолированная площадка обменивается с центром двумя объектами, и безопасность обмена обеспечивают проверки на принимающей стороне: завод проверяет подпись, хеш и качество пакета до активации, а центр принимает запись по идентификатору, выведенному из содержимого, поэтому повторная доставка не создаёт дубля.</figcaption>
+</figure>
+
+<div class="note" data-level="2">Для выгрузки результатов носитель может заменить однонаправленный шлюз из цеха наружу; пакеты модели при этом по-прежнему поступают внутрь через пост контроля. Порядок проверок на принимающей стороне от способа переноса не зависит.</div>
+
+<h3 id="s-14-7"><span class="num">14.7</span>Каскады и маршрутизация</h3>
+
+<p>Маршрутизатор <a href="#s-3-6" data-secref="3.6">раздела 3.6</a> выбирает модель до вызова, по признакам документа. Каскад решает после вызова, по ответу: сначала дешёвая модель, затем ворота, и только при их провале дорогая. Для дефектов Helix, где большинство кадров показывает типичные царапины и вмятины, каскад окупается сразу, если ворота не пропускают уверенных ошибок.</p>
+
+<dl class="def">
+<dt>Каскад моделей <span class="en">(model cascade)</span></dt>
+<dd>Последовательность моделей возрастающей стоимости, в которой каждая следующая вызывается только тогда, когда ответ предыдущей не прошёл ворота: порог уверенности, проверку схемы или правило предметной области. Стоимость каскада на кейс равна цене первой ступени плюс доле эскалаций, умноженной на цену второй.</dd>
+</dl>
+
+<p>Сигналы для ворот различаются надёжностью. Вероятность метки по логарифмам вероятностей требует калибровки, согласие двух дешёвых выборок удваивает цену первой ступени, правила предметной области обнаруживают только нарушения правил, а самооценка модели словами без калибровки на размеченном наборе не используется.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">cascade_router.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import math
+from collections.abc import Callable
+from dataclasses import dataclass
+
+LABELS = ("scratch", "dent", "crack", "porosity")
+
+
+@dataclass(frozen=True)
+class Case:
+    case_id: str
+    difficulty: float          # известна фейковым моделям, но не маршрутизатору
+    truth: str
+
+
+@dataclass(frozen=True)
+class Answer:
+    label: str
+    confidence: float
+
+
+@dataclass(frozen=True)
+class Tier:
+    name: str
+    usd_per_call: float
+    answer: Callable[[Case], Answer]
+
+
+def other(label: str) -&gt; str:
+    return LABELS[(LABELS.index(label) + 1) % len(LABELS)]
+
+
+def small(case: Case) -&gt; Answer:
+    if case.difficulty &lt; 0.70:
+        return Answer(case.truth, 0.978 - case.difficulty / 4)
+    if case.difficulty &lt; 0.75:
+        return Answer(other(case.truth), 0.90)       # уверенная ошибка
+    return Answer(other(case.truth), 0.60)
+
+
+def large(case: Case) -&gt; Answer:
+    return Answer(case.truth if case.difficulty &lt; 0.95 else other(case.truth), 0.90)
+
+
+@dataclass(frozen=True)
+class Report:
+    escalation_rate: float     # доля кейсов, дошедших до второй ступени
+    usd_per_case: float
+    accuracy: float
+    accepted_errors: float     # ошибки первой ступени, пропущенные воротами
+
+
+def evaluate(first: Tier, second: Tier, threshold: float, cases: list[Case]) -&gt; Report:
+    escalated = correct = missed = 0
+    usd = 0.0
+    for case in cases:
+        answer = first.answer(case)
+        usd += first.usd_per_call
+        if answer.confidence &lt; threshold:
+            escalated += 1
+            usd += second.usd_per_call
+            answer = second.answer(case)
+        elif answer.label != case.truth:
+            missed += 1
+        correct += answer.label == case.truth
+    n = len(cases)
+    return Report(escalated / n, usd / n, correct / n, missed / n)
+
+
+if __name__ == "__main__":
+    cases = [Case(f"c{i}", i / 100, LABELS[i % 4]) for i in range(100)]
+    cheap, strong = Tier("small", 0.0004, small), Tier("large", 0.0040, large)
+
+    only_large = evaluate(strong, strong, 0.0, cases)
+    at_80 = evaluate(cheap, strong, 0.80, cases)
+    at_92 = evaluate(cheap, strong, 0.92, cases)
+
+    assert at_80.escalation_rate == 0.25
+    assert math.isclose(at_80.usd_per_case, 0.0004 + 0.25 * 0.0040)   # смешанная цена
+    assert at_80.usd_per_case &lt; 0.4 * only_large.usd_per_case
+    assert (at_80.accuracy, at_80.accepted_errors) == (0.90, 0.05)
+    assert (at_92.escalation_rate, at_92.accuracy) == (0.76, only_large.accuracy)
+    assert at_92.usd_per_case &gt; 2 * at_80.usd_per_case
+    print(f"порог 0.80: эскалация {at_80.escalation_rate:.0%}, "
+          f"${at_80.usd_per_case:.4f} за кейс, точность {at_80.accuracy:.0%}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="return Answer(other(case.truth), 0.90)">строка 38</span><p>Пять кейсов из ста дешёвая модель решает неверно с уверенностью 0.90. Порог ниже 0.90 их не остановит, и видны они только на размеченной выборке: в production измеряется доля эскалаций, а доля пропущенных ошибок без разметки не измеряется.</p></div>
+  <div><span class="at" data-anchor="usd += second.usd_per_call">строка 62</span><p>За эскалированный кейс платят дважды, потому что дешёвый вызов уже состоялся. Отсюда смешанная цена c₁ + e·c₂ и её следствие: каскад дешевле дорогой модели, пока доля эскалаций e меньше 1 − c₁/c₂, для цен листинга 90 %.</p></div>
+  <div><span class="at" data-anchor="elif answer.label != case.truth:">строка 64</span><p>Пропущенная ошибка считается только там, где известна истина, то есть на размеченном наборе. Эта метрика выбирает порог, а доля эскалаций в production служит сигналом дрейфа: её рост означает, что поток кадров изменился.</p></div>
+  <div><span class="at" data-anchor="at_92 = evaluate(">строка 77</span><p>Порог 0.92 возвращает точность дорогой модели, но эскалирует 76 % кейсов и стоит в 2.5 раза больше порога 0.80. Выбор между порогами определяется ценой пропущенного дефекта, и эту цену называет заказчик.</p></div>
+</div>
+</figure>
+
+<p>Доля эскалаций выводится на ту же панель, что и стоимость запроса. При пороге 0.80 она составляет 25 %, кейс стоит 0.0014 доллара против 0.004 у дорогой модели, точность 90 % против 95 %. Разницу в точности составляют уверенные ошибки, и заказчик решает, приемлемы ли они для царапин и неприемлемы ли для трещин: порог задаётся по классам.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Настраивать порог по средней точности на всём наборе. Уверенные ошибки сосредоточены в редких и дорогих классах, и порог, дающий 90 % в среднем, может пропускать половину трещин. Порог подбирается по стоимости ошибки каждого класса, и доля эскалаций после выкладки контролируется по классам.</div>
+
+<h3 id="s-14-8"><span class="num">14.8</span>Рычаги стоимости</h3>
+
+<p>Счёт за модели складывается из цены токена, числа токенов и доли работы, оплаченной по самой дорогой ставке. Рычаги в таблице упорядочены по типичному эффекту для систем, подобных Helix, и у каждого своя метрика: эффект рычага без измерения до и после нельзя отличить от случайного совпадения. Разложение метрик по функциям и арендаторам описано в <a href="#s-13-5" data-secref="13.5">разделе 13.5</a>.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Рычаг</th><th>Механизм</th><th>Метрика до и после</th><th>У Helix</th></tr></thead>
+<tbody>
+<tr><td>1. Кэш</td><td>стабильный префикс читается по сниженной цене</td><td>доля входных токенов из кэша</td><td>инструкция и каталог дефектов в префиксе</td></tr>
+<tr><td>2. Маршрутизация и каскад</td><td>дешёвая модель для типичных кейсов</td><td>доля эскалаций, стоимость кейса</td><td>25 % эскалаций при пороге 0.80</td></tr>
+<tr><td>3. Батч</td><td>асинхронная скидка или простаивающая мощность</td><td>доля токенов вне онлайна, загрузка подписки</td><td>загрузка 83 % вместо 61 %</td></tr>
+<tr><td>4. Размер промпта</td><td>меньше входных токенов на запрос</td><td>входных токенов на запрос по функциям</td><td>число записей журнала в контексте</td></tr>
+<tr><td>5. Длина ответа</td><td>меньше самых дорогих токенов, короче задержка</td><td>выходных токенов на запрос</td><td>краткая схема для батча: 50 токенов</td></tr>
+<tr><td>6. Выбор модели</td><td>сравнение по цене решённой задачи</td><td>стоимость верного ответа на оценочном наборе</td><td>8 млрд параметров на заводе</td></tr>
+<tr><td>7. Обязательство по мощности</td><td>фиксированная цена за срок</td><td>загрузка подписки, доля перелива</td><td>пять единиц вместо девяти</td></tr>
+</tbody></table></div>
+
+<p>Порядок зависит от системы: у системы с короткими промптами и длинными ответами первой окажется длина ответа. Обязательство по мощности стоит последним, потому что закрепляет результат остальных рычагов: подписка, купленная до каскада и батча, рассчитана на нагрузку, которой после них не будет.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Сравнивать модели по цене за миллион токенов. Дешёвая модель, которой нужен ремонт схемы в каждом пятом ответе или вдвое более длинный промпт, обходится дороже дорогой. Сравнивается цена верного ответа на оценочном наборе заказчика вместе с ремонтами и эскалациями.</div>
+
+<h3 id="s-14-9" data-level="2"><span class="num">14.9</span>На Google Cloud: provisioned throughput, TPU, Google Distributed Cloud</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Provisioned Throughput</span>
+  <span class="tag">batch inference</span>
+  <span class="tag">Cloud TPU</span>
+  <span class="tag">GKE</span>
+  <span class="tag">Google Distributed Cloud</span>
+</div>
+
+<p data-level="2">Платформа моделей Google Cloud в документации 2026 года называется Gemini Enterprise Agent Platform (ранее Vertex AI).<a class="src" href="https://cloud.google.com/products/gemini-enterprise-agent-platform" target="_blank" rel="noreferrer">cloud.google.com, Gemini Enterprise Agent Platform</a> Её Provisioned Throughput описан как подписка с фиксированной ценой и фиксированным сроком, резервирующая пропускную способность поддерживаемых моделей. Единицей служит GSU, а коэффициенты пересчёта (burndown rates) переводят вход и выход в токены в секунду по той же цепочке, что в разделе 14.3.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput/measure-provisioned-throughput" target="_blank" rel="noreferrer">cloud.google.com, расчёт Provisioned Throughput</a> Подписка привязана к проекту, региону, модели и версии, неиспользованная мощность не переносится, срок составляет неделю (только для моделей Google), месяц, три месяца или год, и отменить заказ до конца срока нельзя.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput/purchase-provisioned-throughput" target="_blank" rel="noreferrer">cloud.google.com, покупка Provisioned Throughput</a></p>
+
+<p data-level="2">При приёме запроса платформа оценивает размер выхода, по оценке решает, пойдёт ли запрос в подписку, и сверяет оценку с фактом после ответа. Квота подписки применяется в динамическом окне: по документации на сентябрь 2026 года от 40 до 120 секунд для заказов до трёх GSU и короче для крупных. Запрос сверх подписки по умолчанию оплачивается как оплата за токены, а заголовок <code>X-Vertex-AI-LLM-Request-Type</code> со значением <code>dedicated</code> запрещает перелив и возвращает 429.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/provisioned-throughput/use-provisioned-throughput" target="_blank" rel="noreferrer">cloud.google.com, использование Provisioned Throughput</a> Ночной батч Helix отправляется с <code>dedicated</code>: документ, не поместившийся в подписку, возвращается в очередь <code>batch_queue.py</code> и по цене за токены не оплачивается.</p>
+
+<p data-level="2">Документация о вариантах потребления рекомендует покрывать подпиской базовую нагрузку.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/consumption-options" target="_blank" rel="noreferrer">cloud.google.com, варианты потребления</a> Пакетная обработка Gemini стоит на 50 % дешевле обработки в реальном времени, берёт задания из Cloud Storage или BigQuery, ждёт мощности в очереди до 72 часов и завершает большинство заданий за 24 часа после старта, но не поддерживает Provisioned Throughput и не покрыта SLA.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/batch-inference" target="_blank" rel="noreferrer">cloud.google.com, batch inference</a> Срок без гарантии несовместим с обещанием к утренней смене, поэтому пакетному заданию достаются только документы Helix без срока.</p>
+
+<p data-level="2">Модели с открытыми весами GKE обслуживает серверами вроде vLLM на GPU и TPU, а GKE Inference Gateway маршрутизирует запросы по метрикам сервера, в том числе по загрузке KV-кэша.<a class="src" href="https://docs.cloud.google.com/kubernetes-engine/docs/concepts/machine-learning/inference" target="_blank" rel="noreferrer">cloud.google.com, инференс на GKE</a> Cloud TPU требуют компиляции XLA и плохо подходят моделям с динамическими формами тензоров.<a class="src" href="https://docs.cloud.google.com/tpu/docs/intro-to-tpu" target="_blank" rel="noreferrer">cloud.google.com, введение в Cloud TPU</a> Серии G2 с картами L4 на 24 ГБ и G4 документация Compute Engine относит к инференсу на одном хосте,<a class="src" href="https://docs.cloud.google.com/compute/docs/gpus" target="_blank" rel="noreferrer">cloud.google.com, GPU в Compute Engine</a> и на карте того же класса памяти Helix прогоняет офлайн-оценку пакета до отправки на носитель.</p>
+
+<p data-level="2">Google Distributed Cloud существует в двух вариантах. Подключённый разворачивает кластеры GKE на сертифицированном Google оборудовании у заказчика и управляется централизованно через Google Cloud: программное обеспечение Google обслуживает удалённо, а связь с сервисами Google Cloud идёт через Cloud VPN,<a class="src" href="https://docs.cloud.google.com/distributed-cloud/edge/latest/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, GDC connected</a> и для него в публичном предварительном доступе есть Gemini on GDC connected API с частными моделями Gemini.<a class="src" href="https://docs.cloud.google.com/distributed-cloud/gemini-on-gdcc/latest/docs" target="_blank" rel="noreferrer">cloud.google.com, Gemini on GDC connected</a> Изолированный вариант не требует связи с Google Cloud, поставляется в стойках после обследования площадки по месту, питанию и охлаждению, а дистрибутив переносится на носителе с проверкой контрольной суммы;<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/overview" target="_blank" rel="noreferrer">cloud.google.com, GDC air-gapped</a> сервисы Vertex AI на нём включают генеративные модели.<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/application/ao-user/vertex-ai-overview" target="_blank" rel="noreferrer">cloud.google.com, Vertex AI на GDC air-gapped</a> Шкаф OT на линии Helix стойку не вмещает, поэтому изолированные заводы получают узел из двух карт, а перенос пакетов повторяет ту же проверку.</p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Арифметика раздела 14.3 переносится на любое крупное облако; различия между облаками затрагивают два решения. Первое: привязка к модели. У Google Cloud подписка привязана к модели и версии, в Amazon Bedrock единица покупается для конкретной модели почасово, без обязательства или на месяц и полгода,<a class="src" href="https://docs.aws.amazon.com/bedrock/latest/userguide/prov-throughput.html" target="_blank" rel="noreferrer">docs.aws.amazon.com, Provisioned Throughput</a> а в Azure квота PTU к модели не привязана, поэтому каскад, перераспределяющий трафик между моделями, у первых двух меняет расчёт подписки сильнее. Второе: перелив. У Google Cloud он включён по умолчанию, в Azure настраивается явно,<a class="src" href="https://learn.microsoft.com/en-us/azure/ai-foundry/openai/concepts/provisioned-throughput" target="_blank" rel="noreferrer">learn.microsoft.com, provisioned throughput</a> и планировщик батча должен учитывать, вернёт ли вызов сверх подписки отказ 429 или будет оплачен по цене за токены.</div>
+
+<h3 id="s-14-10" data-level="3"><span class="num">14.10</span>Вглубь: квота как общий ресурс, KV-кэш, спекулятивные вызовы, изолированные сети</h3>
+
+<h4 data-level="3">Квота как ресурс, общий для проектов заказчика</h4>
+
+<p data-level="3">Квота выдаётся проекту, и все приложения проекта расходуют её совместно. У Helix в одном проекте поначалу работали онлайн-ассистент, ночной батч и эксперименты команды данных, и перебор промптов в 10:00 отнимал у ассистента треть квоты: проблема шумных соседей воспроизводится внутри одной организации, а счёт у неё один. Проблема устраняется двумя способами. Нагрузки с разными SLO размещаются в разных проектах со своими квотами, и выделенная мощность покупается только для проекта с онлайн-нагрузкой. Шлюз перед моделью ведёт токен-вёдра по функциям, так что эксперимент исчерпывает собственное ведро, а атрибуция из раздела 13.5 показывает, чьё ведро пустеет.</p>
+
+<h4 data-level="3">KV-кэш вытесняет веса</h4>
+
+<p data-level="3">При 32 000 токенах пять последовательностей модели на 30 млрд параметров в 8 битах занимают в кэше 36.6 ГиБ против 27.9 ГиБ весов, поэтому мощность определяется распределением длин контекста, и число запросов без длин её не характеризует. Постраничный кэш выделяет память блоками по мере роста последовательности и держит в среднем больше последовательностей, но предела не поднимает. Когда память кончается, сервер вытесняет последовательности или ставит новые в очередь, и это создаёт хвост времени до первого токена у собственного сервинга. У Helix запросы с полной историей станка идут в отдельный пул, а короткие объяснения дефектов в основной.</p>
+
+<h4 data-level="3">Семантика лимитера: токены, запросы, всплески</h4>
+
+<p data-level="3">Пределы на запросы и на токены в минуту отказывают в разных ситуациях: тысяча коротких запросов исчерпает первый, десять длинных второй. Выходные токены неизвестны при допуске, и лимитер резервирует либо максимум выхода, недоиспользуя мощность, либо оценку со сверкой после ответа, как Provisioned Throughput. Всплеск задаётся окном учёта: ведро на 12 000 токенов отпускает их разом, скользящее минутное окно отпускает за секунду весь минутный объём. Собственный лимитер строже поставщика по обоим параметрам, иначе отказы поставщика опережают его собственные, и обратное давление не работает.</p>
+
+<h4 data-level="3">Спекулятивные вызовы: хвост в обмен на медиану</h4>
+
+<p data-level="3">Спекулятивный вызов (hedged request) отправляет второй экземпляр запроса, если первый не ответил за время d, и принимает первый пришедший ответ. При независимых задержках вероятность превысить время t, большее d, равна произведению P(X &gt; t) и P(X &gt; t − d). Пусть p50 одного вызова равен 1.5 с, p90 равен 2.5 с, p95 равен 4 с. Дубликат через d = 2.5 с отправляется для 10 % запросов, а вероятность превысить 4 с падает до 0.05 · 0.5 = 0.025: четыре секунды становятся p97.5.</p>
+
+<p data-level="3">Одновременная отправка двух экземпляров с d = 0 срезает хвост сильнее, поскольку вероятность превышения возводится в квадрат, но удваивает расход на каждом запросе, то есть сокращение хвоста оплачивается и на типичных запросах. Условий два. Задержки должны быть независимы: если хвост создан перегрузкой поставщика или длинным входом, второй экземпляр попадает в ту же очередь и только расходует квоту. Вызов не должен иметь побочных эффектов, а проигравший экземпляр отменяется сразу; токены, порождённые до отмены, оплачиваются.</p>
+
+<h4 data-level="3">Обновление моделей на изолированных заводах</h4>
+
+<p data-level="3">Обновление модели на изолированном заводе является выпуском без отката по сети, и три механизма заменяют отсутствующую связь. Подпись: пакет подписывается в центре ключом выпуска, и завод проверяет подпись и хеш весов до любого другого действия. Версионирование: номер версии монотонен, отвергнутый номер повторно не используется, и откат выполняется явной командой на ранее активную версию; установка старого пакета отвергается. Офлайн-оценка: завод хранит эталонный набор размеченных кадров и активирует пакет, только если точность на нём не ниже порога и не ниже активной версии за вычетом допуска.</p>
+
+<figure class="code" data-fold="26" data-level="3">
+<figcaption><span class="file">edge_sync.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+EXPORT_FIELDS = ("plant", "line", "defect", "severity", "model_version", "ts")
+
+
+@dataclass
+class Outbox:
+    """Результаты завода ждут окна связи; идентификатор выводится из содержимого."""
+    pending: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def put(self, record: dict[str, Any]) -&gt; str:
+        clean = {k: record[k] for k in EXPORT_FIELDS if k in record}
+        raw = json.dumps(clean, sort_keys=True).encode("utf-8")
+        rid = hashlib.sha256(raw).hexdigest()[:32]
+        self.pending[rid] = clean
+        return rid
+
+    def flush(self, upload: Callable[[str, dict[str, Any]], None]) -&gt; int:
+        sent = 0
+        for rid in sorted(self.pending):
+            upload(rid, self.pending[rid])       # может оборваться на любой записи
+            del self.pending[rid]                # удаляется только после подтверждения
+            sent += 1
+        return sent
+
+
+@dataclass
+class CentralIntake:
+    rows: dict[str, dict[str, Any]] = field(default_factory=dict)
+    lose_ack_at: int = 0                         # номер вызова, чьё подтверждение теряется
+    calls: int = 0
+
+    def upload(self, rid: str, record: dict[str, Any]) -&gt; None:
+        self.calls += 1
+        self.rows.setdefault(rid, record)        # повтор с тем же id ничего не меняет
+        if self.calls == self.lose_ack_at:
+            raise ConnectionError("окно связи закрылось до подтверждения")
+
+
+@dataclass(frozen=True)
+class Package:
+    name: str
+    version: int
+    weights: bytes
+    manifest: bytes                              # JSON: имя, версия, sha256 весов
+    signature: bytes
+
+
+def build(name: str, version: int, weights: bytes, key: bytes) -&gt; Package:
+    manifest = json.dumps({"name": name, "version": version,
+                           "sha256": hashlib.sha256(weights).hexdigest()}).encode("utf-8")
+    return Package(name, version, weights, manifest, hmac.new(key, manifest, "sha256").digest())
+
+
+def verify(pkg: Package, key: bytes) -&gt; str:
+    """Пустая строка, если пакет цел; иначе причина отказа."""
+    if not hmac.compare_digest(hmac.new(key, pkg.manifest, "sha256").digest(), pkg.signature):
+        return "подпись манифеста не сходится"
+    meta = json.loads(pkg.manifest)
+    if meta["sha256"] != hashlib.sha256(pkg.weights).hexdigest():
+        return "хеш весов не совпадает с манифестом"
+    if (meta["name"], meta["version"]) != (pkg.name, pkg.version):
+        return "манифест описывает другой пакет"
+    return ""
+
+
+@dataclass
+class PlantRegistry:
+    key: bytes
+    evaluate: Callable[[Package], float]         # офлайн-оценка на эталонном наборе завода
+    floor: float = 0.90
+    tolerance: float = 0.01                      # допустимое падение к активной версии
+    active: Package | None = None
+    score: float = 0.0
+    previous: list[Package] = field(default_factory=list)
+    log: list[str] = field(default_factory=list)
+
+    def install(self, pkg: Package, now: float) -&gt; bool:
+        reason = verify(pkg, self.key)
+        if not reason and self.active and pkg.version &lt;= self.active.version:
+            reason = f"версия {pkg.version} не новее активной {self.active.version}"
+        score = self.evaluate(pkg) if not reason else 0.0
+        if not reason and (score &lt; self.floor or score &lt; self.score - self.tolerance):
+            reason = f"офлайн-оценка {score:.2f} не проходит ворота"
+        if reason:
+            self.log.append(f"{now:.0f} отказ {pkg.name}:{pkg.version}: {reason}")
+            return False
+        if self.active:
+            self.previous.append(self.active)
+        self.active, self.score = pkg, score
+        self.log.append(f"{now:.0f} активна {pkg.name}:{pkg.version}")
+        return True
+
+
+if __name__ == "__main__":
+    key = b"helix-release-key"
+    scores = {b"w3": 0.93, b"w4-q4": 0.88, b"w5": 0.94}
+    plant = PlantRegistry(key, evaluate=lambda p: scores[p.weights])
+    assert plant.install(build("inspect-8b", 3, b"w3", key), now=100)
+    v4 = build("inspect-8b", 4, b"w4-q4", key)
+    tampered = Package(v4.name, v4.version, b"w4-patched", v4.manifest, v4.signature)
+    assert not plant.install(tampered, now=200) and "хеш" in plant.log[-1]
+    assert not plant.install(v4, now=300) and "оценка 0.88" in plant.log[-1]
+    assert plant.install(build("inspect-8b", 5, b"w5", key), now=400)
+    assert not plant.install(build("inspect-8b", 3, b"w3", key), now=500)   # откат только явный
+    assert plant.active is not None and plant.active.version == 5
+    assert [p.version for p in plant.previous] == [3]
+
+    outbox, intake = Outbox(), CentralIntake(lose_ack_at=2)
+    for ts in (1, 2, 3, 3):                      # последняя запись повторяет третью
+        outbox.put({"plant": "P12", "line": "L3", "defect": "crack", "severity": 3,
+                    "operator": "Иванов", "model_version": 5, "ts": ts})
+    assert len(outbox.pending) == 3
+    try:
+        outbox.flush(intake.upload)
+    except ConnectionError:
+        pass
+    assert (len(intake.rows), len(outbox.pending)) == (2, 2)
+    assert outbox.flush(intake.upload) == 2
+    assert len(intake.rows) == 3 and not outbox.pending
+    assert all("operator" not in row for row in intake.rows.values())
+    print("пакет проверен и оценён офлайн, результаты доставлены без дублей и имён")</code></pre>
+<div class="gloss" data-level="3">
+  <div><span class="at" data-anchor="manifest, hmac.new(key, manifest">строка 59</span><p>HMAC заменяет асимметричную подпись, которой нет в стандартной библиотеке. В production завод хранит только открытый ключ проверки: с симметричным ключом скомпрометированный завод смог бы подписать пакет сам.</p></div>
+  <div><span class="at" data-anchor="pkg.version &lt;= self.active.version">строка 87</span><p>Установка старого пакета отвергается даже с верной подписью, иначе злоумышленник с носителем вернул бы уязвимую версию, когда-то подписанную законно. Откат выполняется отдельной командой на версию из списка <code>previous</code>, которую листинг не показывает.</p></div>
+  <div><span class="at" data-anchor="score &lt; self.score - self.tolerance">строка 90</span><p>Ворота сравнивают кандидата и с абсолютным порогом, и с активной версией. Пакет v4 в 4 битах набрал 0.88 и отвергнут при верных подписи и хеше: квантизованная модель прошла проверку целостности, но не проверку качества.</p></div>
+  <div><span class="at" data-anchor="clean = {k: record[k] for k in EXPORT_FIELDS">строка 19</span><p>Обезличивание построено на белом списке: наружу уходят только перечисленные поля. Чёрный список пропустил бы любое новое поле с именем оператора, добавленное в MES после выкладки.</p></div>
+  <div><span class="at" data-anchor="del self.pending[rid]">строка 29</span><p>Запись удаляется из outbox только после подтверждения загрузки. Потерянное подтверждение оставляет её на месте, повторная выгрузка отправляет её снова, и центр не создаёт дубля, потому что идентификатор выведен из содержимого, как ключ идемпотентности <a href="#s-6-8" data-secref="6.8">раздела 6.8</a>.</p></div>
+</div>
+</figure>
+
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему подписка на мощность, рассчитанная на пиковый час, обходится Helix дороже оплаты за токены, хотя пересчитанный токен в подписке дешевле?</summary>
+<div class="ans"><p>Подписка оплачивается за каждый час суток, а пик длится несколько часов. Мощность на пиковый час загружена примерно на 40 %, тогда как в условном прайсе листинга подписка окупается при загрузке около 79 %. Поэтому подписку рассчитывают на базу, перелив в пики оплачивают по токенам, а ночной провал заполняют батчем.</p></div>
+</details>
+<details>
+<summary>Сколько последовательностей по 32 000 токенов вмещает карта 80 ГиБ с моделью на 30 млрд параметров в 8 битах, и почему сжатие кэша даёт больше, чем переход весов с 8 на 4 бита?</summary>
+<div class="ans"><p>Пять. При такой длине кэш одной последовательности занимает 7.3 ГиБ, и кэш пяти последовательностей больше весов. Переход весов на 4 бита освобождает 12.5 ГиБ, место для одной-двух последовательностей, а сжатие кэша вдвое примерно удваивает их число при любой точности весов.</p></div>
+</details>
+<details>
+<summary>Почему спекулятивный повторный вызов не сокращает хвост, когда задержка вызвана перегрузкой квоты поставщика?</summary>
+<div class="ans"><p>Приём опирается на независимость задержек двух экземпляров. При перегрузке оба ждут в одной очереди и упираются в одну квоту, поэтому второй экземпляр приходит не раньше первого, расходует токены и приближает отказ 429 для других запросов.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Масштаб системы с моделью ограничен квотами, выделенной мощностью, памятью ускорителей и людьми эксплуатации; место исполнения выбирается по резидентности, наличию команды, форме нагрузки и объёму.</li>
+<li>Модель мощности переводит документы в сутки в пересчитанные токены в секунду, единицы подписки и месячную стоимость с проверкой размерностей; подписка покрывает базу, пики переливаются в оплату за токены.</li>
+<li>Мощность собственного ускорителя равна числу последовательностей, помещающихся в память после весов, и при длинном контексте её определяет KV-кэш; квантизация уменьшает память ценой качества, потерю которого проверяет оценочный набор.</li>
+<li>Батч ставится в провал суточной кривой за планировщиком с приоритетом онлайна, резервом и ограниченной очередью; каскад измеряется долей эскалаций, смешанной ценой и пропущенными ошибками, а изолированный завод активирует только подписанные и оценённые пакеты.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-3" data-secref="3">Глава 3: токены, задержка и маршрутизация</a>
+<a href="#ch-13" data-secref="13">Глава 13: метрики и атрибуция стоимости</a>
+<a href="#ch-17" data-secref="17">Глава 17: совокупная стоимость владения</a>
+</p>
+</div>
+</section>

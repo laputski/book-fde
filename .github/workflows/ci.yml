@@ -1,0 +1,42 @@
+# Verify the book: the build is reproducible, both locales are isomorphic,
+# the diagrams obey the rules, nothing private leaked, and the listings
+# pass parsing, ruff, mypy and execution on a matrix of Python versions.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
+        include:
+          - python: "3.15"
+            prerelease: true
+    continue-on-error: ${{ matrix.prerelease || false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+
+      - name: Check dependencies
+        run: pip install -r requirements-check.txt
+
+      - name: The build is reproducible
+        run: |
+          ./build.sh
+          git diff --exit-code fde-advanced.html
+
+      - name: Every check
+        run: ./check_all.sh

@@ -1,0 +1,817 @@
+<!-- ────────────────────────── CHAPTER 6 ────────────────────────── -->
+<section class="chapter" id="ch-6">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter six</p>
+    <span class="strata" role="img" aria-label="Layers A, C and E: customer systems, tools, security">
+      <i data-s="A"></i><i></i><i data-s="C"></i><i></i><i data-s="E"></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-6"><span class="num">6</span>Connective Tissue: APIs, Legacy Silos and MCP Servers</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>take an inventory of a customer's systems from which the agent's tool set follows;</li>
+<li>design an MCP server as a policy enforcement point;</li>
+<li>describe a tool so that the model calls it at the right moment with the right arguments;</li>
+<li>wrap a legacy system in an adapter with timeouts, pagination and a circuit breaker;</li>
+<li>make a write action safe under retries at any of the levels.</li>
+</ul>
+</div>
+
+<h3 id="s-6-1"><span class="num">6.1</span>The task: core banking through MCP</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Case file CF1 · Nordbank Regional</a></span>
+  <span class="tag">mainframe</span>
+  <span class="tag">SOAP 2009</span>
+  <span class="tag">CRM</span>
+  <span>a regional bank</span>
+</div>
+
+<p>The contact-centre assistant for Nordbank, designed in <a href="#ch-2" data-secref="2">Chapter 2</a>, cannot answer questions about accounts until it receives the customer's account data. The accounts are stored in the core banking system on a mainframe: access to it goes through MQ queues and a SOAP layer written in 2009 without provision for calls from a language model. The history of interactions is kept in a CRM with its own REST API, and the customer's documents are kept in a store with ACLs. The agent therefore needs access to three systems with three protocols and three models of identity.</p>
+
+<p>The agent must be given access to these systems under four conditions. The agent reads accounts, history and documents on behalf of a specific operator and sees the same data as the operator. The agent performs one write action, creating a disputed transaction, and that action must not execute twice. No credential with rights to core banking leaves the bank's perimeter. Everything the agent did can be reconstructed from a log.</p>
+
+<p>The solution taken apart in this chapter consists of an MCP server inside the bank's perimeter, adapters to the three systems behind it, and the rules by which the server decides what may be called, by whom and with which arguments. The chapter is built around that server, and its tools are used by the single agent of <a href="#ch-7" data-secref="7">Chapter 7</a> and by the long-running agent of <a href="#ch-9" data-secref="9">Chapter 9</a>.</p>
+
+<h3 id="s-6-2"><span class="num">6.2</span>Why the integration layer is the FDE's product</h3>
+
+<p>The model, the prompts and the agent loop usually make up the smaller part of the work when shipping at a customer. The larger part goes into connecting the model to systems that existed before it and will keep running after it is replaced: their protocols, rate limits, maintenance hours, identity schemes and failure modes. The Staff Forward Deployed Engineer job post at Google Cloud describes this work as "the connective tissue between Google's AI products and customer's live infrastructure".<a class="src" href="https://www.google.com/about/careers/applications/jobs/results/124220019683795654-staff-forward-deployed-engineer-genai-google-cloud" target="_blank" rel="noreferrer">Google Careers, Staff Forward Deployed Engineer, GenAI, Google Cloud</a> This work separates the FDE role from the role of an engineer who develops a product without connecting it to the customer's systems.</p>
+
+<dl class="def">
+<dt>Connective tissue</dt>
+<dd>The layer of code and configuration that translates the agent's calls into operations on the customer's systems and back: tools, adapters, access policies, logs. After the engagement ends the layer passes to the customer, so it is designed as a product with an owner.</dd>
+</dl>
+
+<p>Mistakes in connective tissue surface in a different component from the one in which they were made. A tool with an imprecise description leads to wrong answers from the model, and the cause is sought in the model. An adapter without a timeout blocks the agent loop, and the cause is sought in the framework. A retried call without a key creates two disputed transactions, and the cause is sought in the bank's system. This chapter links each of these mistakes to the component in which it originates. The component that enforces access decisions and cannot be bypassed is called a policy enforcement point; the definition and the other such points of an agentic system are given in <a href="#s-10-4" data-secref="10.4">Section 10.4</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 340" role="img" aria-label="A trust-boundary map: the agent runtime in the cloud, the MCP server in the bank's demilitarised zone and the systems of record in the bank's core are separated by two frames; the first crossing carries mutual TLS and a delegated operator token, the second a service account with scopes, and only the MCP server sees both sides" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar6a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="14" y="40" width="250" height="250" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="26" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">Cloud: the agent runtime</text>
+  <rect x="316" y="40" width="250" height="250" rx="8" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="328" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sC)">Bank, DMZ: the MCP server</text>
+  <rect x="618" y="40" width="248" height="250" rx="8" fill="none" stroke="var(--sA)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="630" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sA)">Bank, core: systems of record</text>
+
+  <rect x="40" y="80" width="198" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="139" y="103" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">agent loop</text>
+  <text x="139" y="121" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">chapter 7</text>
+  <rect x="40" y="160" width="198" height="56" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="139" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">MCP client</text>
+  <text x="139" y="201" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">tools/list, tools/call</text>
+  <rect x="40" y="236" width="198" height="36" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="139" y="259" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">operator token: on-behalf-of</text>
+
+  <rect x="342" y="80" width="198" height="56" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="441" y="103" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">policy</text>
+  <text x="441" y="121" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">who · what · with what · how much</text>
+  <rect x="342" y="160" width="198" height="56" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="441" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">tools</text>
+  <text x="441" y="201" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">adapters · keys · audit log</text>
+  <rect x="342" y="236" width="198" height="36" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="441" y="259" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">the bank's service account</text>
+
+  <rect x="644" y="66" width="198" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="743" y="93" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">mainframe · MQ · SOAP</text>
+  <rect x="644" y="128" width="198" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="743" y="155" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">CRM · REST</text>
+  <rect x="644" y="190" width="198" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="743" y="217" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">documents · ACL</text>
+
+  <line x1="238" y1="188" x2="334" y2="188" stroke="currentColor" stroke-width="1.5" marker-start="url(#ar6a)" marker-end="url(#ar6a)"/>
+  <text x="286" y="308" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">mTLS, private link</text>
+  <line x1="540" y1="188" x2="636" y2="188" stroke="currentColor" stroke-width="1.5" marker-start="url(#ar6a)" marker-end="url(#ar6a)"/>
+  <line x1="286" y1="194" x2="286" y2="296" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <line x1="588" y1="194" x2="588" y2="296" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="588" y="308" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">scopes</text>
+  <line x1="139" y1="136" x2="139" y2="154" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6a)"/>
+  <line x1="441" y1="136" x2="441" y2="154" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6a)"/>
+  <path d="M540,100 H600 V88 H636" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <path d="M540,204 H600 V212 H636" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+
+  <text x="440" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Core credentials never cross the left frame: only the MCP server's address and the operator's token reach the cloud.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Three regions of trust and two crossings between them. The MCP server stands at the intersection of the regions and is the only component that both knows on whose behalf a call arrived and has access to the credentials of the systems of record. Rights are therefore checked on this server, and it is the policy enforcement point.</figcaption>
+</figure>
+
+<h3 id="s-6-3"><span class="num">6.3</span>Inventory of the silo</h3>
+
+<p>The agent's tool set is derived from an inventory of the customer's systems. The inventory follows the ontology of <a href="#s-2-4" data-secref="2.4">Section 2.4</a>: for every entity it names the system of record, the means of access, the freshness of the data and the maintenance regime. A tool follows from an inventory row, an adapter follows from the access properties, and the freshness column determines the information about data delay that the tool reports to the agent.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Entity</th><th>System of record</th><th>Access</th><th>Freshness</th><th>Tool</th></tr></thead>
+<tbody>
+<tr><td>Account, balance, transactions</td><td>core banking, mainframe</td><td>MQ and SOAP; 40 requests per second in total; maintenance window 02:00–04:00</td><td>seconds, except during the window</td><td><code>get_account</code>, <code>list_transactions</code></td></tr>
+<tr><td>Case, contact history</td><td>CRM</td><td>REST with OAuth, a per-user limit</td><td>seconds</td><td><code>get_case_history</code></td></tr>
+<tr><td>Customer document</td><td>document store</td><td>REST, ACL by operator group</td><td>minutes</td><td><code>search_documents</code></td></tr>
+<tr><td>Disputed transaction</td><td>core banking</td><td>SOAP, a write action, confirmed manually</td><td>nightly batch</td><td><code>create_dispute</code></td></tr>
+</tbody></table></div>
+
+<p>Two rows of the table determine the behaviour of the tools. The maintenance window means that during it the tool answers "the system is unavailable until 04:00". An agent that receives such an answer tells the operator the cause; an agent that receives a timeout retries. The nightly batch of the disputed transaction means that after a successful call the result stays invisible to the other tools for several hours, and an agent that checks its work by reading can conclude that the action did not happen.</p>
+
+<div class="warn"><b>Common mistake</b>Designing tools from the API documentation instead of the entity inventory. The core banking API contains hundreds of methods, and as the number of tools grows it becomes harder for the model to choose the right one. A tool corresponds to an operator's question, and one tool can combine several methods of the system.</div>
+
+<h3 id="s-6-4"><span class="num">6.4</span>MCP: tools, resources, transports</h3>
+
+<dl class="def">
+<dt>Model Context Protocol, MCP</dt>
+<dd>An open protocol by which an application with a language model connects to servers that provide tools, resources and prompts. The exchange consists of JSON-RPC 2.0 messages over a process's standard streams or over HTTP; the client requests the list of tools and calls them by name, and the server answers with content and an error flag.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28" target="_blank" rel="noreferrer">modelcontextprotocol.io, the specification, revision 2026-07-28</a></dd>
+</dl>
+
+<p>The protocol distinguishes three kinds of server features. A tool is controlled by the model: the model selects and calls a function that performs an action or returns data. A resource is controlled by the application: the application reads data by URI and adds it to the context. A prompt is controlled by the user: it is a message template that the user selects explicitly, for example as an interface command.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/server" target="_blank" rel="noreferrer">modelcontextprotocol.io, server features</a> For Nordbank, the operations on accounts and cases and the document search become tools, the customer's documents themselves, which the application reads by URI from the search result, become resources, and templates of typical operations containing the bank's policy wording, which the operator selects explicitly and which enter the context verbatim, become prompts.</p>
+
+<p data-level="2">The transport is chosen by where the server runs. A server that the client launches as a subprocess exchanges messages over standard streams (the stdio transport); a server behind a network boundary, as at Nordbank, uses the Streamable HTTP transport, in which every message is sent as a POST request and the reply arrives as a JSON object or an SSE stream.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports" target="_blank" rel="noreferrer">modelcontextprotocol.io, transports</a> Authorisation is optional in the protocol; implementations with an HTTP transport that support it follow a specification based on OAuth 2.1: the client obtains a token from the authorisation server and sends it in every HTTP request, and the MCP server verifies that the token was issued for it.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization" target="_blank" rel="noreferrer">modelcontextprotocol.io, authorization</a> This token carries the operator's identity across the left frame of the diagram in <a href="#s-6-2" data-secref="6.2">Section 6.2</a>.</p>
+
+<p>The server hands out its tool list on request, and the client may request it again after a change notification.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/server/tools" target="_blank" rel="noreferrer">modelcontextprotocol.io, tools</a> Tool descriptions enter the model's context, so changing them invalidates the prompt cache; the consequences are described in <a href="#s-4-10" data-secref="4.10">Section 4.10</a>.</p>
+
+<h3 id="s-6-5"><span class="num">6.5</span>Designing tools for models</h3>
+
+<p>A tool's description is used by two parties: the model, which decides when to call the tool and with which arguments, and the server, which decides whether the call is permitted. The model needs a name, a description and an argument schema; the server needs a principal, that is, the subject to whom the action is attributed (defined in <a href="#s-10-2" data-secref="10.2">Section 10.2</a>), result bounds and an error envelope. The naive solution contains only the information for the model, and that information is not sufficient to choose the tool.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to describe a tool">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="0">
+      <figcaption><span class="file">naive_tool.py</span></figcaption>
+      <pre><code>import json
+
+ACCOUNTS = [{"id": str(i), "name": f"client {i}", "iban": f"NB00{i:04d}", "balance": str(i * 10)}
+            for i in range(2000)]
+
+
+def tool(query: str) -> str:
+    """Account search."""
+    rows = [a for a in ACCOUNTS if query in a["name"]]
+    return json.dumps(rows)
+
+
+if __name__ == "__main__":
+    out = tool("client")
+    print(len(out), "characters of answer to one question")   # ~150,000</code></pre>
+    </figure>
+    <p>The name <code>tool</code> and the description "account search" do not tell the model in which cases the tool should be called. The query "client" returns two thousand records in one string, and the whole answer lands in the context. An adapter error is raised as an exception that the server converts into a string without a machine-readable code. The tool receives no information about the asker and returns any account to any user.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">mcp_server.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic import BaseModel, Field, ValidationError
+
+MAX_RESULT_BYTES = 8_000
+
+
+@dataclass(frozen=True)
+class Principal:
+    user_id: str
+    groups: frozenset[str]
+
+
+@dataclass
+class ToolResult:
+    content: str
+    is_error: bool = False
+    code: str = ""              # a machine-readable error code for the model
+
+
+class ProtocolError(Exception):
+    """A JSON-RPC error: the request itself is wrong, and no tool result is produced."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    args: type[BaseModel]
+    handler: Callable[[BaseModel, Principal], Any]
+    side_effect: bool = False
+    allowed_groups: frozenset[str] = field(default_factory=frozenset)
+
+    def descriptor(self) -> dict[str, Any]:
+        return {"name": self.name, "description": self.description,
+                "inputSchema": self.args.model_json_schema()}
+
+
+class McpServer:
+    """The skeleton of an MCP server: a tool list and a checked call."""
+
+    def __init__(self) -> None:
+        self.tools: dict[str, Tool] = {}
+        self.audit: list[dict[str, Any]] = []
+
+    def register(self, tool: Tool) -> None:
+        self.tools[tool.name] = tool
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        return [t.descriptor() for t in self.tools.values()]
+
+    def call(self, name: str, arguments: dict[str, Any], principal: Principal) -> ToolResult:
+        tool = self.tools.get(name)
+        if tool is None:
+            raise ProtocolError(-32602, f"Unknown tool: {name}")
+        if tool.allowed_groups and not (tool.allowed_groups & principal.groups):
+            self.audit.append({"tool": name, "user": principal.user_id, "denied": True})
+            return ToolResult("insufficient rights", True, "forbidden")
+        try:
+            args = tool.args.model_validate(arguments)
+        except ValidationError as err:
+            return ToolResult(err.json(), True, "invalid_arguments")
+        try:
+            raw = tool.handler(args, principal)
+        except TimeoutError:
+            return ToolResult("the system did not answer in time", True, "upstream_timeout")
+        self.audit.append({"tool": name, "user": principal.user_id, "args": arguments})
+        text = json.dumps(raw, ensure_ascii=False, default=str)
+        if len(text.encode("utf-8")) &gt; MAX_RESULT_BYTES:
+            return ToolResult("result too large: narrow the query", True, "result_too_large")
+        return ToolResult(text)
+
+
+class SearchAccounts(BaseModel):
+    query: str = Field(min_length=3, description="Surname or a fragment of the IBAN")
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+ACCOUNTS = [{"id": str(i), "name": f"client {i}", "iban": f"NB00{i:04d}", "owner_group": "retail"}
+            for i in range(2000)]
+
+
+def search_accounts(args: BaseModel, principal: Principal) -> list[dict[str, str]]:
+    assert isinstance(args, SearchAccounts)
+    visible = [a for a in ACCOUNTS if a["owner_group"] in principal.groups]
+    return [a for a in visible if args.query in a["name"] or args.query in a["iban"]][: args.limit]
+
+
+if __name__ == "__main__":
+    server = McpServer()
+    server.register(Tool(
+        name="search_accounts",
+        description=("Find a customer's accounts by surname or a fragment of the IBAN. Use it when "
+                     "the operator names the customer but not the account number. Not for transaction history."),
+        args=SearchAccounts, handler=search_accounts, allowed_groups=frozenset({"retail"})))
+    operator = Principal("op-17", frozenset({"retail"}))
+    ok = server.call("search_accounts", {"query": "client 1"}, operator)
+    assert not ok.is_error and len(json.loads(ok.content)) == 5
+    bad = server.call("search_accounts", {"query": "cl"}, operator)
+    assert bad.is_error and bad.code == "invalid_arguments"
+    try:
+        server.call("delete_account", {}, operator)
+    except ProtocolError as err:
+        assert err.code == -32602
+    else:
+        raise AssertionError("an unknown tool must be a protocol error")
+    outsider = Principal("op-99", frozenset({"cards"}))
+    assert server.call("search_accounts", {"query": "client 1"}, outsider).code == "forbidden"
+    assert server.list_tools()[0]["inputSchema"]["properties"]["query"]["minLength"] == 3
+    print("the tool is described, bounded and checked")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="code: str =">line 23</span><p>The error code is meant for the model. On <code>invalid_arguments</code> the model corrects the arguments and calls again, on <code>upstream_timeout</code> it tells the operator, on <code>forbidden</code> it stops trying. In a free-text error these cases are not formally distinguished.</p></div>
+        <div><span class="at" data-anchor="side_effect: bool = False">line 40</span><p>The side-effect flag is recorded in the tool's description: the agent loop of <a href="#ch-7" data-secref="7">Chapter 7</a> uses it to decide whether a call may be retried, and the approval layer of <a href="#ch-11" data-secref="11">Chapter 11</a> uses it to decide whether to ask a human.</p></div>
+        <div><span class="at" data-anchor="self.args.model_json_schema()">line 45</span><p>The argument schema is generated from the pydantic model. Constraints such as the minimum query length land in the schema and are visible to the model before the call.</p></div>
+        <div><span class="at" data-anchor="raise ProtocolError(-32602">line 64</span><p>The MCP specification classifies an unknown tool as a protocol error: the server answers with a JSON-RPC error with code −32602 and produces no tool result. A refusal of rights, invalid arguments and a system timeout are returned as a result with the error flag, because the model can correct the call from them.</p></div>
+        <div><span class="at" data-anchor="if tool.allowed_groups and not">line 65</span><p>The rights check runs before the argument check: a denial must not reveal which arguments would have been valid.</p></div>
+        <div><span class="at" data-anchor="MAX_RESULT_BYTES:">line 78</span><p>The result-size bound limits the volume that enters the model's context. When the bound is exceeded, the server returns an error asking to narrow the query. The model would not distinguish a truncated list from a complete one and would reason from incomplete data.</p></div>
+        <div><span class="at" data-anchor="visible = [a for a in ACCOUNTS">line 94</span><p>The visibility of accounts is computed from the principal's groups inside the handler. An instruction "show only your own accounts" in a prompt is not access control, because the model may fail to follow it.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference concerns the addressee of the description. The naive description is written for the developer, who already knows the purpose of the function. The considered description is written for the model and states three things: what the tool does, in which cases to call it, and in which cases not to.</p>
+    <p>The second difference concerns the information about the asker. The naive tool does not receive the principal, so it can neither limit visibility nor record who requested what. The considered tool receives the principal on every call and applies rights inside the handler.</p>
+    <p>The third difference concerns the shape of a refusal. An exception passed to the model as a string does not differ in form from any other error; an error code lets the model choose an action: correct the arguments, wait, tell the operator or stop trying. The MCP specification distinguishes two kinds of failure: an unknown tool and a malformed request are returned as a JSON-RPC error, while input validation errors, business-logic errors and failures of external systems are returned as a tool result with <code>isError</code>, so that the model can correct the call.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/server/tools#error-handling" target="_blank" rel="noreferrer">MCP, specification 2026-07-28: Tools, Error Handling</a></p>
+  </div>
+</div>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 300" role="img" aria-label="A ladder of four rungs of tool description quality, from a nameless function to a description with applicability bounds and error codes; to the right of every rung the model's behaviour, from random calls to calling at the right moment and correcting its arguments" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar6b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="120" y="28" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">TOOL DESCRIPTION</text>
+  <text x="640" y="28" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">WHAT THE MODEL DOES</text>
+
+  <rect x="20" y="228" width="300" height="48" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="34" y="248" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">tool(query)</text>
+  <text x="34" y="266" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">no purpose in the name, no schema</text>
+  <rect x="20" y="164" width="300" height="48" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="34" y="184" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">search_accounts(query: str)</text>
+  <text x="34" y="202" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">a name and types, but not "when"</text>
+  <rect x="20" y="100" width="300" height="48" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="34" y="120" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">+ "use it when…; not for…"</text>
+  <text x="34" y="138" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">applicability bounds in the description</text>
+  <rect x="20" y="36" width="300" height="48" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="34" y="56" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">+ constraints in the schema, error codes</text>
+  <text x="34" y="74" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">minLength, limit ≤ 20, invalid_arguments</text>
+
+  <line x1="170" y1="228" x2="170" y2="216" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar6b)"/>
+  <line x1="170" y1="164" x2="170" y2="152" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar6b)"/>
+  <line x1="170" y1="100" x2="170" y2="88" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar6b)"/>
+
+  <line x1="320" y1="252" x2="400" y2="252" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+  <line x1="320" y1="188" x2="400" y2="188" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+  <line x1="320" y1="124" x2="400" y2="124" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+  <line x1="320" y1="60" x2="400" y2="60" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+
+  <rect x="410" y="228" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="248" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">calls at random or not at all</text>
+  <text x="424" y="266" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">arguments are guessed from the parameter name</text>
+  <rect x="410" y="164" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="184" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">calls for any question about a customer</text>
+  <text x="424" y="202" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">including where transaction history is needed</text>
+  <rect x="410" y="100" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="120" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">picks the tool by situation</text>
+  <text x="424" y="138" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">but a too-short query still reaches the server</text>
+  <rect x="410" y="36" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="56" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">calls at the right moment with valid arguments</text>
+  <text x="424" y="74" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">corrects the call or stops according to the error code</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Every rung of the tool description removes one class of wrong calls: the name and types define the arguments, the applicability bounds define the moment of the call, and the schema constraints and error codes let the model correct the call on its own.</figcaption>
+</figure>
+
+<h3 id="s-6-6"><span class="num">6.6</span>Adapters for legacy systems</h3>
+
+<p>Between the tool and the system of record stands an adapter whose job is to make the external system behave predictably for the tool: the answer arrives within a bounded time, data is delivered in portions, and calls to a failed system stop. For Nordbank's SOAP layer these requirements are implemented by three mechanisms: a timeout, pagination and a circuit breaker.</p>
+
+<dl class="def">
+<dt>Circuit breaker</dt>
+<dd>A wrapper around a call with three states. In the closed state calls pass. After a threshold of failures the circuit opens, and calls are rejected immediately without waiting for a timeout. When the pause elapses the circuit becomes half-open and lets one probe call through, whose outcome decides whether to close the circuit or open it again.<a class="src" href="https://martinfowler.com/bliki/CircuitBreaker.html" target="_blank" rel="noreferrer">Fowler, Circuit Breaker, 2014</a></dd>
+</dl>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">legacy_adapter.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from functools import partial
+
+
+class LegacyDown(Exception):
+    """The adapter refused on its own, without waiting for the system."""
+
+
+@dataclass
+class Clock:
+    t: float = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+
+@dataclass
+class CircuitBreaker:
+    clock: Clock
+    threshold: int = 3          # consecutive failures before opening
+    cooldown: float = 30.0      # seconds before the probe call
+    failures: int = 0
+    opened_at: float | None = None
+
+    @property
+    def state(self) -> str:
+        if self.opened_at is None:
+            return "closed"
+        if self.clock.now() - self.opened_at &gt;= self.cooldown:
+            return "half_open"
+        return "open"
+
+    def call[T](self, fn: Callable[[], T]) -> T:
+        if self.state == "open":
+            raise LegacyDown("the circuit is open")
+        try:
+            result = fn()
+        except (TimeoutError, ConnectionError):
+            self.failures += 1
+            if self.failures &gt;= self.threshold or self.state == "half_open":
+                self.opened_at = self.clock.now()
+            raise
+        self.failures = 0
+        self.opened_at = None
+        return result
+
+
+@dataclass
+class SoapAccounts:
+    """A stand-in for the SOAP layer: pages of 50 rows, sometimes silent."""
+    rows: list[dict[str, str]]
+    fail_next: int = 0
+    calls: int = 0
+
+    def page(self, cursor: int, size: int = 50) -> tuple[list[dict[str, str]], int | None]:
+        self.calls += 1
+        if self.fail_next:
+            self.fail_next -= 1
+            raise TimeoutError("SOAP did not answer within 5 s")
+        chunk = self.rows[cursor:cursor + size]
+        nxt = cursor + size if cursor + size &lt; len(self.rows) else None
+        return chunk, nxt
+
+
+@dataclass
+class TransactionsAdapter:
+    soap: SoapAccounts
+    breaker: CircuitBreaker
+    max_pages: int = 4          # at most 200 transactions per tool call
+    deadline_s: float = 8.0
+
+    def transactions(self, started_at: float) -> Iterator[dict[str, str]]:
+        cursor: int | None = 0
+        pages = 0
+        while cursor is not None and pages &lt; self.max_pages:
+            if self.breaker.clock.now() - started_at &gt; self.deadline_s:
+                raise TimeoutError("the tool's time budget is exhausted")
+            chunk, cursor = self.breaker.call(partial(self.soap.page, cursor))
+            pages += 1
+            yield from chunk
+
+
+if __name__ == "__main__":
+    clock = Clock()
+    soap = SoapAccounts(rows=[{"id": str(i)} for i in range(320)])
+    adapter = TransactionsAdapter(soap, CircuitBreaker(clock))
+    got = list(adapter.transactions(started_at=clock.now()))
+    assert len(got) == 200 and soap.calls == 4         # pagination with a ceiling
+
+    soap.fail_next = 3
+    for _ in range(3):
+        try:
+            list(adapter.transactions(clock.now()))
+        except TimeoutError:
+            pass
+    assert adapter.breaker.state == "open"
+    try:
+        list(adapter.transactions(clock.now()))
+        raise AssertionError("an open circuit must refuse at once")
+    except LegacyDown:
+        pass
+    assert soap.calls == 7                              # the system was not touched
+    clock.t += 31
+    assert adapter.breaker.state == "half_open"
+    assert len(list(adapter.transactions(clock.now()))) == 200
+    assert adapter.breaker.state == "closed"
+    print("the adapter paginates, keeps its budget and opens the circuit")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def state(self) -&gt; str:">line 29</span><p>The state is computed from time: between opening and the probe call the adapter makes no calls, and the moment of the probe call is determined by the clock reading. The clock is passed explicitly so that the test does not wait thirty seconds.</p></div>
+  <div><span class="at" data-anchor="or self.state ==">line 43</span><p>A failure in the half-open state opens the circuit again with a fresh pause. Without it one failed probe would leave the circuit half-open, and the next call would go to the failed system again.</p></div>
+  <div><span class="at" data-anchor="max_pages: int = 4">line 72</span><p>The page ceiling bounds a tool call by volume and the time budget bounds it by duration. Both are needed: a slow system with small pages exhausts the time, a fast one with large pages exhausts the volume.</p></div>
+  <div><span class="at" data-anchor="partial(self.soap.page, cursor)">line 81</span><p>The page call is handed to the breaker as a partially applied function with the cursor already bound. A closure over the loop variable would receive the cursor's value at call time, which can differ from its value at creation time.</p></div>
+</div>
+</figure>
+
+<div class="note" data-level="2">The opening threshold is expressed as a count of consecutive failures for the brevity of the listing. In production the threshold is set as a failure ratio over a sliding window, because ten failures out of ten calls and ten out of a thousand indicate different states of the system; this method is described in the chapter on retries of the Python textbook.</div>
+
+<h3 id="s-6-7"><span class="num">6.7</span>The perimeter and identity</h3>
+
+<p>The diagram in <a href="#s-6-2" data-secref="6.2">Section 6.2</a> shows that the MCP server is the only component with access to both sides: to the operator's token on the left and to the credentials of the systems of record on the right. From this follows a principle: reads run on behalf of the operator, writes on behalf of the server, and core credentials are not passed outside the perimeter.</p>
+
+<dl class="def">
+<dt>On-behalf-of delegation</dt>
+<dd>A scheme in which a service that received a user's request calls the next system with a separate token that was issued for that system and carries the user's identity. The target system checks the user's rights and records the user's name in its log. The MCP specification forbids a server to pass on the token it received from the client: a separate token is used for the upstream API.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations" target="_blank" rel="noreferrer">modelcontextprotocol.io, authorization security considerations</a></dd>
+</dl>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">tool_auth.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class UserToken:
+    user_id: str
+    scopes: frozenset[str]
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class ServiceAccount:
+    name: str
+    scopes: frozenset[str]
+
+
+@dataclass
+class AuthDecision:
+    allowed: bool
+    identity: str               # whose name lands in the target system's log
+    reason: str = ""
+
+
+@dataclass
+class ToolAuth:
+    """Reads on behalf of the operator, writes on behalf of the server with approval."""
+    service: ServiceAccount
+    approvals: set[str] = field(default_factory=set)   # keys of approved writes
+
+    def authorize(self, tool: str, side_effect: bool, token: UserToken,
+                  now: float, approval_key: str = "") -> AuthDecision:
+        if token.expires_at &lt;= now:
+            return AuthDecision(False, token.user_id, "the token has expired")
+        if not side_effect:
+            needed = f"read:{tool}"
+            if needed not in token.scopes:
+                return AuthDecision(False, token.user_id, f"missing scope {needed}")
+            return AuthDecision(True, token.user_id)
+        needed = f"write:{tool}"
+        if needed not in self.service.scopes:
+            return AuthDecision(False, self.service.name, f"the server lacks {needed}")
+        if approval_key not in self.approvals:
+            return AuthDecision(False, self.service.name, "no operator approval")
+        return AuthDecision(True, f"{self.service.name} for {token.user_id}")
+
+
+if __name__ == "__main__":
+    auth = ToolAuth(ServiceAccount("mcp-nordbank", frozenset({"write:create_dispute"})))
+    op = UserToken("op-17", frozenset({"read:search_accounts"}), expires_at=1_000.0)
+    assert auth.authorize("search_accounts", False, op, now=10.0).allowed
+    assert not auth.authorize("search_accounts", False, op, now=2_000.0).allowed
+    denied = auth.authorize("create_dispute", True, op, now=10.0)
+    assert not denied.allowed and denied.reason == "no operator approval"
+    auth.approvals.add("dispute:op-17:tx-42")
+    ok = auth.authorize("create_dispute", True, op, now=10.0, approval_key="dispute:op-17:tx-42")
+    assert ok.allowed and ok.identity == "mcp-nordbank for op-17"
+    print("reads on behalf of the operator, writes on behalf of the server by approval")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if not side_effect:">line 36</span><p>A read requires a scope in the operator's token: if the operator may not search accounts, neither may the agent acting on the operator's behalf. The agent's rights are a subset of the operator's rights.</p></div>
+  <div><span class="at" data-anchor="write:{tool}">line 41</span><p>A write runs under the server's account, because operators have no write rights to the core, but only with an approval bound to the specific action. A blanket approval is equivalent to granting the operator write rights.</p></div>
+  <div><span class="at" data-anchor="for {token.user_id}">line 46</span><p>The identity string for the log names both participants: who executed the action and on whose behalf. The target system's log records the server, and the MCP log links the record to the operator.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Common mistake</b>Keeping the credentials of the systems of record in the agent runtime "for the simplicity of the pilot". The pilot can move to production without a review of the architecture, and the bank's core credentials then remain in a cloud environment the chief information security officer never reviewed. The perimeter is therefore designed in the first week of the engagement.</div>
+
+<h3 id="s-6-8"><span class="num">6.8</span>Write actions</h3>
+
+<p>Creating a disputed transaction is the only write action in the task. The risk for this action comes from retries: the agent loop retries a tool call after a timeout, the MCP client retries a request after a dropped connection, the HTTP library retries after a network error. Three levels of retries, each justified on its own, can together create several disputed transactions instead of one.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="A sequence diagram with four participants: the agent, the MCP server, the SOAP adapter and the mainframe; the first create-dispute call reaches the mainframe but the answer is lost to a timeout, a retry without a key creates a second record, and a retry with an idempotency key returns the stored result of the first call without touching the mainframe" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar6c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="40" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="105" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">agent</text>
+  <rect x="270" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="335" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">MCP server</text>
+  <rect x="500" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="565" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">SOAP adapter</text>
+  <rect x="720" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.6"/>
+  <text x="785" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">mainframe</text>
+  <line x1="105" y1="54" x2="105" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="335" y1="54" x2="335" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="565" y1="54" x2="565" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="785" y1="54" x2="785" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="The first call reaches the mainframe and creates a record, but the answer is lost: the adapter reports a timeout.">
+    <line x1="105" y1="90" x2="327" y2="90" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">create_dispute(tx-42)</text>
+    <line x1="335" y1="112" x2="557" y2="112" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <line x1="565" y1="134" x2="777" y2="134" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <rect x="770" y="140" width="30" height="20" rx="3" fill="var(--sA)" opacity="0.85"/>
+    <text x="808" y="154" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">record no. 1</text>
+    <line x1="777" y1="170" x2="600" y2="170" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="690" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">answer lost</text>
+    <line x1="557" y1="196" x2="343" y2="196" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="450" y="188" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">TimeoutError</text>
+  </g>
+
+  <g data-step="2" data-caption="A retry without a key travels the whole path again and creates a second record of the same dispute.">
+    <line x1="105" y1="230" x2="327" y2="230" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="222" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sE)">retry without a key</text>
+    <line x1="335" y1="252" x2="557" y2="252" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <line x1="565" y1="274" x2="777" y2="274" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <rect x="770" y="280" width="30" height="20" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="808" y="294" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">record no. 2</text>
+  </g>
+
+  <g data-step="3" data-caption="A retry with an idempotency key stops at the server: the stored result of the first call is returned without touching the mainframe.">
+    <line x1="105" y1="330" x2="327" y2="330" stroke="var(--sB)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="322" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sB)">retry with a key</text>
+    <rect x="320" y="338" width="30" height="20" rx="3" fill="var(--sB)" opacity="0.85"/>
+    <text x="358" y="352" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">key known: the stored result</text>
+    <line x1="327" y1="372" x2="113" y2="372" stroke="var(--sB)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sB)">dispute_id=D-1</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> To the caller a lost answer is indistinguishable from an action that never happened, so the caller retries. The protection against the retry is placed where the action executes: given the idempotency key, the server returns the stored result instead of executing the action again.</figcaption>
+</figure>
+
+<dl class="def">
+<dt>Idempotency key</dt>
+<dd>A value that uniquely identifies the intent to perform an action once. A server that receives a call with a known key returns the stored result of the first execution and does not perform the action again. The key is derived from the session, the agent's step and the arguments, that is, from the data that make the intent unique; the time of the call does not serve this purpose, because it changes with every retry.</dd>
+</dl>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">idempotent_write.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+
+def idempotency_key(session_id: str, step: int, tool: str, args: dict[str, Any]) -> str:
+    payload = json.dumps({"s": session_id, "n": step, "t": tool, "a": args},
+                         sort_keys=True, ensure_ascii=False)
+    return hashlib.blake2b(payload.encode("utf-8"), digest_size=16).hexdigest()
+
+
+@dataclass
+class IdempotencyStore:
+    """Stored results by key, expiring with time."""
+    now: Callable[[], float]
+    ttl_s: float = 24 * 3600
+    rows: dict[str, tuple[float, str]] = field(default_factory=dict)
+    in_flight: set[str] = field(default_factory=set)
+
+    def run(self, key: str, action: Callable[[], str]) -> str:
+        entry = self.rows.get(key)
+        if entry and self.now() - entry[0] &lt; self.ttl_s:
+            return entry[1]                          # a retry: a read instead of the action
+        if key in self.in_flight:
+            raise RuntimeError("the action is still running: wait for its outcome")
+        self.in_flight.add(key)
+        try:
+            result = action()
+        finally:
+            self.in_flight.discard(key)
+        self.rows[key] = (self.now(), result)
+        return result
+
+
+if __name__ == "__main__":
+    clock = {"t": 0.0}
+    created: list[str] = []
+
+    def create_dispute() -> str:
+        created.append(f"D-{len(created) + 1}")
+        return created[-1]
+
+    store = IdempotencyStore(now=lambda: clock["t"])
+    key = idempotency_key("sess-9", 4, "create_dispute", {"tx": "tx-42", "reason": "double charge"})
+    first = store.run(key, create_dispute)
+    second = store.run(key, create_dispute)             # a retry after a timeout
+    assert first == second == "D-1" and created == ["D-1"]
+    other = idempotency_key("sess-9", 5, "create_dispute", {"tx": "tx-42", "reason": "double charge"})
+    assert store.run(other, create_dispute) == "D-2"    # a new step: a new intent
+    clock["t"] += 25 * 3600
+    assert store.run(key, create_dispute) == "D-3"      # the key expired: the action runs again
+    print("a retry within the term returns the stored result")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="payload = json.dumps(">line 11</span><p>The agent's step number is part of the key. Without it two different intents with identical arguments, say two disputes over one transaction for different reasons in one session, would merge into one. With it a retry of the same step after a timeout lands on the same key.</p></div>
+  <div><span class="at" data-anchor="if key in self.in_flight:">line 28</span><p>The set of in-flight keys closes the window between the start of the action and the recording of its result: a second call arriving in that window must neither execute the action again nor return an empty result. It waits or refuses explicitly.</p></div>
+  <div><span class="at" data-anchor="+= 25 * 3600">line 54</span><p>The key has a lifetime: a dispute over the same transaction a day after the first is treated as a new intent of the operator. The term is chosen longer than the longest possible retry and shorter than the shortest meaningful new intent.</p></div>
+</div>
+</figure>
+
+<p data-level="2">The key store keeps its data across a restart of the MCP server; otherwise a retry after a server failure creates the record again. At Nordbank the store is a database in the DMZ; in the cloud variant of <a href="#s-6-9" data-secref="6.9">Section 6.9</a>, it is a managed store with conditional writes. The necessary condition: the operation "write if the key is absent" executes atomically.</p>
+
+<h3 id="s-6-9" data-level="2"><span class="num">6.9</span>On Google Cloud: MCP on Cloud Run, Private Service Connect, Secret Manager</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">Cloud Run</span>
+  <span class="tag">Private Service Connect</span>
+  <span class="tag">Secret Manager</span>
+</div>
+
+<p data-level="2">The architecture of <a href="#s-6-2" data-secref="6.2">Section 6.2</a> carries over to Google Cloud without moving the boundaries; only the components that implement those boundaries change. Nordbank's requirements place the MCP server inside the bank's perimeter, and another variant places it in the cloud in the customer's project. In that variant the bank's core is connected to the VPC over Cloud Interconnect or Cloud VPN, the server runs as a Cloud Run service, sends its outbound traffic into the VPC through Direct VPC egress and uses the internal ingress setting, under which requests from the internet are rejected.<a class="src" href="https://docs.cloud.google.com/run/docs/securing/private-networking" target="_blank" rel="noreferrer">cloud.google.com, private networking and Cloud Run</a><a class="src" href="https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc" target="_blank" rel="noreferrer">cloud.google.com, Direct VPC egress</a><a class="src" href="https://docs.cloud.google.com/run/docs/securing/ingress" target="_blank" rel="noreferrer">cloud.google.com, Cloud Run ingress</a> If the agent runtime runs in a VPC of another project, the service is published through Private Service Connect behind an internal Application Load Balancer and called through a Private Service Connect endpoint. The server's identity is the Cloud Run service account, and no key file is needed;<a class="src" href="https://docs.cloud.google.com/run/docs/securing/service-identity" target="_blank" rel="noreferrer">cloud.google.com, Cloud Run service identity</a> the SOAP layer's credentials are passed to the service from Secret Manager as environment variables resolved at instance start-up or as files in a mounted volume.<a class="src" href="https://docs.cloud.google.com/run/docs/configuring/services/secrets" target="_blank" rel="noreferrer">cloud.google.com, secrets in Cloud Run</a></p>
+
+<p data-level="2">The operator's token is issued by the bank's corporate identity provider. Workforce Identity Federation lets users of an external identity provider that supports OIDC or SAML 2.0 sign in to Google Cloud resources with single sign-on, so operators work with the agent runtime under their corporate accounts.<a class="src" href="https://docs.cloud.google.com/iam/docs/workforce-identity-federation" target="_blank" rel="noreferrer">cloud.google.com, Workforce Identity Federation</a> The MCP server verifies the token in every request, as the MCP specification requires for authorisation over HTTP. The Agent Development Kit attaches an MCP server through the <code>McpToolset</code> class, which requests the tool list and converts the tools into ADK tools, so the agent of <a href="#ch-7" data-secref="7">Chapter 7</a> receives Nordbank's tools the same way it receives local functions.<a class="src" href="https://adk.dev/tools-custom/mcp-tools/" target="_blank" rel="noreferrer">adk.dev, MCP tools</a> The idempotency key store is Firestore with a transaction that reads the key's document and creates it only if it is absent,<a class="src" href="https://docs.cloud.google.com/firestore/native/docs/manage-data/transactions" target="_blank" rel="noreferrer">cloud.google.com, Firestore transactions</a> or Memorystore for Redis with the <code>SET</code> command and the <code>NX</code> option, under which the key is set only if it does not exist.<a class="src" href="https://docs.cloud.google.com/memorystore/docs/redis/supported-commands" target="_blank" rel="noreferrer">cloud.google.com, Memorystore for Redis commands</a><a class="src" href="https://redis.io/docs/latest/commands/set/" target="_blank" rel="noreferrer">redis.io, the SET command</a></p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>Trust boundaries and on-behalf-of delegation do not depend on the vendor; what differs is how an MCP server attaches to the agent. The Claude API and the OpenAI Responses API connect to remote MCP servers from the API itself without a separate MCP client; both options are designed for servers reachable over HTTP from the internet, and for a private server OpenAI offers Secure MCP Tunnel.<a class="src" href="https://platform.claude.com/docs/en/agents-and-tools/mcp-connector" target="_blank" rel="noreferrer">platform.claude.com, MCP connector</a><a class="src" href="https://developers.openai.com/api/docs/guides/tools-connectors-mcp" target="_blank" rel="noreferrer">developers.openai.com, MCP and connectors</a> In LangGraph the langchain-mcp-adapters library converts MCP tools into LangChain tools, which the graph calls through a <code>ToolNode</code>.<a class="src" href="https://github.com/langchain-ai/langchain-mcp-adapters" target="_blank" rel="noreferrer">github.com, langchain-mcp-adapters</a> Placing the server inside the perimeter is determined by the customer's requirements; such a server is reached by an MCP client in the agent runtime over a private link, and a connection from a vendor's API is possible only through a tunnel where the vendor offers one.</div>
+
+<h3 id="s-6-10" data-level="3"><span class="num">6.10</span>In depth: stacked retries, the confused deputy, schema drift</h3>
+
+<h4 data-level="3">Retries at three levels and the derivation of the key</h4>
+
+<p data-level="3">Section 6.8 showed one retry; in production there are at least three sources of retries, and each source defines "the same call" in its own way. The HTTP client retries a request with the same body, so a key passed in the tool's arguments survives. The MCP client retries a tool call after a dropped stream, and the key survives if the client passes in the arguments the key received from the agent loop; a key generated on every send changes on a retry. The agent loop retries a step after an error, and here the key survives only when it is derived from the step number; a call counter does not serve this purpose, because it increases with every attempt.</p>
+
+<p data-level="3">Hence the rule for deriving the key: it is built at the topmost level where the intent is known and passed down unchanged. The intent is known to the agent loop, so the loop generates the key and places it into the tool's arguments, and the MCP server and the adapter pass it on unchanged. A key generated on the server does not protect against retries, because the server cannot tell a retry from a new intent.</p>
+
+<h4 data-level="3">The result is too large</h4>
+
+<p data-level="3">The <code>list_transactions</code> tool for an active customer returns thousands of operations, and the size bound of the <code>mcp_server.py</code> listing rejects the answer. The refusal is correct, but the model also needs a way to get the part of the data it needs. Two methods serve this purpose, and they can be combined. First: the tool accepts a cursor and returns a page with a continuation flag, and the model pages until it finds what it needs. Second: the server computes a summary and returns it with the first page, so that in many cases the model does not need to page.</p>
+
+<figure class="code" data-fold="0" data-level="3">
+<figcaption><span class="file">result_shaping.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class Shaped:
+    rows: list[dict[str, Any]]
+    total: int
+    summary: dict[str, Any]
+    next_cursor: int | None
+
+
+def shape(rows: list[dict[str, Any]], cursor: int, limit_bytes: int) -> Shaped:
+    """The first page that fits the budget, plus a summary of the whole set."""
+    summary = {"count": len(rows), "sum": sum(r["amount"] for r in rows),
+               "first": rows[0]["date"] if rows else None, "last": rows[-1]["date"] if rows else None}
+    page: list[dict[str, Any]] = []
+    used = len(json.dumps(summary))
+    i = cursor
+    while i &lt; len(rows):
+        size = len(json.dumps(rows[i], ensure_ascii=False))
+        if used + size &gt; limit_bytes:
+            break
+        page.append(rows[i])
+        used += size
+        i += 1
+    return Shaped(page, len(rows), summary, i if i &lt; len(rows) else None)
+
+
+if __name__ == "__main__":
+    ops = [{"id": i, "date": f"2026-0{1 + i % 9}-01", "amount": 10 + i} for i in range(400)]
+    first = shape(ops, cursor=0, limit_bytes=2_000)
+    assert 0 &lt; len(first.rows) &lt; 400 and first.next_cursor is not None
+    assert first.summary["count"] == 400 and first.summary["sum"] == sum(10 + i for i in range(400))
+    second = shape(ops, cursor=first.next_cursor, limit_bytes=2_000)
+    assert second.rows[0]["id"] == first.rows[-1]["id"] + 1
+    print("a page within the budget, a summary of the whole set, a cursor to continue")</code></pre>
+</figure>
+
+<h4 data-level="3">The confused deputy</h4>
+
+<p data-level="3">A server that executes users' requests under its own identity reproduces the confused deputy vulnerability: it holds rights the user does not have, and the user can make it apply those rights in the user's interest. For an MCP server this means that a tool argument pointing at somebody else's account will be processed if the rights check relies on the server's rights. In the <code>tool_auth.py</code> listing reads are protected by delegation; writes are executed by the server under its own name, and the approval serves as the protection: the server performs only the writes the operator explicitly approved by a key bound to the arguments. An approval to "create a dispute" without a binding to the transaction restores the vulnerability.</p>
+
+<h4 data-level="3">Drift of tool schemas</h4>
+
+<p data-level="3">A change to a tool's description or schema is a change to the model's interface, and its consequences are the same as those of an API change. The prompt cache is invalidated, because the descriptions are part of the stable prefix of the context. The evaluation sets of <a href="#ch-12" data-secref="12">Chapter 12</a> stop matching the behaviour: trajectories recorded under the old description contain calls the new description forbids. Long-running agents of <a href="#ch-9" data-secref="9">Chapter 9</a>, resumed after a schema change, hold in their saved state arguments that the new schema no longer has.</p>
+
+<p data-level="3">Hence the requirement to version the tool set as a whole and to record the version in the trace of every call. A version change goes through the same gate as a prompt change: a shadow run on the evaluation set, a comparison of trajectories, then the switch. Refreshing the tool list on a server notification, which the protocol allows, is disabled in Nordbank's production: the list changes only when a new version is released.</p>
+
+<div class="warn" data-level="3"><b>Batch-only systems</b>A disputed transaction created over SOAP appears in the statement after the nightly batch. If a read tool does not report the freshness of its data, the agent can conclude that the record was not created and create it again under a new key. Every read tool returns a freshness stamp, and the description of the write tool warns the model about the delay.</div>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>Why is Nordbank's MCP server called a policy enforcement point rather than a proxy?</summary>
+<div class="ans"><p>The MCP server is the only participant that both knows on whose behalf a call arrived and has access to the credentials of the systems of record. A proxy only passes calls on; a policy enforcement point decides who is permitted to do what with which arguments, and records the decision in the log.</p></div>
+</details>
+<details>
+<summary>What is the idempotency key derived from, and why not from the time of the call?</summary>
+<div class="ans"><p>The key is derived from the session, the agent's step number and the arguments, that is, from the data that make the intent unique. The time of the call changes with every retry, so a key based on it would differ between the original call and the retry.</p></div>
+</details>
+<details>
+<summary>What should a read tool return when the system of record is in its maintenance window?</summary>
+<div class="ans"><p>The tool returns an explicit error with a code and the end time of the window. Given the error code the model tells the operator the cause and does not retry; a timeout the model would take for a transient failure and would retry the call.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>The tool set is derived from the inventory of entities and systems of record, and every tool corresponds to an operator's question.</li>
+<li>The MCP server stands at the intersection of trust regions and is therefore a policy enforcement point: reads on behalf of the operator, writes on behalf of the server by approval.</li>
+<li>A tool's description is written for the model and states its applicability bounds; constraints are recorded in the schema, and refusals carry a machine-readable code.</li>
+<li>The legacy adapter is responsible for time, volume and opening the circuit; the write action is protected by an idempotency key derived from the intent.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-7" data-secref="7">Chapter 7: the agent that calls these tools</a>
+<a href="#ch-9" data-secref="9">Chapter 9: retries and checkpoints</a>
+<a href="#ch-10" data-secref="10">Chapter 10: the trust boundaries in full</a>
+</p>
+</div>
+</section>

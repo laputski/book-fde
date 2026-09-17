@@ -1,0 +1,797 @@
+<!-- ────────────────────────── ГЛАВА 3 ────────────────────────── -->
+<section class="chapter" id="ch-3">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава третья</p>
+    <span class="strata" role="img" aria-label="Слои B и D: модель и агентный слой, оценка и наблюдаемость">
+      <i></i><i data-s="B"></i><i></i><i data-s="D"></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-3"><span class="num">3</span>Фундаментальные модели как компоненты production</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>считать стоимость и задержку вызова модели по токенам и сводить их с потолком заказчика;</li>
+<li>закреплять форму ответа схемой и восстанавливать её нарушение не более чем одним ремонтом;</li>
+<li>различать четыре класса отказов вызова и назначать каждому свою политику повторов;</li>
+<li>маршрутизировать документы по уровням моделей детерминированным правилом по признакам документа;</li>
+<li>закреплять версию модели и переключать её только после теневого прогона.</li>
+</ul>
+</div>
+
+<h3 id="s-3-1"><span class="num">3.1</span>Задача: таможенные документы TKL</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-3" data-secref="G.3">Досье CF3 · Transkontinent Logistics</a></span>
+  <span class="tag">SAP ERP</span>
+  <span class="tag">PDF на шести языках</span>
+  <span class="tag">40 000 отправлений в сутки</span>
+  <span>логистика</span>
+</div>
+
+<p>Transkontinent Logistics перевозит грузы через восемнадцать стран, и каждое отправление сопровождают таможенные документы: инвойс, упаковочный лист, экспортная декларация, сертификат происхождения. Сегодня четыреста региональных складов вводят эти документы в SAP руками, по семь минут на комплект. Документы приходят в виде PDF: часть сформирована программно, часть отсканирована с перекосом и печатями поверх текста, языки шести стран отправления, включая немецкий, польский, русский и китайский.</p>
+
+<p>Задача заключается в том, чтобы превращать PDF в структурированную запись SAP при трёх ограничениях. Объём составляет сорок тысяч отправлений в сутки, то есть в среднем около половины документа в секунду и вчетверо больше в утренний пик. Финансовый директор утвердил потолок в два цента на документ; ручной ввод обходится в один доллар сорок центов. Операционный директор потребовал, чтобы 95-й процентиль задержки (p95) не превышал восьми секунд, поскольку оператор склада ожидает результата у терминала.</p>
+
+<p>Глава построена вокруг этих трёх чисел. Потолок стоимости переводится в бюджет токенов, требование к задержке в бюджет попыток, а требование «запись в SAP» в схему, которой ответ модели должен соответствовать до передачи в ERP. Контракт вызова модели из этой главы используется в <a href="#ch-4" data-secref="4">главе 4</a>, посвящённой составу контекста, а в <a href="#ch-7" data-secref="7">главе 7</a> для отправлений TKL строится агент исключений.</p>
+
+<h3 id="s-3-2"><span class="num">3.2</span>Почему вызов модели является зависимостью с контрактом</h3>
+
+<p>Типичные вопросы инженера, добавляющего в систему платёжный шлюз или геокодер: какова схема запроса и ответа, какие гарантии даёт поставщик по времени ответа и доступности, как объявляются несовместимые изменения, какими кодами выражаются отказы и сколько стоит вызов. Данные вопросы образуют контракт, который определяет, как зависимость встраивается в систему.</p>
+
+<p>Для вызова языковой модели ответы на те же пять вопросов выглядят следующим образом. Схема запроса состоит из промпта, объявлений инструментов и параметров декодирования; схема ответа задаётся разработчиком и принуждается при декодировании. Гарантий по времени ответа при оплате по токенам поставщик не даёт: он задаёт квоты запросов и токенов в минуту, а гарантированная мощность покупается отдельно как выделенная пропускная способность. Версии объявляются датированными идентификаторами, а также псевдонимами (alias), за которыми поставщик со временем меняет версию. Отказы делятся на классы, разобранные в <a href="#s-3-7" data-secref="3.7">разделе 3.7</a>. Стоимость рассчитывается по числу входных и выходных токенов.</p>
+
+<p>От геокодера эту зависимость отличают два свойства, и оба влияют на архитектуру. Первое свойство: ответ недетерминирован даже при нулевой температуре, поскольку порядок операций на ускорителе и состав батча меняются от запуска к запуску. Поэтому проверка на равенство строк заменяется проверкой формы ответа и статистикой по набору примеров, а расхождение двух прогонов само по себе не указывает на ошибку. Второе свойство: стоимость и задержка вызова растут с длиной входного и выходного текста, тогда как вызов геокодера имеет фиксированную цену; изменение промпта, не меняющее поведения модели, может поэтому удвоить счёт.</p>
+
+<p>Определение, которое используется в остальных разделах главы: вызов модели является инженерной зависимостью с контрактом, бюджетом, моделью отказов и закреплённой версией. Контракт задаётся схемой ответа; бюджет измеряется в токенах, секундах и долларах; модель отказов перечисляет классы отказов и политику повторов для каждого класса; закреплённая версия обеспечивает одинаковое поведение модели в запусках, разнесённых во времени.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 410" role="img" aria-label="Последовательность обработки одного таможенного документа: конвейер TKL передаёт документ шлюзу моделей, шлюз проверяет префикс кэша и обращается к модели, модель отвечает потоком, валидатор схемы возвращает нарушение на один ремонт, после чего проверенная декларация уходит в SAP; у каждого перехода указана его доля задержки" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="19" y="20" width="146" height="34" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="92" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">конвейер TKL</text>
+  <rect x="193" y="20" width="146" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="266" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">шлюз моделей</text>
+  <rect x="367" y="20" width="146" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="440" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">модель</text>
+  <rect x="541" y="20" width="146" height="34" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="614" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">валидатор схемы</text>
+  <rect x="715" y="20" width="146" height="34" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="788" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">SAP</text>
+
+  <line x1="92" y1="54" x2="92" y2="372" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="266" y1="54" x2="266" y2="372" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="440" y1="54" x2="440" y2="372" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="614" y1="54" x2="614" y2="372" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="788" y1="54" x2="788" y2="372" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="Документ выходит из очереди, шлюз собирает промпт и сверяет его начало с кэшированным префиксом.">
+    <line x1="92" y1="94" x2="258" y2="94" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3a)"/>
+    <text x="175" y="86" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">extract(doc)</text>
+    <text x="175" y="110" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">2 страницы · 0.1 с</text>
+    <rect x="196" y="120" width="140" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+    <text x="266" y="137" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">префикс кэша</text>
+  </g>
+
+  <g data-step="2" data-caption="При промахе по полной цене оплачиваются все 3100 токенов входа, при попадании только 1300; на задержке первого токена промах виден раньше, чем на счёте.">
+    <line x1="266" y1="172" x2="432" y2="172" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3a)"/>
+    <text x="349" y="164" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">промах: 3100 вход</text>
+    <line x1="266" y1="202" x2="432" y2="202" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar3a)"/>
+    <text x="349" y="194" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">попадание: 1300 вход</text>
+  </g>
+
+  <g data-step="3" data-caption="Модель отдаёт ответ потоком; задержка складывается из времени до первого токена и скорости потока.">
+    <line x1="432" y1="240" x2="274" y2="240" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3a)"/>
+    <text x="353" y="232" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">JSON + finish_reason</text>
+    <text x="353" y="256" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">TTFT 0.9 с · поток 1.4 с</text>
+  </g>
+
+  <g data-step="4" data-caption="Валидатор принимает ответ по схеме; нарушение возвращает документ в модель ровно один раз, и этот повтор создаёт хвост распределения.">
+    <line x1="274" y1="288" x2="606" y2="288" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3a)"/>
+    <text x="440" y="280" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">Declaration.model_validate_json</text>
+    <path d="M606,312 H520 V330 H448" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar3a)"/>
+    <text x="620" y="316" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ремонт: +2.1 с, 12 % документов</text>
+  </g>
+
+  <g data-step="5" data-caption="Проверенная декларация уходит в SAP; запись стоит дешевле любого обращения к модели.">
+    <line x1="622" y1="358" x2="780" y2="358" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3a)"/>
+    <text x="701" y="350" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">IDoc · 0.4 с</text>
+  </g>
+
+  <text x="440" y="396" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">p50 2.8 с · p95 6.4 с: разницу создают ремонт и отсрочка после отказа.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Медиана задержки определяется временем работы модели, а 95-й процентиль определяется повторами: ремонтом ответа и отсрочками после отказов. Поэтому требование в восемь секунд выполняется прежде всего сокращением доли повторов: более быстрая модель уменьшает длительность каждой попытки, но не число попыток.</figcaption>
+</figure>
+
+<h3 id="s-3-3"><span class="num">3.3</span>Токены, окна, задержка и стоимость</h3>
+
+<dl class="def">
+<dt>Токен <span class="en">(token)</span></dt>
+<dd>Фрагмент, получаемый при делении текста токенизатором модели перед обработкой: чаще всего часто встречающаяся подстрока, реже отдельный символ. Токен одновременно служит единицей стоимости, единицей ёмкости контекстного окна и единицей скорости генерации, поэтому все три бюджета главы выражаются в токенах.</dd>
+<dt>Контекстное окно <span class="en">(context window)</span></dt>
+<dd>Максимальное число токенов, которое модель принимает за один вызов, считая промпт, объявления инструментов, вложенные документы и порождаемый ответ. Окно ограничивает размер одного вызова. Документ длиннее окна разбивается на части, и результат из ответов по частям собирает конвейер.</dd>
+</dl>
+
+<p>Стоимость вызова считается отдельно за входные и выходные токены, и цены отличаются в разы: выход дороже входа, потому что порождается последовательно. Третья категория, токены входа, прочитанные из кэша префикса, тарифицируется долей от обычной цены входа. Следовательно, длинный префикс, одинаковый во всех вызовах, может обходиться дешевле короткого изменяющегося префикса; условия попадания в кэш и их последствия для конвейера разобраны в <a href="#s-3-8" data-secref="3.8">разделе 3.8</a>.</p>
+
+<p>Задержка раскладывается на две части, которые измеряются и оптимизируются по отдельности. Время до первого токена определяется длиной входа, состоянием кэша и очередью на стороне поставщика. Скорость потока измеряется выходными токенами в секунду и определяет оставшуюся часть задержки. Для TKL отсюда следует, что сокращение схемы ответа на треть уменьшает задержку сильнее, чем сокращение документа на входе, поскольку выходные токены порождаются по одному, а входные обрабатываются параллельно.</p>
+
+<p>Расчёт ниже выполнен для сорока тысяч документов в сутки. Типовой комплект занимает две страницы распознанного текста, к нему добавляется неизменный префикс из инструкции, схемы и трёх примеров. Цены в таблице выражены в долларах за миллион токенов и относятся к младшему и старшему уровням моделей условного поставщика; они задают порядок величин.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Статья бюджета</th><th>Токены</th><th>Цена за млн</th><th>$ за документ</th></tr></thead>
+<tbody>
+<tr><td>Префикс: инструкция, схема, примеры (из кэша)</td><td>1 800</td><td>0.0375</td><td>0.000068</td></tr>
+<tr><td>Распознанный текст двух страниц</td><td>1 300</td><td>0.15</td><td>0.000195</td></tr>
+<tr><td>Декларация в ответе</td><td>420</td><td>0.60</td><td>0.000252</td></tr>
+<tr><td><b>Документ на младшем уровне</b></td><td>3 520</td><td></td><td><b>0.000515</b></td></tr>
+<tr><td>Тот же документ с одним ремонтом схемы</td><td>+3 900 / +380</td><td></td><td>0.001125</td></tr>
+<tr><td>Документ того же размера на старшем уровне</td><td>3 520</td><td>1.25 / 5.00</td><td>0.004288</td></tr>
+<tr><td><b>Смесь: 78 % младший, 22 % старший, 12 % с ремонтом</b></td><td></td><td></td><td><b>0.00142</b></td></tr>
+</tbody></table></div>
+
+<p>Смесь даёт около полутора десятых цента за документ и примерно пятьдесят семь долларов в сутки против потолка в два цента и восьмисот долларов. Запас в четырнадцать раз расходуется на ремонт схемы, теневые прогоны новой версии из <a href="#s-3-8" data-secref="3.8">раздела 3.8</a>, оценочные наборы <a href="#ch-12" data-secref="12">главы 12</a> и трассы <a href="#ch-13" data-secref="13">главы 13</a>. Если стоимость самого извлечения близка к потолку, конвейер укладывается в потолок, но в бюджете не остаётся средств на оценку и трассировку, которыми подтверждается его правильность.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Оценивать стоимость по английским примерам и распространять оценку на все языки. Многие токенизаторы разбивают текст на кириллице и китайском на большее число токенов, чем текст того же содержания на латинице. По измерениям на параллельном корпусе FLORES-200 токенизатор GPT-4 даёт для русского текста примерно в 1.6 раза больше токенов, чем для того же текста на немецком.<a class="src" href="https://arxiv.org/abs/2305.15425" target="_blank" rel="noreferrer">arXiv, Petrov и соавторы, 2023</a> Поэтому бюджет TKL считается по самому дорогому из шести языков: при расчёте по среднему документы на дорогих языках выходят за потолок.</div>
+
+<div class="note" data-level="2">Цены в книге приведены для порядка величин и устаревают быстрее текста. В конвейере прайс хранится как данные с датой вступления в силу; листинг <code>cost_meter.py</code> показывает такую таблицу и отказывается считать стоимость вызова, если для его версии прайса нет записи.</div>
+
+<h3 id="s-3-4"><span class="num">3.4</span>Структурированный вывод</h3>
+
+<dl class="def">
+<dt>Структурированный вывод <span class="en">(structured output)</span></dt>
+<dd>Режим вызова, при котором разработчик передаёт схему ответа, а декодер модели ограничен так, что порождает только текст, схеме соответствующий. Схема принуждает форму: состав полей, типы, обязательность, перечисления. Смысл значений схема не принуждает, поэтому проверка на стороне вызывающего остаётся обязательной.</dd>
+</dl>
+
+<p>Для записи в SAP нужна запись с полями: идентификатор отправления, страна происхождения, условие поставки, строки товаров с кодами ТН ВЭД. Между ответом модели и ERP действует контракт, и решения различаются тем, где этот контракт выражен. Наивное решение выражает его формулировкой промпта и разбирает ответ через <code>json.loads</code> без проверки. Продуманное выражает его схемой, передаёт схему модели и проверяет ответ после декодирования.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы получить структурированный ответ">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="0">
+      <figcaption><span class="file">naive_extract.py</span></figcaption>
+      <pre><code>import json
+
+DOC = "TKL-000412 | DE | DAP | 8703.23 | легковой автомобиль | 2 | 18400 EUR"
+
+
+def extract(doc: str, llm: LLMClient) -&gt; dict:
+    """Наивное извлечение: промпт строкой, ответ через json.loads."""
+    reply = llm.complete(f"Извлеки поля декларации из документа:\n{doc}")
+    return json.loads(reply.text)
+
+
+if __name__ == "__main__":
+    llm = FakeLLM(['{"shipment_id": "TKL-000412", "value": 18400}'])
+    fields = extract(DOC, llm)
+    assert fields["shipment_id"] == "TKL-000412"   # больше ничего не проверено
+    print("поля извлечены:", fields)</code></pre>
+    </figure>
+    <p>Листинг работает, пока документы и ответы модели совпадают с ожидаемым видом. Схемы нет, поэтому ответ с полем <code>value</code> вместо <code>value_eur</code> пройдёт дальше и вызовет ошибку только в SAP. Причина завершения не проверяется, поэтому оборванный ответ превратится в исключение разбора JSON, неотличимое от нарушения формата. Бюджета нет, поэтому документ на сорок страниц будет отправлен целиком. Стоимость не считается, поэтому соблюдение потолка в два цента не проверяется.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">extract.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from pydantic import BaseModel, Field, ValidationError
+
+PRICE_PER_MTOK = {"flash": (0.15, 0.60), "pro": (1.25, 5.00)}   # вход, выход
+CACHE_DISCOUNT = 0.25          # доля цены входа за токен, прочитанный из кэша
+MAX_INPUT_TOKENS = 12_000
+MAX_OUTPUT_TOKENS = 900
+
+
+def count_tokens(text: str) -&gt; int:
+    """Устойчивая оценка: четыре символа на токен, кириллица вдвое дороже."""
+    cyrillic = sum(1 for ch in text if "Ѐ" &lt;= ch &lt;= "ӿ")
+    return max(1, (len(text) - cyrillic) // 4 + cyrillic // 2)
+
+
+@dataclass(frozen=True)
+class Usage:
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class Reply:
+    text: str
+    finish_reason: str         # "stop" | "length" | "refusal"
+    usage: Usage
+
+
+class ModelClient(Protocol):
+    def generate(self, prompt: str, *, schema: dict[str, Any],
+                 max_output_tokens: int) -&gt; Reply: ...
+
+
+class FakeModel:
+    """Отвечает по сценарию: первый ответ нарушает схему, второй её соблюдает."""
+
+    def __init__(self, replies: list[str], cached: int = 0) -&gt; None:
+        self.replies = list(replies)
+        self.prompts: list[str] = []
+        self.cached = cached
+
+    def generate(self, prompt: str, *, schema: dict[str, Any],
+                 max_output_tokens: int) -&gt; Reply:
+        self.prompts.append(prompt)
+        text = self.replies.pop(0)
+        produced = count_tokens(text)
+        finish = "length" if produced &gt; max_output_tokens else "stop"
+        return Reply(text, finish, Usage(count_tokens(prompt),
+                                         min(produced, max_output_tokens), self.cached))
+
+
+class LineItem(BaseModel):
+    hs_code: str = Field(pattern=r"^\d{4}\.\d{2}$")
+    description: str = Field(min_length=2, max_length=120)
+    quantity: int = Field(ge=1)
+    value_eur: float = Field(ge=0)
+
+
+class Declaration(BaseModel):
+    """Контракт между моделью и SAP: что именно считается извлечённым документом."""
+
+    shipment_id: str = Field(pattern=r"^TKL-\d{6}$")
+    origin: str = Field(pattern=r"^[A-Z]{2}$")
+    incoterm: str = Field(pattern=r"^[A-Z]{3}$")
+    items: list[LineItem] = Field(min_length=1, max_length=50)
+
+
+def usd(usage: Usage, tier: str) -&gt; float:
+    price_in, price_out = PRICE_PER_MTOK[tier]
+    fresh = usage.input_tokens - usage.cached_tokens
+    billed_in = fresh + usage.cached_tokens * CACHE_DISCOUNT
+    return (billed_in * price_in + usage.output_tokens * price_out) / 1_000_000
+
+
+@dataclass
+class Extraction:
+    declaration: Declaration | None
+    spent_usd: float
+    attempts: int
+    error: str = ""
+
+
+def repair(prompt: str, bad: str, err: ValidationError) -&gt; str:
+    problems = "; ".join(".".join(str(p) for p in e["loc"]) + ": " + e["msg"]
+                         for e in err.errors())
+    return (f"{prompt}\n\nПредыдущий ответ не прошёл проверку схемы: {problems}\n"
+            f"Верни исправленный JSON целиком:\n{bad}")
+
+
+def extract(doc: str, client: ModelClient, tier: str = "flash",
+            budget_usd: float = 0.02) -&gt; Extraction:
+    schema = Declaration.model_json_schema()
+    prompt = f"Верни декларацию строго по схеме. Документ:\n{doc}"
+    if count_tokens(prompt) &gt; MAX_INPUT_TOKENS:
+        return Extraction(None, 0.0, 0, "input_budget")
+    spent = 0.0
+    for attempt in (1, 2):
+        reply = client.generate(prompt, schema=schema, max_output_tokens=MAX_OUTPUT_TOKENS)
+        spent += usd(reply.usage, tier)
+        if reply.finish_reason == "length":
+            return Extraction(None, spent, attempt, "truncated")
+        if reply.finish_reason == "refusal":
+            return Extraction(None, spent, attempt, "refusal")
+        try:
+            return Extraction(Declaration.model_validate_json(reply.text), spent, attempt)
+        except ValidationError as err:
+            if attempt == 2 or spent &gt; budget_usd:
+                return Extraction(None, spent, attempt, "schema")
+            prompt = repair(prompt, reply.text, err)
+    return Extraction(None, spent, 2, "schema")
+
+
+if __name__ == "__main__":
+    doc = "TKL-000412 | DE | DAP | 8703.23 | легковой автомобиль | 2 шт | 18400 EUR"
+    bad = ('{"shipment_id": "TKL-000412", "origin": "DE", "incoterm": "DAP", "items": '
+           '[{"hs_code": "870323", "description": "легковой автомобиль", '
+           '"quantity": 2, "value_eur": 18400}]}')
+    good = bad.replace("870323", "8703.23")
+    client = FakeModel([bad, good])
+    done = extract(doc, client)
+    assert done.declaration is not None and done.attempts == 2
+    assert done.declaration.items[0].hs_code == "8703.23"
+    assert "items.0.hs_code" in client.prompts[1]    # ремонт назвал нарушенное поле
+    assert done.spent_usd &lt; 0.02
+    typical = Usage(input_tokens=3_100, output_tokens=420, cached_tokens=1_800)
+    assert round(usd(typical, "flash"), 5) == 0.00051
+    assert usd(typical, "pro") &gt; 8 * usd(typical, "flash")
+    print(f"декларация собрана за {done.attempts} обращения, "
+          f"типовой документ стоит ${usd(typical, 'flash'):.5f}")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="cached_tokens * CACHE_DISCOUNT">строка 76</span><p>Токены из кэша тарифицируются долей обычной цены, поэтому бюджет считается по трём статьям: свежий вход, вход из кэша и выход. Конвейер, считающий вход одной суммой, недооценивает выигрыш от кэша и переоценивает стоимость холодного старта.</p></div>
+        <div><span class="at" data-anchor="hs_code: str">строка 58</span><p>Код ТН ВЭД описан регулярным выражением: четыре цифры, точка, две цифры. Схема, разрешающая любой текст, перекладывает проверку на SAP, где отказ обходится дороже: документ уже принят, и ошибка обнаруживается при таможенном оформлении.</p></div>
+        <div><span class="at" data-anchor="schema = Declaration.model_json_schema()">строка 97</span><p>Схема порождается из той же модели pydantic, которой ответ затем проверяется. Две схемы, написанные раздельно для модели и для валидатора, расходятся при первом же изменении полей, и расхождение проявляется как необъяснимый рост доли ремонтов.</p></div>
+        <div><span class="at" data-anchor="MAX_INPUT_TOKENS:">строка 99</span><p>Бюджет входа проверяется до вызова. Документ, не помещающийся в бюджет, отвергается с кодом, по которому конвейер направит его в постраничную обработку; отправленный целиком, он потратил бы деньги и вернул усечённый ответ.</p></div>
+        <div><span class="at" data-anchor="truncated">строка 106</span><p>Причина завершения проверяется прежде разбора JSON. Усечённый ответ почти всегда является неполным JSON, и без этой проверки он был бы классифицирован как нарушение схемы, а ремонт с тем же потолком выходных токенов повторил бы усечение.</p></div>
+        <div><span class="at" data-anchor="if attempt == 2 or spent">строка 112</span><p>Ремонт ограничен одной попыткой и бюджетом. Вторая попытка удваивает стоимость документа, а третья редко улучшает результат: если модель не исправила поле по прямому указанию, причина ошибки находится в документе или в схеме, и изменение формулировки промпта её не устраняет.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается места, где выражен контракт. В наивном варианте контракт выражен формулировкой промпта и потому не проверяется: расхождение обнаруживается только в SAP. В продуманном варианте контракт выражен схемой, схема передана модели и служит валидатором, поэтому нарушение обнаруживается за миллисекунды, до записи в SAP.</p>
+    <p>Второе различие касается обработки неудачи. Наивный вариант распознаёт одно событие, исключение разбора, и обрабатывает его одинаково при любой причине. Продуманный вариант различает усечение, отказ и нарушение схемы и назначает каждому свой способ восстановления.</p>
+    <p>Третье различие касается бюджета. Наивный вариант расходует столько, сколько требует документ, и расход становится известен из счёта в конце месяца. Продуманный вариант отвергает документ, не помещающийся во вход, останавливает ремонт при превышении бюджета и возвращает потраченную сумму вместе с результатом, поэтому стоимость измеряется на каждом документе.</p>
+  </div>
+</div>
+
+<h3 id="s-3-5"><span class="num">3.5</span>Tool calling как контракт</h3>
+
+<p>Структурированный вывод задаёт форму ответа. Вызов инструментов задаёт действия, которые модель вправе предложить, и их аргументы. Оба механизма основаны на схеме. Разработчик объявляет функции именем, описанием и схемой аргументов; модель возвращает имя функции и аргументы, соответствующие схеме; вызов исполняет конвейер. Доступа к системам модель не получает и только предлагает вызов.</p>
+
+<p>В конвейере TKL извлечение декларации выполняется без инструментов: на входе документ, на выходе запись. Инструменты нужны тому же конвейеру в двух случаях: для запроса к справочнику кодов ТН ВЭД, когда код в документе отсутствует, и для проверки контрагента по санкционному списку, когда страна происхождения входит в перечень. Оба действия описываются объявлениями функций, и оба остаются проверяемыми: конвейер сверяет аргументы со схемой и решает, выполнять ли вызов.</p>
+
+<p>Контракт вызова инструментов обладает тремя свойствами. Объявления инструментов входят в контекст и потому оплачиваются как входные токены при каждом вызове, а их изменение делает кэш префикса непригодным, как показано в <a href="#s-4-5" data-secref="4.5">разделе 4.5</a>. Аргументы, возвращённые моделью, соответствуют схеме только по форме: несуществующий код ТН ВЭД имеет верный формат. Наконец, предложение вызова отделено от разрешения на его выполнение, и механизмы этого разделения разбираются в <a href="#ch-6" data-secref="6">главе 6</a> на стороне сервера инструментов и в <a href="#s-7-4" data-secref="7.4">разделе 7.4</a> на стороне агентного цикла.</p>
+
+<h3 id="s-3-6"><span class="num">3.6</span>Выбор и маршрутизация моделей</h3>
+
+<p>В конвейере TKL модель выбирается для каждого документа отдельно. Комплект из двух программно сформированных страниц на немецком и скан шести страниц с печатями на китайском предъявляют разные требования, и обработка первого моделью, подобранной для второго, обходится дороже и выполняется медленнее. Поэтому модели делятся на уровни. Младший уровень обрабатывает большинство документов, старший вызывается там, где младший ошибается, а батч-уровень принимает документы, результата по которым не ждут у терминала.</p>
+
+<p>Решение о маршруте принимается по признакам, известным до вызова модели, и принимается детерминированно. Число страниц и наличие таблиц предсказывают сложность разбора. Язык предсказывает и качество, и число токенов. Уверенность распознавания, полученная от OCR, предсказывает, сколько текста модели придётся достраивать. Срок, к которому нужен результат, отделяет онлайн-обработку от ночной партии. Маршрутизатор, принимающий решение случайно или обращающийся за ним к модели, лишает конвейер воспроизводимости: два одинаковых документа получат разную стоимость и разное качество.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">model_router.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+FAST_LANGUAGES = frozenset({"de", "en", "nl", "pl"})   # латиница, короткие формы
+TIERS = ("batch", "flash", "pro")
+
+
+@dataclass(frozen=True)
+class Shipment:
+    doc_id: str
+    pages: int
+    language: str
+    ocr_confidence: float      # 0..1, уверенность распознавания страницы
+    deadline_s: float          # сколько времени есть у документа
+    attempt: int = 1
+
+
+def route(doc: Shipment) -&gt; str:
+    """Детерминированный выбор уровня: одинаковый вход даёт одинаковый уровень."""
+    if doc.attempt &gt; 1:
+        return "pro"           # повтор уходит на старший уровень
+    if doc.deadline_s &gt; 3_600:
+        return "batch"         # ночная партия платит меньше за ту же работу
+    if doc.pages &gt; 4 or doc.ocr_confidence &lt; 0.75:
+        return "pro"
+    if doc.language not in FAST_LANGUAGES:
+        return "pro"
+    return "flash"
+
+
+def mix(docs: list[Shipment]) -&gt; dict[str, float]:
+    """Доли уровней на корпусе: из них считается стоимость суток."""
+    counts: dict[str, int] = dict.fromkeys(TIERS, 0)
+    for doc in docs:
+        counts[route(doc)] += 1
+    return {tier: round(n / len(docs), 3) for tier, n in counts.items()}
+
+
+if __name__ == "__main__":
+    corpus = [
+        Shipment("d1", 2, "de", 0.95, 8.0),
+        Shipment("d2", 2, "pl", 0.92, 8.0),
+        Shipment("d3", 6, "de", 0.95, 8.0),
+        Shipment("d4", 2, "zh", 0.90, 8.0),
+        Shipment("d5", 3, "en", 0.60, 8.0),
+        Shipment("d6", 1, "nl", 0.99, 7_200.0),
+        Shipment("d7", 2, "de", 0.95, 8.0, attempt=2),
+        Shipment("d8", 3, "en", 0.88, 8.0),
+    ]
+    assert route(corpus[0]) == "flash" and route(corpus[7]) == "flash"
+    assert route(corpus[2]) == "pro"        # шесть страниц
+    assert route(corpus[3]) == "pro"        # язык вне быстрого набора
+    assert route(corpus[4]) == "pro"        # плохое распознавание
+    assert route(corpus[5]) == "batch"      # результат нужен через два часа
+    assert route(corpus[6]) == "pro"        # повтор дороже, но точнее
+    assert route(corpus[0]) == route(corpus[0])
+    shares = mix(corpus)
+    assert shares == {"batch": 0.125, "flash": 0.375, "pro": 0.5}
+    print("доли уровней на корпусе:", shares)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="doc.attempt">строка 21</span><p>Повтор уходит на старший уровень. Повтор того же вызова к той же модели меняет ответ только за счёт недетерминизма, который редко исправляет систематическую ошибку; переход на старший уровень меняет модель, то есть источник систематической ошибки.</p></div>
+  <div><span class="at" data-anchor="if doc.deadline_s">строка 23</span><p>Срок проверяется прежде свойств документа, потому что батч-обработка дешевле при любом качестве документа; в батч направляется каждый документ, результата по которому не ждут у терминала.</p></div>
+  <div><span class="at" data-anchor="not in FAST_LANGUAGES">строка 27</span><p>Язык влияет и на качество, и на счёт: текст на кириллице или иероглифами даёт больше токенов при том же содержании. Набор быстрых языков хранится как данные конвейера и пересматривается по результатам оценки.</p></div>
+  <div><span class="at" data-anchor="dict.fromkeys">строка 34</span><p>Доли уровней вычисляются на корпусе, потому что стоимость суток рассчитывается из прайса каждого уровня и его доли. Изменение правила маршрутизации оценивается по сдвигу долей до выкладки; счёт в конце месяца показывает последствия изменения только после того, как деньги потрачены.</p></div>
+</div>
+</figure>
+
+<p>Уровни не обязательно относятся к одному поставщику. Модель с открытыми весами, развёрнутая на площадке заказчика, образует уровень со своей ценой, задержкой и качеством; для TKL такой уровень дополнительно удерживает документы с персональными данными водителей внутри периметра заказчика. Цена такого уровня считается иначе, из стоимости ускорителей и их загрузки, и этот расчёт разбирается в <a href="#s-14-6" data-secref="14.6">разделе 14.6</a>.</p>
+
+<h3 id="s-3-7"><span class="num">3.7</span>Модель отказов</h3>
+
+<dl class="def">
+<dt>Причина завершения <span class="en">(finish reason)</span></dt>
+<dd>Поле ответа, указывающее причину остановки генерации: естественное завершение, достижение потолка выходных токенов, отказ отвечать или предложение вызова инструмента; набор значений у поставщиков различается. Причина завершения описывает полученный ответ и проверяется прежде, чем ответ будет разобран.</dd>
+</dl>
+
+<p>Отказы вызова модели делятся на четыре класса по способу восстановления. Транзиентный отказ означает, что обращение не выполнено и состояние не изменилось: превышение квоты и ошибки на стороне поставщика устраняются отсрочкой и повтором. Усечение означает, что ответ порождён не полностью: повтор с тем же потолком выходных токенов воспроизведёт усечение, поэтому усечение устраняется поднятием потолка или сокращением схемы. Нарушение схемы означает, что ответ завершён, но не соответствует схеме; оно устраняется одним ремонтом с указанием нарушенного поля. Отказ модели отвечать означает, что повтор с тем же промптом, как правило, даёт тот же результат, поэтому документ передаётся человеку.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 330" role="img" aria-label="Конечный автомат одного вызова модели: из очереди запрос уходит к модели, ответ либо принимается схемой, либо попадает в усечение, нарушение схемы или отказ; усечение и нарушение сходятся в состоянии ремонта, которое возвращает запрос к модели один раз, а исчерпание счётчиков и отказ модели ведут в отклонение" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar3b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="16" y="56" width="118" height="44" rx="20" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="75" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">в очереди</text>
+  <rect x="214" y="56" width="126" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="277" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">отправлен</text>
+  <rect x="420" y="56" width="126" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="483" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">поток</text>
+  <rect x="726" y="56" width="134" height="44" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="793" y="83" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">принято</text>
+
+  <rect x="380" y="154" width="140" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="450" y="181" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">усечение</text>
+  <rect x="560" y="154" width="150" height="44" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="635" y="181" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">схема нарушена</text>
+
+  <rect x="450" y="246" width="140" height="44" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="520" y="273" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">ремонт</text>
+  <rect x="726" y="246" width="134" height="44" rx="20" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="793" y="273" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">отклонено</text>
+
+  <line x1="134" y1="78" x2="206" y2="78" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="170" y="70" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">из очереди</text>
+  <line x1="340" y1="78" x2="412" y2="78" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="376" y="70" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">первый токен</text>
+  <line x1="546" y1="78" x2="718" y2="78" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="632" y="70" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">finish=stop, схема цела</text>
+
+  <path d="M240,100 V128 H75 V104" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar3b)"/>
+  <text x="157" y="144" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">429 и 5xx: отсрочка, попыток не более трёх</text>
+
+  <path d="M470,100 V132 H450 V150" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="442" y="124" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">finish=length</text>
+  <path d="M520,100 V132 H635 V150" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="627" y="146" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">JSON не по схеме</text>
+
+  <path d="M534,100 V116 H793 V242" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="690" y="110" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">отказ модели: к человеку</text>
+
+  <line x1="470" y1="198" x2="470" y2="242" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="462" y="224" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">max_output ↑</text>
+  <line x1="580" y1="198" x2="580" y2="242" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="590" y="224" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ремонтов: 0</text>
+  <path d="M700,198 V268 H718" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar3b)"/>
+  <text x="706" y="230" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ремонтов: 1</text>
+
+  <path d="M450,268 H277 V104" fill="none" stroke="var(--sB)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar3b)"/>
+  <text x="265" y="226" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ремонт: тот же документ, другой промпт</text>
+
+  <text x="440" y="318" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Оба цикла автомата ограничены счётчиками: три отсрочки для транзиентных отказов, один ремонт для усечения и для нарушения схемы.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Автомат делает исход вызова наблюдаемым: каждый документ заканчивается в одном из двух конечных состояний с названной причиной, и доли причин отклонения показывают, какой этап конвейера даёт сбои. Средняя оценка качества этого не показывает, потому что сводит все причины к одному числу.</figcaption>
+</figure>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">failure_taxonomy.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+class ModelCallError(Exception):
+    """Отказ вызова модели, различённый по способу восстановления."""
+
+
+class Transient(ModelCallError):
+    """429 и 5xx: обращение не выполнено, состояние не изменилось."""
+
+    def __init__(self, message: str, retry_after_s: float = 1.0) -&gt; None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class Truncated(ModelCallError):
+    """Модель упёрлась в потолок выходных токенов: ответ оборван."""
+
+
+class SchemaViolation(ModelCallError):
+    """Ответ завершён, но не соответствует схеме."""
+
+
+class Refusal(ModelCallError):
+    """Модель отказалась отвечать: тот же промпт даст тот же результат."""
+
+
+@dataclass(frozen=True)
+class Policy:
+    attempts: int
+    backoff_s: float
+    raise_output_limit: bool = False
+    to_human: bool = False
+
+
+POLICIES: dict[type[ModelCallError], Policy] = {
+    Transient: Policy(attempts=3, backoff_s=1.0),
+    Truncated: Policy(attempts=1, backoff_s=0.0, raise_output_limit=True),
+    SchemaViolation: Policy(attempts=1, backoff_s=0.0),
+    Refusal: Policy(attempts=0, backoff_s=0.0, to_human=True),
+}
+
+
+@dataclass(frozen=True)
+class RawResponse:
+    status: int
+    finish_reason: str
+    text: str
+    retry_after_s: float = 1.0
+
+
+def classify(resp: RawResponse, validates: bool) -&gt; ModelCallError | None:
+    """Порядок проверок важен: усечение распознаётся до разбора JSON."""
+    if resp.status == 429:
+        return Transient("исчерпана квота токенов в минуту", resp.retry_after_s)
+    if resp.status &gt;= 500:
+        return Transient(f"сторона модели ответила {resp.status}")
+    if resp.finish_reason == "length":
+        return Truncated("ответ оборван по потолку выходных токенов")
+    if resp.finish_reason == "refusal":
+        return Refusal("модель отказалась отвечать по этому документу")
+    if not validates:
+        return SchemaViolation("ответ завершён, но не соответствует схеме")
+    return None
+
+
+def policy_for(err: ModelCallError) -&gt; Policy:
+    for klass in type(err).__mro__:
+        if klass in POLICIES:
+            return POLICIES[klass]
+    raise KeyError(type(err).__name__)
+
+
+if __name__ == "__main__":
+    cut = RawResponse(200, "length", '{"items": [{"hs_code": "8703.')
+    truncated = classify(cut, validates=False)
+    assert isinstance(truncated, Truncated)          # не SchemaViolation
+    assert policy_for(truncated).raise_output_limit
+
+    limited = classify(RawResponse(429, "stop", "", retry_after_s=4.0), validates=True)
+    assert isinstance(limited, Transient) and limited.retry_after_s == 4.0
+    assert policy_for(limited).attempts == 3
+
+    refused = classify(RawResponse(200, "refusal", ""), validates=True)
+    assert isinstance(refused, Refusal)
+    assert policy_for(refused).attempts == 0 and policy_for(refused).to_human
+
+    broken = classify(RawResponse(200, "stop", "{"), validates=False)
+    assert isinstance(broken, SchemaViolation) and policy_for(broken).attempts == 1
+    assert classify(RawResponse(200, "stop", "{}"), validates=True) is None
+    print("четыре класса отказов различены, каждому назначена своя политика")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="self.retry_after_s">строка 15</span><p>Срок отсрочки берётся из ответа поставщика, который указывает момент освобождения квоты. Конвейер, вычисляющий срок сам, например по формуле экспоненциального отката, либо ждёт дольше нужного, либо повторяет запросы до освобождения квоты и продлевает ограничение.</p></div>
+  <div><span class="at" data-anchor="raise_output_limit=True">строка 40</span><p>Усечение устраняется изменением условий вызова: поднятым потолком выходных токенов или сокращённой схемой. Политика выражает это признаком, поэтому исполнитель повторов не обязан знать про классы отказов ничего, кроме политики.</p></div>
+  <div><span class="at" data-anchor="return Truncated(">строка 61</span><p>Проверка причины завершения стоит выше проверки схемы, и от этого порядка зависит результат классификации. Оборванный JSON не проходит валидацию, поэтому при обратном порядке каждое усечение классифицировалось бы как нарушение схемы, а метрика ремонтов показывала бы неверную причину.</p></div>
+  <div><span class="at" data-anchor="for klass in type(err).__mro__">строка 70</span><p>Политика ищется по цепочке наследования, поэтому новый частный класс отказа, например исчерпание квоты на организацию, наследуется от <code>Transient</code> и сразу получает его политику. В таблицу добавляются только классы с отличающимся способом восстановления.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Повторять отказ модели тем же промптом и считать это устойчивостью. Отказ воспроизводится при повторе с той же парой «промпт, модель»: три попытки, как правило, дают три отказа, расходуют деньги и добавляют секунды к p95. Отказ передаётся человеку и записывается в трассу как отдельная причина, потому что рост его доли означает изменение либо в потоке документов, либо в версии модели.</div>
+
+<h3 id="s-3-8"><span class="num">3.8</span>Версии, закрепление и кэш промптов</h3>
+
+<dl class="def">
+<dt>Кэш промптов <span class="en">(prompt caching)</span></dt>
+<dd>Механизм, при котором поставщик сохраняет внутреннее состояние для неизменного начала промпта и переиспользует его при следующих вызовах с тем же началом. Кэш сокращает и оплату входных токенов, и время до первого токена. Попадание требует точного совпадения префикса, поэтому вставка в начало контекста лишает вызов выигрыша от кэша.</dd>
+</dl>
+
+<p>Идентификатор модели в конвейере бывает двух видов, и различие между ними определяет, воспроизводимо ли поведение. Закреплённая версия названа датой или номером и означает конкретные веса: ответы на один и тот же вход остаются статистически теми же, пока версия не выведена из обслуживания. Alias вида «последняя стабильная» указывает на версию, которую выбирает поставщик без участия заказчика: в понедельник за именем может стоять одна модель, в среду другая. Для TKL это различие влияет на расходы, поскольку смена версии меняет и качество извлечения, и длину ответа, а значит, и стоимость документа.</p>
+
+<p>Правило для production: версия закрепляется, а переход на новую выполняется через теневой прогон. Теневой прогон отправляет копию рабочего потока на новую версию, не используя её результаты, и сравнивает с текущей по доле нарушений схемы, доле ремонтов, средней стоимости документа и точности полей на размеченном наборе. Только после этого сравнения версия меняется в конфигурации, и дата смены записывается рядом с датой смены прайса, поскольку обе меняют счёт.</p>
+
+<p>Кэш префикса зависит от версии модели. Кэшируется начало контекста, то есть инструкция, схема и примеры; всё, что меняется от документа к документу, ставится после них. Кэш создаётся для конкретной модели, поэтому после смены версии префикс кэшируется заново, и первые вызовы после переключения оплачиваются по полной цене входа, пока кэш не заполнится заново. Порядок частей контекста и стратегия их обновления разбираются в <a href="#s-4-5" data-secref="4.5">разделе 4.5</a>, инвалидация кэша в <a href="#s-4-10" data-secref="4.10">разделе 4.10</a>.</p>
+
+<div class="note" data-level="2">У кэша есть минимальный размер префикса и срок жизни. Префикс короче минимума не кэшируется, поэтому префикс, немного не достигающий порога, выгодно удлинить до порога. Из-за срока жизни при редком потоке документов запись в кэше истекает до следующего вызова; для TKL поэтому онлайн-вызовы в ночные часы, когда поток редок, получают меньше попаданий в кэш, чем утренний пик, и обходятся дороже по входу при одинаковой цене за токен.</div>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">cost_meter.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+DOCS_PER_DAY = 40_000
+
+
+@dataclass(frozen=True)
+class Price:
+    """Цена уровня за миллион токенов, привязанная к дате вступления в силу."""
+
+    input_usd: float
+    output_usd: float
+    cached_input_usd: float
+
+
+PRICES: dict[tuple[str, str], Price] = {
+    ("flash", "2026-02"): Price(0.15, 0.60, 0.0375),
+    ("flash", "2026-08"): Price(0.12, 0.50, 0.0300),
+    ("pro", "2026-02"): Price(1.25, 5.00, 0.3125),
+}
+
+
+@dataclass(frozen=True)
+class Usage:
+    input_tokens: int
+    output_tokens: int
+    cached_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class Call:
+    tier: str
+    price_date: str
+    usage: Usage
+    ttft_s: float
+    total_s: float
+
+
+def cost_usd(call: Call) -&gt; float:
+    price = PRICES[(call.tier, call.price_date)]
+    fresh = call.usage.input_tokens - call.usage.cached_tokens
+    return (fresh * price.input_usd
+            + call.usage.cached_tokens * price.cached_input_usd
+            + call.usage.output_tokens * price.output_usd) / 1_000_000
+
+
+def output_tps(call: Call) -&gt; float:
+    """Выходных токенов в секунду после первого токена: скорость потока."""
+    streaming = max(call.total_s - call.ttft_s, 1e-6)
+    return call.usage.output_tokens / streaming
+
+
+@dataclass
+class Meter:
+    """Счётчик одного документа: все вызовы, понадобившиеся для его обработки."""
+
+    calls: list[Call] = field(default_factory=list)
+
+    def record(self, call: Call) -&gt; None:
+        self.calls.append(call)
+
+    def per_document(self) -&gt; float:
+        return sum(cost_usd(c) for c in self.calls)
+
+    def daily_usd(self, docs: int = DOCS_PER_DAY) -&gt; float:
+        return self.per_document() * docs
+
+
+if __name__ == "__main__":
+    first = Call("flash", "2026-02", Usage(3_100, 420, 1_800), ttft_s=0.9, total_s=2.3)
+    fixed = Call("flash", "2026-02", Usage(3_900, 380, 1_800), ttft_s=0.8, total_s=2.1)
+    assert round(output_tps(first), 1) == 300.0
+    assert cost_usd(first) &lt; 0.02
+
+    cold = Call("flash", "2026-02", Usage(3_100, 420), ttft_s=1.4, total_s=2.9)
+    assert cost_usd(cold) &gt; cost_usd(first) * 1.35      # без кэша документ дороже более чем на 35 %
+
+    newer = Call("flash", "2026-08", first.usage, first.ttft_s, first.total_s)
+    assert cost_usd(newer) &lt; cost_usd(first)            # прайс сменился, код не менялся
+
+    meter = Meter()
+    meter.record(first)
+    meter.record(fixed)
+    assert meter.per_document() &lt; 0.02
+    assert round(meter.daily_usd(), 0) == 45.0
+    try:
+        cost_usd(Call("pro", "2026-08", first.usage, 0.9, 2.3))
+        raise AssertionError("стоимость без записи прайса считаться не должна")
+    except KeyError:
+        pass
+    print(f"документ с ремонтом: ${meter.per_document():.6f}, сутки: ${meter.daily_usd():.0f}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="PRICES[(call.tier, call.price_date)]">строка 41</span><p>Ключом служит пара из уровня и даты прайса, поэтому пересчёт вчерашних трасс по вчерашним ценам остаётся возможным. Прайс, записанный константой в коде, делает исторические отчёты неверными задним числом после каждого изменения цен.</p></div>
+  <div><span class="at" data-anchor="call.usage.cached_tokens * price.cached_input_usd">строка 44</span><p>Кэшированный вход учитывается третьей статьёй со своей ценой. Разделение позволяет измерить долю попаданий в кэш прямо из счёта и обнаружить её падение после смены инструкции раньше, чем оно появится в месячном отчёте.</p></div>
+  <div><span class="at" data-anchor="max(call.total_s - call.ttft_s">строка 50</span><p>Скорость потока считается после первого токена, потому что ожидание в очереди поставщика и обработка входа не являются генерацией. В общей метрике эти величины неразличимы, и причина замедления остаётся неизвестной, хотя две причины устраняются разными средствами: очередь квотой, медленный поток другим уровнем модели.</p></div>
+  <div><span class="at" data-anchor="def daily_usd">строка 66</span><p>Суточная величина получается умножением стоимости документа на суточный объём. Обе величины нужны одновременно: с финансовым директором расходы обсуждаются в долларах в сутки, инженерные решения принимаются в токенах на документ, и перевод между ними выполняется одной формулой.</p></div>
+</div>
+</figure>
+
+<h3 id="s-3-9" data-level="2"><span class="num">3.9</span>На Google Cloud: Gemini API и Gemini Enterprise Agent Platform</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Gemini Developer API</span>
+  <span class="tag">Gemini Enterprise Agent Platform</span>
+  <span class="tag">context caching</span>
+  <span class="tag">batch inference</span>
+</div>
+
+<p data-level="2">Модели Gemini доступны через два API. К Gemini Developer API приложение обращается по ключу API, и документация рекомендует этот API, если не требуются корпоративные средства контроля. К Gemini Enterprise Agent Platform (ранее Vertex AI) приложение обращается через проект Google Cloud: аутентификация выполняется сервисными аккаунтами, доступ ограничивается VPC Service Controls, а место обработки задаётся выбором конечной точки, и при многорегиональной конечной точке <code>eu</code> ML-обработка остаётся в пределах Европейского союза.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/data-residency" target="_blank" rel="noreferrer">cloud.google.com, размещение данных</a> Для TKL с его восемнадцатью странами и требованием держать данные водителей в Европейском союзе используется Agent Platform. Оба API доступны через единый Google Gen AI SDK, и переход между ними сводится к изменению параметров создания клиента.<a class="src" href="https://ai.google.dev/gemini-api/docs/migrate-to-cloud" target="_blank" rel="noreferrer">ai.google.dev, Gemini Developer API и Agent Platform</a></p>
+
+<p data-level="2">В документации на сентябрь 2026 года четырём механизмам главы соответствуют следующие возможности платформы. Структурированный вывод задаётся схемой ответа из поддерживаемого подмножества полей: при переданной схеме документация гарантирует соответствие ответа схеме, а неподдерживаемые поля, например <code>pattern</code>, которым в <code>extract.py</code> задан код ТН ВЭД, платформа игнорирует, поэтому проверка на своей стороне сохраняется и контролирует такие ограничения и смысл значений.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/control-generated-output" target="_blank" rel="noreferrer">cloud.google.com, структурированный вывод</a> Вызов инструментов описывается объявлениями функций, аргументы которых задаются схемой в формате, совместимом с OpenAPI. Кэширование контекста существует в двух видах: неявное включено по умолчанию и даёт скидку при попадании, а явное создаёт кэш как ресурс со сроком жизни (по умолчанию 60 минут) и платой за хранение, и запросы ссылаются на этот ресурс по имени; минимальный размер кэшируемого содержимого зависит от модели и составляет тысячи токенов.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview" target="_blank" rel="noreferrer">cloud.google.com, кэширование контекста</a> Батч-обработка (batch inference, ранее batch prediction) принимает задание из Cloud Storage или BigQuery и возвращает результаты асинхронно по цене на 50 % ниже обработки в реальном времени.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/batch-inference" target="_blank" rel="noreferrer">cloud.google.com, batch inference</a></p>
+
+<p data-level="2">Ещё два решения принимаются в настройках проекта и конфигурации, без изменения кода конвейера. Первое решение касается способа потребления: оплата по токенам (PayGo) или Provisioned Throughput. По документации PayGo не гарантирует качество обслуживания, а Provisioned Throughput резервирует пропускную способность на срок подписки и при пиковой нагрузке используется не полностью.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/deploy/consumption-options" target="_blank" rel="noreferrer">cloud.google.com, варианты потребления</a> Поэтому резервирование становится условием обещания p95 при утреннем пике TKL; расчёт выделенной мощности разбирается в <a href="#s-14-9" data-secref="14.9">разделе 14.9</a>.</p>
+
+<p data-level="2">Второе решение касается закрепления версии. Стабильные модели названы идентификаторами с номером версии, например <code>gemini-3.5-flash</code>; для каждой опубликована дата выпуска, а дата вывода из обслуживания, когда она назначена, переносится только на более поздний срок.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions" target="_blank" rel="noreferrer">cloud.google.com, версии моделей</a> Gemini Developer API дополнительно предлагает alias вида <code>gemini-flash-latest</code>, за которым версия меняется с каждым выпуском; о несовместимых изменениях поставщик уведомляет по электронной почте за две недели.<a class="src" href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noreferrer">ai.google.dev, модели Gemini</a> В конвейере TKL записан идентификатор стабильной версии, а alias используется только в теневом прогоне.</p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Схема ответа, объявления функций и классы отказов у крупных поставщиков устроены похоже, поэтому на переносимость конвейера они влияют мало. Различаются два механизма. Кэш префикса бывает неявным, когда поставщик сам определяет кэшируемую часть, и явным, когда её указывает разработчик; неявный кэш не требует управления, но попадание в него не гарантировано. Тарификация кэша также различается: у Gemini явный кэш оплачивается за время хранения, а у OpenAI для моделей GPT-5.6 и новее запись в кэш стоит 1.25 цены обычного входа, чтение 0.1 этой цены.<a class="src" href="https://developers.openai.com/api/docs/guides/prompt-caching" target="_blank" rel="noreferrer">developers.openai.com, prompt caching</a> Батч-обработка различается величиной скидки и сроком исполнения задания, и от этих двух величин зависит, выгодно ли отделять ночной поток TKL от дневного.</div>
+
+<h3 id="s-3-10" data-level="3"><span class="num">3.10</span>Вглубь: усечение, ремонт, alias, токенизация кириллицы</h3>
+
+<h4 data-level="3">Усечение, классифицированное как нарушение схемы</h4>
+
+<p data-level="3">Ошибка, разобранная в этом подразделе, устраняется одной строкой кода. Модель, достигшая потолка выходных токенов, возвращает оборванный текст, и этот текст почти всегда является неполным JSON. Валидатор сообщает о нарушении схемы, конвейер запускает ремонт, ремонт отправляет тот же запрос с тем же потолком и получает то же усечение. Документ оплачивается дважды, заканчивается отклонением и попадает в отчёт как нарушение схемы, и работа по улучшению схемы направляется на схему, которая ошибки не содержит.</p>
+
+<p data-level="3">Различить эти случаи можно только по причине завершения, и только до разбора ответа. Поэтому листинг <code>failure_taxonomy.py</code> ставит проверку <code>finish_reason</code> выше проверки схемы, а в <code>extract.py</code> та же проверка выполняется прежде <code>model_validate_json</code>. Усечение обнаруживается и косвенно: если доля нарушений схемы растёт вместе со средней длиной документа, причиной обычно является усечение, поскольку ухудшение модели не объясняет зависимости от длины. Восстановление состоит в поднятии потолка выходных токенов или в сокращении схемы, например в отказе от необязательного описания товара; повтор с прежним потолком воспроизводит усечение.</p>
+
+<h4 data-level="3">Ремонт, удваивающий стоимость</h4>
+
+<p data-level="3">Ремонтный промпт содержит исходный промпт, неудачный ответ и перечень нарушений, поэтому вход второго обращения больше первого, а выход сопоставим. Второе обращение обходится примерно в один и две десятых от первого, и документ с ремонтом стоит примерно вдвое дороже обычного. При доле ремонтов в двенадцать процентов это добавляет к счёту около четырнадцати процентов, что укладывается в запас <a href="#s-3-3" data-secref="3.3">раздела 3.3</a>; при доле в сорок процентов на ремонт приходится около трети счёта, и он становится основной причиной хвоста задержки.</p>
+
+<p data-level="3">Выбор между ремонтом и эскалацией выполняется по следующему правилу. Ремонт применяется, когда нарушение локально и названо валидатором: неверный формат кода, пропущенное обязательное поле, лишний текст вокруг JSON. Эскалация на старший уровень применяется, когда нарушение указывает, что модель не извлекла содержание документа: пустой список товаров при непустом документе, значения, не встречающиеся в тексте, противоречие между страной и условием поставки. Эти случаи различаются по отчёту валидатора, и для этого маршрутизатор из <a href="#s-3-6" data-secref="3.6">раздела 3.6</a> получает признак повтора. Доля ремонтов входит в постоянно отслеживаемые метрики, поскольку её рост на недели опережает падение качества, заметное по жалобам пользователей.</p>
+
+<h4 data-level="3">Закрепление версии против alias с автообновлением</h4>
+
+<p data-level="3">Alias с автообновлением избавляет от изменения конфигурации при выходе новой версии и делает поведение конвейера зависимым от решений поставщика. Новая версия модели меняет распределение длин ответа, а значит, стоимость; меняет склонность к дополнительным полям, а значит, долю нарушений схемы; меняет поведение на пограничных документах, а значит, точность. Ни одно из этих изменений не является ошибкой поставщика, и ни одно не сопровождается уведомлением, которое конвейер мог бы обработать.</p>
+
+<p data-level="3">Переход на новую версию состоит из четырёх шагов и занимает несколько дней. Сначала новая версия ставится рядом с текущей и получает копию рабочего потока без использования результатов. Затем сравниваются четыре величины: доля нарушений схемы, доля ремонтов, средняя стоимость документа и точность полей на размеченном наборе <a href="#ch-12" data-secref="12">главы 12</a>. Затем на новую версию переводится небольшая доля рабочего трафика с раздельным учётом метрик. Только после этого меняется конфигурация целиком, и дата смены записывается рядом с датами смены промпта и прайса, потому что скачок стоимости объясняется сопоставлением с этими тремя датами.</p>
+
+<div class="warn" data-level="3"><b>Alias в production</b>Конвейер, обращающийся к модели по alias с автообновлением, не может воспроизвести вчерашний результат и потому не может доказать регрессию. Заказчик, увидевший ухудшение, спросит, что изменилось; ответ «поставщик обновил модель за именем, которым мы пользуемся» означает, что изменение не контролировалось. Alias используется в теневом прогоне, поскольку указывает на последнюю версию.</div>
+
+<h4 data-level="3">Токенизация языков и бюджет контекста</h4>
+
+<p data-level="3">Многие токенизаторы обучены на корпусах, где латиница представлена шире прочих письменностей, и разбивают текст на латинице на меньшее число токенов. Соотношение зависит от токенизатора: по измерениям на параллельном корпусе FLORES-200 один и тот же текст на русском давал от 1.2 (LLaMA) до 1.6 (GPT-4) раза больше токенов, чем на немецком, а у токенизатора GPT-2 это отношение составляло 2.7.<a class="src" href="https://arxiv.org/abs/2305.15425" target="_blank" rel="noreferrer">arXiv, Petrov и соавторы, 2023</a> Поэтому соотношение для модели конвейера измеряется на документах заказчика и пересчитывается при смене версии. Для TKL с его шестью языками из этого следуют три решения.</p>
+
+<p data-level="3">Первое касается стоимости: бюджет документа считается по самому дорогому языку потока, поскольку при расчёте по среднему документы из России и Китая систематически выходят за потолок, хотя среднее значение его не превышает. Второе касается ёмкости: контекстное окно вмещает меньше русского текста, чем немецкого, а число токенов на страницу зависит от языка, поэтому правило разбиения длинного документа на части задаётся в токенах. Третье касается сравнений: оценка на англоязычном наборе занижает и стоимость, и задержку, поэтому оценочные наборы <a href="#ch-12" data-secref="12">главы 12</a> для TKL составляются по языкам отдельно, а трасса каждого вызова несёт язык документа как измерение для <a href="#s-13-5" data-secref="13.5">атрибуции стоимости</a>.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему причина завершения проверяется прежде разбора JSON?</summary>
+<div class="ans"><p>Усечённый ответ почти всегда является неполным JSON и без этой проверки был бы классифицирован как нарушение схемы. Восстановление у них разное: нарушение схемы устраняется ремонтом с указанием поля, усечение устраняется поднятием потолка выходных токенов или сокращением схемы, а ремонт с прежним потолком воспроизведёт усечение и потратит деньги без результата.</p></div>
+</details>
+<details>
+<summary>Из чего складывается p95 задержки конвейера TKL и почему более быстрая модель мало его сокращает?</summary>
+<div class="ans"><p>Медиана определяется временем работы модели, а хвост распределения определяется повторами: ремонтом схемы и отсрочкой после превышения квоты. Замена модели на более быструю сокращает медиану на доли секунды, тогда как один ремонт добавляет секунды. p95 сокращается уменьшением доли повторов: более точной схемой, более надёжной маршрутизацией, выделенной пропускной способностью на пик.</p></div>
+</details>
+<details>
+<summary>Что меняется в конвейере при переходе с закреплённой версии модели на alias с автообновлением?</summary>
+<div class="ans"><p>Исчезает воспроизводимость: вчерашний результат нельзя получить сегодня, а значит, нельзя доказать регрессию и нельзя объяснить скачок стоимости. Новая версия способна изменить длину ответа, долю нарушений схемы и точность полей, и ни одно из этих изменений не приходит уведомлением. Alias используется в теневом прогоне, а в production версия закрепляется идентификатором.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Вызов модели является зависимостью с контрактом, бюджетом, моделью отказов и закреплённой версией; недетерминизм и оплата по токенам отличают её от обычного стороннего API.</li>
+<li>Схема ответа принуждает форму и порождается из того же описания, которым ответ затем проверяется; один ремонт с указанием нарушенного поля восстанавливает большинство нарушений, а второй удваивает стоимость документа и редко исправляет то, что не исправил первый.</li>
+<li>Четыре класса отказов различаются по способу восстановления, и причина завершения проверяется прежде разбора ответа, чтобы усечение не классифицировалось как нарушение схемы.</li>
+<li>Стоимость и задержка считаются в токенах на документ и переводятся в доллары в сутки одной формулой; потолок заказчика соблюдается маршрутизацией документов по уровням моделей и кэшем префикса.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-4" data-secref="4">Глава 4: состав контекста и кэш</a>
+<a href="#ch-7" data-secref="7">Глава 7: агентный цикл над этими вызовами</a>
+<a href="#ch-14" data-secref="14">Глава 14: мощность, каскады и стоимость в масштабе</a>
+</p>
+</div>
+</section>

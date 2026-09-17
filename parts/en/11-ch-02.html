@@ -1,0 +1,882 @@
+<!-- ────────────────────────── CHAPTER 2 ────────────────────────── -->
+<section class="chapter" id="ch-2">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Chapter two</p>
+    <span class="strata" role="img" aria-label="Layers A and F: customer systems and data, people and process">
+      <i data-s="A"></i><i></i><i></i><i></i><i></i><i data-s="F"></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-2"><span class="num">2</span>Discovery, Requirements and Scoping</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">After reading this chapter you will be able to</p>
+<ul>
+<li>turn a customer's sentence into requirements that each carry a metric, a threshold and a dataset;</li>
+<li>build a customer ontology and derive from it the list of integrations you will have to maintain;</li>
+<li>extract constraints of five kinds, hardware and regulatory included, and tell a blocking one from a narrowing one;</li>
+<li>choose a pilot by value, feasibility and blast radius;</li>
+<li>assemble an ROI hypothesis with a baseline and a break-even month and fit the decision onto a one-page memo.</li>
+</ul>
+</div>
+
+<h3 id="s-2-1"><span class="num">2.1</span>The task: "an assistant for 400 agents"</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Case file CF1 · Nordbank Regional</a></span>
+  <span class="tag">400 agents</span>
+  <span class="tag">GDPR, PSD2</span>
+  <span class="tag">approval: chief information security officer</span>
+  <span>a regional bank</span>
+</div>
+
+<p>On the fourth of March the chief technology officer of Nordbank Regional states the task in one sentence: "we need a smart AI assistant for our four hundred contact-centre agents". The sentence contains no measurable quantity, no boundary and no name other than the chief technology officer's own. Behind the sentence stands a problem that the bank's staff meet daily and whose cost the bank has already estimated in money. The engineer's work begins by separating that problem from its first formulation.</p>
+
+<p>The task holds more unknowns than knowns. It is unknown whether all four hundred agents work alike: the cards, card-block, mortgage and business queues differ in scenarios, in the length of a call and in the cost of a mistake. It is unknown what an agent does by hand and how much of the time goes into finding an answer. It is unknown who may authorise the processing of personal data by a language model, and how many weeks that takes.</p>
+
+<p>This chapter carries the chief technology officer's sentence across five conversations to a pilot with a boundary, a price, a date and a way of being checked. Five artefacts come out of it: the ontology, a register of requirements, a register of constraints, a thin slice of work, and an ROI hypothesis inside a one-page memo. The artefacts are reused later: the MCP server's tool set in <a href="#ch-6" data-secref="6">Chapter 6</a> is derived from the ontology, and the business case of <a href="#s-16-6" data-secref="16.6">Section 16.6</a> follows the same scheme: from a baseline measured during discovery to a break-even month.</p>
+
+<h3 id="s-2-2"><span class="num">2.2</span>Why projects stall at scoping</h3>
+
+<p>A project stalling at scoping is hard to notice: meetings continue, decks are updated, and only three months later does it emerge that work on the project never started. Analysis of such cases identifies three mechanisms of stalling, and all three concern the layer of people and process.</p>
+
+<dl class="def">
+<dt>Discovery</dt>
+<dd>The engineering phase of an engagement in which the customer's formulation is turned into testable artefacts: an ontology of systems and data, a register of requirements with metrics and thresholds, a register of constraints, the boundary of the pilot and an ROI hypothesis. The result of discovery is a set of claims, each of which a measurement can refute.</dd>
+</dl>
+
+<p>The first mechanism is a requirement worded so that its fulfilment can be neither confirmed nor refuted. "The assistant must be accurate" carries no metric, no threshold and no dataset, so acceptance becomes an argument about impressions. A requirement becomes testable when all three parts are named: what we measure, at which value we call it met, and on which data. A requirement missing any of the three parts goes back to a conversation with the customer for clarification and is not included in the SOW.</p>
+
+<p>The second mechanism is the absence of a baseline. If nobody measured the handling time of a call before the pilot, then after the pilot any change in the number can be explained by other causes: seasonality, agent training, a change of scripts, a different mix of shifts. The baseline is measured before the customer has seen the first prototype, because expectation can change the agents' behaviour before the system starts working.</p>
+
+<p>The third mechanism is a signature obtained from a person who is not entitled to permit the launch. The sponsor commands the budget, but in a regulated organisation the sponsor is usually not entitled to authorise a new way of processing personal data. That permission is given by the chief information security officer, the data protection officer and the model risk management function, and their approval chain has a duration of its own, which is placed on the critical path of the project alongside the development.</p>
+
+<div class="warn"><b>Common mistake</b>Accepting into the SOW the wording "the system must give accurate and useful answers". Three months later the two sides will reach opposite conclusions about the outcome, and the argument will be settled on the basis of the relationship between them, because there are no data to settle it. A wording without a metric, a threshold and a dataset is only a requirement candidate.</div>
+
+<h3 id="s-2-3"><span class="num">2.3</span>The discovery interview protocol</h3>
+
+<p>A discovery conversation is built like a ladder: every next question rests on the answer to the previous one and narrows the space of solutions. The ladder runs from outcome to success, and the rungs are taken in this order: a question about data asked before the question about the outcome yields a list of tables from which no decision follows.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Rung</th><th>Question to the customer</th><th>What appears in the record</th></tr></thead>
+<tbody>
+<tr><td>Outcome</td><td>Who will stop doing what if the system works?</td><td>a requirement candidate with a named beneficiary</td></tr>
+<tr><td>Workflow</td><td>What does the person do today, step by step, and where is time lost?</td><td>a map of steps with durations</td></tr>
+<tr><td>Data</td><td>Where does every fact needed at that step come from?</td><td>a row of the ontology: an entity and its system of record</td></tr>
+<tr><td>Constraints</td><td>What is forbidden, by whom, and on the strength of which document?</td><td>an entry in the constraint register with a kind and a source</td></tr>
+<tr><td>Success</td><td>By which number will you say in three months that this worked?</td><td>a metric with a baseline and a threshold</td></tr>
+</tbody></table></div>
+
+<p>Every conversation ends in an artefact, otherwise only an impression remains. The artefact receives an identifier and a reference to the one it came from: a note refers to a conversation, a requirement to a note, a scope item to a requirement and to constraints, a metric to a scope item. A conversation record turned into an artefact is shown in <a href="#s-1-4" data-secref="1.4">Section 1.4</a> by the <code>conversation_to_artifact</code> listing; here the chain continues to the success metric. The chain is used on the backward pass: any item of the pilot boundary unfolds into a person's name and a date.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 330" role="img" aria-label="Three traceability lanes: a conversation with the head of the contact centre becomes a note, a requirement, a scope item and a success metric; a conversation with the chief information security officer yields a constraint that narrows the same scope item; a conversation with the chief technology officer yields a requirement without a threshold, which returns to the conversation instead of reaching scope" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">THE DISCOVERY LADDER: FROM A CONVERSATION TO A TESTABLE SCOPE ITEM</text>
+
+  <rect x="20" y="44" width="140" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="90" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">conversation</text>
+  <text x="90" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">C-2 · contact centre</text>
+  <rect x="195" y="44" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="265" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">note</text>
+  <text x="265" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">N-12 ← C-2</text>
+  <rect x="370" y="44" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">requirement</text>
+  <text x="440" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">R-7 ← N-12</text>
+  <rect x="545" y="44" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="615" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">scope item</text>
+  <text x="615" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">S-1 ← R-7, K-1</text>
+  <rect x="720" y="44" width="140" height="52" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="790" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">success metric</text>
+  <text x="790" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">M-4 ← S-1</text>
+
+  <rect x="20" y="126" width="140" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="90" y="147" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">conversation</text>
+  <text x="90" y="165" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">C-5 · security</text>
+  <rect x="195" y="126" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="265" y="147" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">note</text>
+  <text x="265" y="165" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">N-21 ← C-5</text>
+  <rect x="370" y="126" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="147" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">constraint</text>
+  <text x="440" y="165" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">K-1 ← N-21</text>
+
+  <rect x="20" y="208" width="140" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="90" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">conversation</text>
+  <text x="90" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">C-1 · sponsor</text>
+  <rect x="195" y="208" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="265" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">note</text>
+  <text x="265" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">N-30 ← C-1</text>
+  <rect x="370" y="208" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">requirement</text>
+  <text x="440" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">R-9 ← N-30</text>
+  <rect x="545" y="208" width="140" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="615" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="var(--muted)">not in scope</text>
+  <text x="615" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">no threshold</text>
+
+  <line x1="160" y1="70" x2="187" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="335" y1="70" x2="362" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="510" y1="70" x2="537" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="685" y1="70" x2="712" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="160" y1="152" x2="187" y2="152" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="335" y1="152" x2="362" y2="152" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="160" y1="234" x2="187" y2="234" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="335" y1="234" x2="362" y2="234" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="510" y1="234" x2="537" y2="234" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar2a)"/>
+
+  <path d="M510,152 H615 V104" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <text x="563" y="144" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">narrows</text>
+  <path d="M615,260 V286 H265 V268" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar2a)"/>
+  <text x="440" y="281" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">clarify and return to the conversation</text>
+
+  <text x="440" y="314" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Any scope item unfolds back into a person's name and the date of a conversation.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> With traceability the pilot boundary is derived from records: an item enters scope when a chain of identifiers leads to it from a conversation, and a requirement without a threshold returns to the conversation and does not enter scope.</figcaption>
+</figure>
+
+<div class="note" data-level="2">A note is written verbatim where the customer names a number, a document or a person, and in your own words where the customer describes a process. A paraphrased number loses its unit and the condition of measurement, and a month later it turns out that "four minutes" referred not to the whole call but to the search for an answer.</div>
+
+<p>What is recorded after three conversations exists in two forms. The first is a list of wishes: lines of natural language that can be neither sorted nor checked. The second is a structure in which a requirement has a source, a metric, a threshold, a dataset and a link to constraints, while a constraint has a kind and a way of being confirmed. The difference between them determines whether acceptance can take place.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Ways to record requirements after discovery">
+    <button role="tab" aria-selected="false" data-level="2">Naive</button>
+    <button role="tab" aria-selected="true">Considered</button>
+    <button role="tab" aria-selected="false" data-level="2">The difference</button>
+  </div>
+
+  <div role="tabpanel" data-title="Naive" data-level="2">
+    <figure class="code" data-fold="0">
+      <figcaption><span class="file">naive_requirements.py</span></figcaption>
+      <pre><code>NOTES = """- the assistant must be accurate
+- answer fast
+- integrate with the CRM
+- bank-grade security
+- take load off the agents"""
+
+BULLETS = [line.removeprefix("- ") for line in NOTES.splitlines()]
+
+if __name__ == "__main__":
+    assert len(BULLETS) == 5
+    assert not any(c.isdigit() for b in BULLETS for c in b)   # no threshold, volume or date
+    print(len(BULLETS), "bullets and not one testable requirement")</code></pre>
+    </figure>
+    <p>Not one of the five lines can be confirmed or refuted by a measurement. There are no numbers, so any claim of completion rests on an impression; no author, so there is nobody to ask for a sharper wording; no links, so the order of work is chosen afresh at every meeting.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Considered">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">requirements.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from enum import StrEnum
+
+from pydantic import BaseModel, Field
+
+
+class ConstraintKind(StrEnum):
+    REGULATORY = "regulatory"            # law, supervision, internal policy
+    DATA = "data"                        # contents, quality, retention
+    INFRASTRUCTURE = "infrastructure"    # networks, maintenance windows, quotas
+    ORGANISATIONAL = "organisational"    # approval chain, calendar, budget
+    HARDWARE = "hardware"                # where the model physically runs
+
+
+FIXED = frozenset({ConstraintKind.REGULATORY, ConstraintKind.HARDWARE})
+
+
+class Constraint(BaseModel):
+    id: str
+    kind: ConstraintKind
+    statement: str
+    source: str                          # role and date of the conversation
+    verified: bool = False               # confirmed by a document
+    mitigation: str = ""                 # how the requirement is met without breaking it
+
+    @property
+    def negotiable(self) -&gt; bool:
+        return self.kind not in FIXED
+
+    @property
+    def blocking(self) -&gt; bool:
+        return not self.mitigation
+
+
+class Requirement(BaseModel):
+    id: str
+    statement: str
+    source: str
+    metric: str = ""
+    threshold: float | None = None
+    dataset: str = ""
+    value: int = Field(ge=0, le=5)
+    feasibility: int = Field(ge=0, le=5)
+    blast_radius: int = Field(ge=1, le=5)
+    constrained_by: tuple[str, ...] = ()
+
+    @property
+    def missing(self) -&gt; tuple[str, ...]:
+        gaps: list[str] = []
+        if not self.metric:
+            gaps.append("metric")
+        if self.threshold is None:
+            gaps.append("threshold")
+        if not self.dataset:
+            gaps.append("dataset")
+        return tuple(gaps)
+
+    @property
+    def testable(self) -&gt; bool:
+        return not self.missing
+
+
+def score(req: Requirement, limits: dict[str, Constraint]) -&gt; float:
+    """Value per unit of blast radius; untestable and blocked candidates are worth zero."""
+    if not req.testable:
+        return 0.0
+    if any(limits[k].blocking for k in req.constrained_by if k in limits):
+        return 0.0
+    return round(req.value * req.feasibility / req.blast_radius, 2)
+
+
+def rank(reqs: list[Requirement], limits: list[Constraint]) -&gt; list[Requirement]:
+    index = {c.id: c for c in limits}
+    return sorted(reqs, key=lambda r: (-score(r, index), r.id))
+
+
+if __name__ == "__main__":
+    limits = [
+        Constraint(id="K-1", kind=ConstraintKind.HARDWARE, verified=True,
+                   source="chief information security officer, 6 March",
+                   statement="personal data is processed inside the region only",
+                   mitigation="a regional model endpoint inside the VPC perimeter"),
+        Constraint(id="K-2", kind=ConstraintKind.REGULATORY, source="compliance, 7 March", verified=True,
+                   statement="a decision visible to the customer is confirmed by a human"),
+        Constraint(id="K-3", kind=ConstraintKind.INFRASTRUCTURE, source="platform owner, 6 March",
+                   statement="core banking is unavailable from 02:00 to 04:00",
+                   mitigation="the tool answers \"unavailable until 04:00\""),
+    ]
+    candidates = [
+        Requirement(id="R-7", source="head of the contact centre, 5 March",
+                    statement="suggest an answer to the agent from the knowledge base",
+                    metric="average handling time, s", threshold=335.0,
+                    dataset="400 calls of the cards queue in March",
+                    value=5, feasibility=4, blast_radius=1, constrained_by=("K-1", "K-3")),
+        Requirement(id="R-9", source="chief technology officer, 4 March",
+                    statement="the assistant must be accurate",
+                    value=5, feasibility=3, blast_radius=2),
+        Requirement(id="R-12", source="chief technology officer, 4 March",
+                    statement="answer the customer without an agent",
+                    metric="share of cases closed without an agent", threshold=0.25,
+                    dataset="30 days of inbound cases",
+                    value=5, feasibility=2, blast_radius=5, constrained_by=("K-2",)),
+        Requirement(id="R-15", source="agent, 6 March",
+                    statement="store the call summary in the CRM",
+                    metric="share of summaries accepted unedited", threshold=0.8,
+                    dataset="200 calls labelled by a supervisor",
+                    value=3, feasibility=5, blast_radius=2, constrained_by=("K-1",)),
+    ]
+    index = {c.id: c for c in limits}
+    assert candidates[1].missing == ("metric", "threshold", "dataset")
+    assert score(candidates[1], index) == 0.0             # an untestable wish
+    assert candidates[2].testable and score(candidates[2], index) == 0.0
+    assert score(candidates[3], index) == 7.5             # the constraint is named and designed around
+    assert [c.id for c in limits if not c.negotiable] == ["K-1", "K-2"]
+    order = [r.id for r in rank(candidates, limits)]
+    assert order == ["R-7", "R-15", "R-12", "R-9"]
+    print("ranked:", order, "· the pilot takes", order[0])</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="HARDWARE = ">line 13</span><p>The hardware constraint is a kind of its own because it determines where the model runs and, through that, the whole architecture. "Data does not leave the country" is satisfied by a choice of placement: a regional endpoint, a perimeter, deployment at the customer's site or the customer's own accelerators, as described in <a href="#s-2-10" data-secref="2.10">Section 2.10</a>.</p></div>
+        <div><span class="at" data-anchor="verified: bool = False">line 24</span><p>A constraint counts as confirmed only when a document has been shown or the owner of the corresponding function has stated it. Retold constraints make up a noticeable share of the register, and on checking some of them are not backed by a document and reflect established practice.</p></div>
+        <div><span class="at" data-anchor="def blocking(self)">line 32</span><p>What makes a constraint blocking is the absence of a way to satisfy it. The kind of the constraint does not affect this property: the hardware constraint K-1, which has a named way of being satisfied, does not block its candidate. A constraint with a named way of being satisfied costs work and time; a constraint without one zeroes the candidate's score regardless of its value.</p></div>
+        <div><span class="at" data-anchor="gaps: list[str] = []">line 50</span><p>The property returns the list of the missing parts. That list serves as the agenda of the next conversation: the questions concern the missing metric, threshold or dataset.</p></div>
+        <div><span class="at" data-anchor="req.value * req.feasibility">line 70</span><p>Dividing by the blast radius makes the formula asymmetric on purpose. A candidate whose error is visible to the bank's customer (radius 5) enters the pilot ahead of a candidate whose error is visible to one agent (radius 1) only if the product of its value and feasibility is more than five times larger.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="The difference" data-level="2">
+    <p>The first difference is testability. A naive line carries no metric, no threshold and no dataset, so the question "is it done" has no answer. The structure returns the list of missing parts, and an unfinished requirement stays in the register as the agenda of the next conversation.</p>
+    <p>The second difference is the source. The naive list has no author, so there is nobody to ask for a sharper wording, and a month later the authorship of the wording cannot be established. In the structure the source is recorded for requirements and for constraints, and a constraint additionally carries a flag for confirmation by a document.</p>
+    <p>The third difference is order. The order of items in a naive list is set by the participants' intuition afresh at every meeting. The structure yields a ranking in which the untestable and the blocked are worth zero, and the rest is ordered by value, feasibility and blast radius.</p>
+  </div>
+</div>
+
+<h3 id="s-2-4"><span class="num">2.4</span>Customer ontology before the model</h3>
+
+<p>After three conversations the choice of a model is postponed, because the choice of model usually changes the cost of the project far less than the set of integrations does. The ontology is built before the model: the entities in which the customer describes the work, and the systems in which those entities are stored. The ontology shows where every fact the assistant will put in front of an agent comes from.</p>
+
+<dl class="def">
+<dt>Customer ontology</dt>
+<dd>A description of the customer's domain in the customer's own terms: entities, the keys by which entities are matched across systems, the events that change them, and the systems that hold them. An ontology differs from a database schema in that it describes the concepts the customer's staff use, and only then is mapped onto tables.</dd>
+<dt>System of record</dt>
+<dd>The single system whose value counts as true for a given entity. Copies of the same entity in other systems serve only as a cache: a disagreement between a copy and the system of record is resolved in favour of the system of record, and a read tool addresses the system of record.</dd>
+</dl>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 412" role="img" aria-label="The Nordbank ontology: four systems of record on the left are joined by arrows to six entities in the centre, every arrow carries the freshness of the data, a dashed arrow marks the copy of the customer in the CRM, and the frame on the right shows the assistant's tools derived from the same entities" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <rect x="20" y="58" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="80" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">core banking</text>
+  <text x="110" y="97" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">mainframe · SOAP</text>
+  <rect x="20" y="144" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="166" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">CRM</text>
+  <text x="110" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">REST · OAuth</text>
+  <rect x="20" y="230" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="252" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">knowledge base</text>
+  <text x="110" y="269" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">REST · ACL</text>
+  <rect x="20" y="310" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">telephony</text>
+  <text x="110" y="349" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">transcripts · batch</text>
+
+  <rect x="390" y="44" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Customer</text>
+  <text x="480" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">key: customer_id</text>
+  <rect x="390" y="102" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="120" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Account</text>
+  <text x="480" y="135" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">key: iban</text>
+  <rect x="390" y="160" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="178" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Case</text>
+  <text x="480" y="193" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">key: case_id</text>
+  <rect x="390" y="218" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="236" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Agent</text>
+  <text x="480" y="251" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">key: agent_id</text>
+  <rect x="390" y="276" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="294" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">PolicyDocument</text>
+  <text x="480" y="309" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">key: doc_id</text>
+  <rect x="390" y="334" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="352" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Interaction</text>
+  <text x="480" y="367" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">key: call_id</text>
+
+  <path d="M200,82 H232 V64 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,82 H232 V122 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,168 H252 V180 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,168 H252 V238 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,254 H272 V296 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,334 H292 V354 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <text x="378" y="58" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">seconds</text>
+  <text x="378" y="116" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">seconds</text>
+  <text x="378" y="174" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">seconds</text>
+  <text x="378" y="232" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">a day</text>
+  <text x="378" y="290" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">weeks</text>
+  <text x="378" y="348" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">15 minutes</text>
+
+  <path d="M20,168 H10 V22 H480 V36" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar2b)"/>
+  <text x="500" y="26" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">a copy: reading forbidden</text>
+
+  <rect x="660" y="44" width="200" height="330" rx="8" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="760" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sC)">the assistant's tools</text>
+  <line x1="570" y1="180" x2="652" y2="180" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2b)"/>
+  <text x="611" y="172" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">chapter 6</text>
+  <rect x="680" y="76" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="95" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">get_account</text>
+  <rect x="680" y="120" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="139" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">get_case_history</text>
+  <rect x="680" y="164" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">search_documents</text>
+  <rect x="680" y="208" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="227" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">create_dispute</text>
+  <text x="760" y="272" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">a tool's description carries</text>
+  <text x="760" y="290" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">freshness and the system of record</text>
+
+  <text x="440" y="398" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">A solid arrow is an integration that must be built and maintained; a dashed arrow is a copy that must not be read from.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> Every solid arrow is an integration that the engagement team builds and maintains: the ontology turns a conversation about access to the data into a list of work items, each with a protocol, an owner and a freshness.</figcaption>
+</figure>
+
+<p>During discovery the rule "one system of record per entity" is checked for every entity. Nordbank names both the CRM and core banking for the customer entity, because both hold a name and a phone number. Until that disagreement is resolved, a read tool will sometimes answer wrongly, and investigating such an error can take a week. The validator in the listing refuses to build the list of integrations while an entity has more than one source.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">ontology.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+class OntologyError(ValueError):
+    """The ontology is not ready for tools to be derived from it."""
+
+
+@dataclass(frozen=True)
+class System:
+    id: str
+    name: str
+    access: str                       # protocol, identity, quotas
+
+
+@dataclass(frozen=True)
+class Entity:
+    name: str
+    key: str                          # what glues the entity across systems
+    systems: tuple[str, ...]          # candidates named during discovery
+    freshness: str                    # delay from the event to the read
+    copies: tuple[str, ...] = ()      # where it also lives but must not be read from
+
+
+@dataclass(frozen=True)
+class Integration:
+    entity: str
+    system: str
+    access: str
+    freshness: str
+
+
+@dataclass
+class Ontology:
+    systems: dict[str, System] = field(default_factory=dict)
+    entities: list[Entity] = field(default_factory=list)
+
+    def problems(self) -&gt; list[str]:
+        found: list[str] = []
+        seen: set[str] = set()
+        for e in self.entities:
+            if e.name in seen:
+                found.append(f"entity {e.name} is described twice")
+            seen.add(e.name)
+            if len(e.systems) != 1:
+                found.append(f"entity {e.name}: {len(e.systems)} systems of record, exactly one required")
+            found.extend(f"entity {e.name}: system {sid} is not described"
+                         for sid in e.systems + e.copies if sid not in self.systems)
+            if set(e.systems) &amp; set(e.copies):
+                found.append(f"entity {e.name}: one system is named both source and copy")
+        return found
+
+    def integrations(self) -&gt; list[Integration]:
+        """Every arrow from a system of record to an entity is an integration."""
+        found = self.problems()
+        if found:
+            raise OntologyError("; ".join(found))
+        return [Integration(e.name, self.systems[e.systems[0]].name,
+                            self.systems[e.systems[0]].access, e.freshness)
+                for e in self.entities]
+
+
+def nordbank() -&gt; Ontology:
+    systems = [
+        System("core", "core banking", "mainframe, SOAP, 40 requests per second"),
+        System("crm", "CRM", "REST, OAuth, per-user quota"),
+        System("kb", "knowledge base", "REST, ACLs by group"),
+        System("tel", "telephony", "transcripts in batches"),
+    ]
+    entities = [
+        Entity("Customer", "customer_id", ("core",), "seconds", copies=("crm",)),
+        Entity("Account", "iban", ("core",), "seconds"),
+        Entity("Case", "case_id", ("crm",), "seconds"),
+        Entity("Agent", "agent_id", ("crm",), "a day"),
+        Entity("PolicyDocument", "doc_id", ("kb",), "weeks"),
+        Entity("Interaction", "call_id", ("tel",), "15 minutes"),
+    ]
+    return Ontology(systems={s.id: s for s in systems}, entities=entities)
+
+
+if __name__ == "__main__":
+    onto = nordbank()
+    arrows = onto.integrations()
+    assert len(arrows) == len(onto.entities) == 6          # six integrations from four systems
+    assert {a.system for a in arrows} == {"core banking", "CRM", "knowledge base", "telephony"}
+    assert next(a.freshness for a in arrows if a.entity == "Interaction") == "15 minutes"
+
+    onto.entities[0] = Entity("Customer", "customer_id", ("core", "crm"), "seconds")
+    try:
+        onto.integrations()
+        raise AssertionError("two systems of record for one entity must be an error")
+    except OntologyError as err:
+        assert "2 systems of record" in str(err)
+    print(len(arrows), "integrations from", len(onto.systems), "systems of record")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="systems: tuple[str, ...]">line 21</span><p>The field holds the candidates named during discovery. In the first conversation there are two or three of them, and the job of discovery is to leave one by the end of the survey while the others move into the copies field with an explicit decision by the customer.</p></div>
+  <div><span class="at" data-anchor="copies: tuple[str, ...] = ()">line 23</span><p>Copies are kept in the ontology: they explain why the agent sees a different value on the screen, and they are candidates for reconciliation. A read tool does not address them.</p></div>
+  <div><span class="at" data-anchor="len(e.systems) != 1">line 46</span><p>Two sources for one entity are recorded as an error, and deriving integrations from such an ontology stops. A warning would not be enough: no tool can be derived from an ontology with two sources for one entity, because it is unknown which answer counts as true.</p></div>
+  <div><span class="at" data-anchor="raise OntologyError(">line 58</span><p>The list of integrations is built only from a validated ontology, and it is the same list from which <a href="#s-6-3" data-secref="6.3">Section 6.3</a> derives the tools of the MCP server. A mistake found in the ontology is corrected before any tools are derived from it and therefore costs less.</p></div>
+</div>
+</figure>
+
+<p>The freshness of data is recorded in the ontology as a property of the arrow: one system delivers different entities with different delays, for example the CRM delivers a case within seconds and refreshes an agent's record by a nightly job once a day. At Nordbank a call transcript appears fifteen minutes after the call, and a policy document stays unchanged for weeks between publications. An assistant unaware of those delays will report that an action has not been performed and offer to perform it again. The tool description in <a href="#ch-6" data-secref="6">Chapter 6</a> contains the freshness stamp from this table.</p>
+
+<h3 id="s-2-5"><span class="num">2.5</span>Constraint extraction</h3>
+
+<dl class="def">
+<dt>Constraint</dt>
+<dd>A statement that some solution is inadmissible, together with its source, its kind and the way it can be checked. A constraint differs from a requirement in direction: a requirement says what the system must do, a constraint says what it may not do under any circumstances.</dd>
+</dl>
+
+<p>Constraints fall into five kinds, and the kind determines whom to ask for confirmation and what happens when the constraint is broken. A regulatory constraint may not be broken; a data constraint determines which datasets are available; an organisational one can be discussed; an infrastructure one can often be removed at additional cost; a hardware one determines the architecture.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Kind</th><th>Example at Nordbank</th><th>Who confirms it</th><th>What it changes</th></tr></thead>
+<tbody>
+<tr><td>Regulatory</td><td>a decision visible to the customer is confirmed by a human</td><td>compliance, the legal department</td><td>a mandatory approval step in the scenario</td></tr>
+<tr><td>Data</td><td>transcripts older than 90 days are deleted</td><td>the data protection officer</td><td>the size of the evaluation and training sets</td></tr>
+<tr><td>Infrastructure</td><td>core banking is unavailable from 02:00 to 04:00</td><td>the platform owner</td><td>the behaviour of a tool and the agent's wording</td></tr>
+<tr><td>Organisational</td><td>a change to the agent desktop is agreed with the works council</td><td>the head of the contact centre</td><td>release dates and the training plan</td></tr>
+<tr><td>Hardware</td><td>personal data is processed inside the region only</td><td>the chief information security officer</td><td>where the model runs and the whole deployment design</td></tr>
+</tbody></table></div>
+
+<p>Constraints are also divided into blocking and narrowing ones. A blocking one zeroes a candidate until a way to satisfy it is found: answering the customer without an agent stays at zero while no scenario with human confirmation exists. A narrowing one costs work and time but does not cancel the candidate: processing data inside the region is answered by the choice of where the model runs. In the <code>requirements.py</code> listing this difference is expressed by the mitigation field; the kind of the constraint does not affect it.</p>
+
+<div class="warn"><b>Common mistake</b>Recording a constraint from the words of whoever retold it. "Security forbids the cloud" often means "a specific project was rejected two years ago for a specific reason". A constraint without a named document or a named owner of the function remains a hypothesis, and it is checked before the architecture is chosen on its basis.</div>
+
+<h3 id="s-2-6"><span class="num">2.6</span>The scoping workshop</h3>
+
+<dl class="def">
+<dt>Blast radius</dt>
+<dd>The largest harm an error or a compromise of a component can cause, and the circle of those it reaches. At scoping the radius of a candidate is judged by who will see the mistake: one agent, a whole queue or the bank's customer; for a deployed assistant the same term denotes the harm from a full compromise of the model or a tool.</dd>
+</dl>
+
+<p>By the fourth conversation there are more candidates than fit into a pilot, and the choice between them is made in a workshop with the customer. Value measures how much the solved task is worth in units the customer already uses. Feasibility measures how much remains unknown after discovery. Blast radius states who suffers from a mistake: one agent, a whole queue, or the bank's customer.</p>
+
+<p>Value and feasibility are usually discussed at every meeting, while the question of blast radius, "what happens when the system is wrong, and who will see it", is asked less often. It is answered by the head of the contact centre, because the consequences of errors appear in the processes that role manages. The answer separates a pilot you can switch off on a Friday evening from a pilot whose switching off becomes an incident.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 362" role="img" aria-label="The scoping matrix: seven Nordbank candidates are placed on axes of value and feasibility, the size of a circle stands for the blast radius, and the dashed frame in the top right corner marks the pilot zone, which only the small-radius reply suggestion enters" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <line x1="236" y1="40" x2="236" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="352" y1="40" x2="352" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="468" y1="40" x2="468" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="584" y1="40" x2="584" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="700" y1="40" x2="700" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="248" x2="700" y2="248" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="196" x2="700" y2="196" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="144" x2="700" y2="144" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="92" x2="700" y2="92" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="40" x2="700" y2="40" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="40" x2="120" y2="300" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="120" y1="300" x2="700" y2="300" stroke="var(--line-strong)" stroke-width="1.3"/>
+
+  <rect x="526" y="40" width="174" height="78" rx="8" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="613" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--sF)">the pilot zone</text>
+
+  <circle cx="248" cy="66" r="20" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="248" y="100" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">loan scoring</text>
+  <circle cx="398" cy="71" r="20" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="398" y="104" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">auto-reply to customer</text>
+  <circle cx="306" cy="118" r="17" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="306" y="149" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">voice bot</text>
+  <circle cx="584" cy="144" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="584" y="170" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">call summary</text>
+  <circle cx="514" cy="196" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="514" y="222" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">case classification</text>
+  <circle cx="653" cy="165" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="653" y="188" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">knowledge search</text>
+  <circle cx="607" cy="92" r="8" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <circle cx="607" cy="92" r="3" fill="var(--sF)" opacity="0.85"/>
+  <text x="607" y="76" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">reply suggestion</text>
+
+  <text x="16" y="34" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">VALUE TO THE CUSTOMER</text>
+  <text x="700" y="330" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">FEASIBILITY</text>
+  <text x="112" y="46" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">high</text>
+  <text x="112" y="300" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">low</text>
+  <text x="126" y="318" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">low</text>
+  <text x="700" y="318" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">high</text>
+
+  <rect x="716" y="40" width="148" height="260" rx="8" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="790" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">BLAST RADIUS</text>
+  <circle cx="744" cy="96" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="772" y="100" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">1 · one agent</text>
+  <circle cx="744" cy="132" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="772" y="136" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">3 · a queue</text>
+  <circle cx="744" cy="176" r="20" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="772" y="180" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">5 · the customer</text>
+  <text x="790" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">the pilot:</text>
+  <text x="790" y="238" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">high value,</text>
+  <text x="790" y="256" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">high feasibility,</text>
+  <text x="790" y="274" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">small blast radius.</text>
+
+  <text x="440" y="348" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">A large circle in the top right corner means a programme, started once the small circle has passed acceptance.</text>
+</svg>
+</div>
+<figcaption><b>Diagram {{DIA}}.</b> The pilot is chosen at the intersection of three conditions: high value, high feasibility, a small blast radius. At Nordbank the candidates with the highest value also carry the largest radius, and starting with any of them turns the pilot into a programme with a quarter of approvals.</figcaption>
+</figure>
+
+<p>The chosen candidate becomes a thin slice: a scenario that passes through every layer of the system yet covers a narrow part of the work. For Nordbank that is a suggested answer for an agent in one cards queue, with reads of accounts and case history and a call summary the agent edits by hand. The slice passes through the interface, the assistant, the tools, the systems of record and the log, and therefore integration problems are found in the first weeks.</p>
+
+<div class="warn"><b>Common mistake</b>Choosing as the pilot the most visible scenario because it impressed the board. A visible scenario, as a rule, also has a larger blast radius: the more visible the scenario, the more approvals, the longer the feedback loop and the higher the price of the first mistake. A pilot is chosen by how fast it produces evidence.</div>
+
+<h3 id="s-2-7"><span class="num">2.7</span>Success metrics and the ROI hypothesis</h3>
+
+<dl class="def">
+<dt>ROI hypothesis</dt>
+<dd>A claim of the form "under these assumptions the investment pays back by this month", written so that every assumption can be checked separately. The hypothesis consists of a baseline measured before the work starts, the expected change of each quantity, the cost of building and of running, and a measurement plan that separates the effect of the system from other causes.</dd>
+</dl>
+
+<p>The head of the contact centre tracks average handling time, which measures the speed of the work. The second quantity, the share of repeat contacts avoided, measures how often an agent's answer settles the customer's question at the first contact. The third, the cost per case, ties the first two to money and at the same time caps the spending on the system itself. Three quantities are enough for a pilot, and each of them is measured on a named dataset.</p>
+
+<p>The ROI hypothesis is written as code for the same reason requirements are written as a structure: in that form it can be refuted. The model below counts the saving from the shorter handling time and from the repeat contacts avoided, subtracts the cost of requests and of running, accounts for the speed of reaching coverage, and computes the quantity the sponsor presents to the board: the month in which the accumulated benefit overtakes the cost of building.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">roi_model.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, replace
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """Measured before the pilot: every number has a named source."""
+    agents: int = 400
+    calls_per_agent_day: int = 38
+    aht_s: float = 372.0                 # average handling time
+    loaded_cost_per_hour: float = 31.0   # fully loaded cost of an agent hour
+    working_days: int = 21
+
+    @property
+    def calls_per_month(self) -&gt; int:
+        return self.agents * self.calls_per_agent_day * self.working_days
+
+    @property
+    def cost_per_call(self) -&gt; float:
+        return self.aht_s / 3600.0 * self.loaded_cost_per_hour
+
+
+@dataclass(frozen=True)
+class Hypothesis:
+    aht_reduction: float = 0.12          # share by which handling time falls
+    deflection: float = 0.05             # share of repeat contacts avoided
+    cost_per_request: float = 0.014      # model, retrieval, infrastructure
+    build_cost: float = 240_000.0
+    run_cost_month: float = 11_000.0
+    ramp: tuple[float, ...] = (0.15, 0.40, 0.70, 1.0)   # coverage by month
+
+
+def net_month(base: Baseline, hyp: Hypothesis, month: int) -&gt; float:
+    adoption = hyp.ramp[min(month, len(hyp.ramp)) - 1]
+    covered = base.calls_per_month * adoption
+    deflected = covered * hyp.deflection
+    handled = covered - deflected
+    saved = deflected * base.cost_per_call + handled * base.cost_per_call * hyp.aht_reduction
+    spent = covered * hyp.cost_per_request + hyp.run_cost_month
+    return saved - spent
+
+
+def break_even(base: Baseline, hyp: Hypothesis, horizon: int = 24) -&gt; int | None:
+    cumulative = -hyp.build_cost
+    for month in range(1, horizon + 1):
+        cumulative += net_month(base, hyp, month)
+        if cumulative &gt;= 0:
+            return month
+    return None
+
+
+def sensitivity(base: Baseline, hyp: Hypothesis, factor: float) -&gt; dict[str, int | None]:
+    """What happens to break-even if each assumption turns out weaker by factor."""
+    return {
+        "aht_reduction": break_even(base, replace(hyp, aht_reduction=hyp.aht_reduction * factor)),
+        "deflection": break_even(base, replace(hyp, deflection=hyp.deflection * factor)),
+        "run_cost_month": break_even(base, replace(hyp, run_cost_month=hyp.run_cost_month / factor)),
+    }
+
+
+if __name__ == "__main__":
+    base, hyp = Baseline(), Hypothesis()
+    assert base.calls_per_month == 319_200
+    assert round(base.cost_per_call, 4) == 3.2033
+    assert break_even(base, hyp) == 4
+    weak = sensitivity(base, hyp, factor=0.5)
+    assert weak["aht_reduction"] == 5 and weak["deflection"] == 4
+    assert break_even(base, replace(hyp, aht_reduction=0.0, deflection=0.0)) is None
+    print("break-even in month", break_even(base, hyp), "· with halved assumptions", weak)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def cost_per_call">line 20</span><p>The cost per call is derived from the measured handling time and the fully loaded cost of an agent hour at the bank itself. The loaded cost includes taxes, the workplace and training and exceeds the salary by a margin that depends on the country and the employer; for that reason a figure from an industry report does not fit, and the source of the number is named in the memo.</p></div>
+  <div><span class="at" data-anchor="ramp: tuple[float, ...]">line 31</span><p>The adoption ramp separates technical readiness from organisational readiness. In the Nordbank hypothesis a system available to every agent from day one covers 15% of calls in the first month, and in the model that gap moves break-even from the second month to the fourth.</p></div>
+  <div><span class="at" data-anchor="deflected * base.cost_per_call + handled">line 39</span><p>The two sources of saving add up but do not overlap: a contact that was avoided yields no saving on handling time, because no agent handled it. Adding them without that subtraction overstates the handling-time saving by roughly the share of contacts avoided.</p></div>
+  <div><span class="at" data-anchor="def sensitivity">line 53</span><p>Sensitivity analysis shows which assumption is able to change the conclusion. If halving one assumption moves break-even by a month, the hypothesis is robust; if it moves it by a year, that assumption becomes the first thing the pilot checks.</p></div>
+</div>
+</figure>
+
+<p>The numbers of the hypothesis can be attributed to the system only after the counterfactual is named: what would have happened without the system. At Nordbank average handling time falls in March because of the seasonal mix of cases, rises in September after hiring, and moves with any change of scripts. The measurement plan therefore also fixes the way of comparing: a control group of agents, a stepped roll-out of queues in random order, or a comparison with the same period of the previous year. The sources of bias in that comparison are described in <a href="#s-2-10" data-secref="2.10">Section 2.10</a>.</p>
+
+<div class="note" data-level="2">The cost per request appears in the model as a single number, although it is composed of the model call, retrieval and infrastructure. At the scoping stage that precision is enough: in the Nordbank model request costs come to less than three per cent of the saving. Breaking the cost into its parts and measuring it in production are covered in <a href="#ch-13" data-secref="13">Chapter 13</a>.</div>
+
+<h3 id="s-2-8"><span class="num">2.8</span>The one-page scope memo</h3>
+
+<p>Everything gathered across five conversations fits onto one page the sponsor reads to the end. The memo presents a decision so that it can be approved or rejected in ten minutes. It answers seven questions: what we are deciding, what is in, what is out, how we will check, what constrains us, what it costs and who signs.</p>
+
+<p>The section on what is out prevents the boundary creep by which a pilot quietly becomes a programme and the date slips by a quarter. It is therefore filled in as thoroughly as the section on what is in. Exclusions named there are not cancelled verbally later: the return of an excluded item goes through the same procedure as any new requirement.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">scope_memo.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+WORD_LIMIT = 320          # one page the sponsor will read to the end
+
+
+@dataclass(frozen=True)
+class Metric:
+    name: str
+    baseline: str         # the value measured before the pilot
+    target: str           # the acceptance threshold
+    dataset: str          # what we measure on, so the result is reproducible
+
+    def line(self) -&gt; str:
+        return f"{self.name}: {self.baseline} → {self.target}; dataset: {self.dataset}"
+
+
+@dataclass(frozen=True)
+class Memo:
+    customer: str
+    decision: str
+    in_scope: tuple[str, ...]
+    out_of_scope: tuple[str, ...]
+    metrics: tuple[Metric, ...]
+    constraints: tuple[str, ...]
+    money: tuple[str, ...]
+    approvers: tuple[str, ...]
+
+
+def section(title: str, items: tuple[str, ...]) -&gt; str:
+    return title + "\n" + "\n".join(f"- {item}" for item in items)
+
+
+def render(memo: Memo) -&gt; str:
+    return "\n\n".join([
+        f"{memo.customer}. Decision: {memo.decision}",
+        section("In the pilot:", memo.in_scope),
+        section("Not in the pilot:", memo.out_of_scope),
+        section("How we will check:", tuple(m.line() for m in memo.metrics)),
+        section("Constraints:", memo.constraints),
+        section("Money:", memo.money),
+        section("Approvers:", memo.approvers),
+    ])
+
+
+def words(text: str) -&gt; int:
+    return sum(1 for w in text.split() if any(c.isalnum() for c in w))
+
+
+if __name__ == "__main__":
+    memo = Memo(
+        customer="Nordbank Regional",
+        decision="a 10-week pilot of agent suggestions in the cards queue",
+        in_scope=("an answer suggested from the knowledge base inside the agent desktop",
+                  "reading accounts and case history on behalf of the agent",
+                  "a call summary the agent edits and stores in the CRM"),
+        out_of_scope=("answering the customer without an agent", "writing to core banking",
+                      "the card-block, mortgage and business queues"),
+        metrics=(
+            Metric("average handling time", "372 s", "at most 335 s",
+                   "400 calls of the cards queue in March"),
+            Metric("share of summaries unedited", "0", "at least 0.80",
+                   "200 calls labelled by a supervisor"),
+            Metric("cost per case", "3.20 EUR", "at most 3.00 EUR",
+                   "pilot billing for the fourth month"),
+        ),
+        constraints=("personal data is processed inside the region only "
+                     "(chief information security officer)",
+                     "a decision visible to the customer is confirmed by a human (compliance)",
+                     "core banking is unavailable from 02:00 to 04:00 (platform owner)"),
+        money=("240,000 EUR to build, 11,000 EUR per month to run",
+               "break-even in month four at 70 per cent coverage by month three"),
+        approvers=("the chief technology officer as sponsor",
+                   "the chief information security officer as owner of the perimeter",
+                   "the head of the contact centre as owner of the metric"),
+    )
+    text = render(memo)
+    assert words(text) &lt;= WORD_LIMIT, words(text)
+    for m in memo.metrics:
+        assert m.name in text and m.baseline in text and m.target in text and m.dataset in text
+    assert text.count("→") == len(memo.metrics)          # a baseline and a threshold for each metric
+    assert all(memo.in_scope) and all(memo.out_of_scope)
+    print(words(text), "words, metrics", len(memo.metrics), "· the pilot boundary is named from both sides")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="WORD_LIMIT = 320">line 5</span><p>The length limit is an engineering requirement: a memo longer than a page is, as a rule, skimmed, and the decision is taken from the headings, that is, from the part its author thought about last.</p></div>
+  <div><span class="at" data-anchor="dataset: str">line 13</span><p>The dataset stands next to the metric and the threshold because the same number means different things on different sets. A threshold without a dataset leads to an argument about the sample at acceptance, where a correction costs the most.</p></div>
+  <div><span class="at" data-anchor="assert words(text)">line 79</span><p>The assertions at the end of the listing check completeness: a memo without a baseline, a threshold or a dataset does not assemble. An incomplete memo is detected at assembly, before anyone signs it.</p></div>
+</div>
+</figure>
+
+<p>Three roles sign the memo. The sponsor confirms the value and the money, the owner of the perimeter confirms that the processing of data is admissible, the owner of the metric confirms that the named number measures the work of that owner's unit. If any of the three signatures is missing, the project will continue but will stop later and at greater cost.</p>
+
+<h3 id="s-2-9" data-level="2"><span class="num">2.9</span>On Google Cloud: discovery tooling</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Appendix B · the Google Cloud track</a></span>
+  <span class="tag">pricing calculator</span>
+  <span class="tag">Model Garden</span>
+  <span class="tag">VPC Service Controls</span>
+</div>
+
+<p data-level="2">Discovery uses tools that produce numbers within hours. The Google Cloud pricing calculator contains the product Agent Platform GenAI Models, that is, the generative models of Gemini Enterprise Agent Platform (formerly Vertex AI), and turns the volume estimate made in the workshop into an order of magnitude for the monthly bill: Nordbank's three hundred and nineteen thousand cases a month at a known context length give a range that is enough for the memo.<a class="src" href="https://cloud.google.com/products/calculator" target="_blank" rel="noreferrer">cloud.google.com, Google Cloud pricing calculator</a> Model Garden gathers models from Google and its partners, open models included, in one place and lets a test prompt be sent straight from a model card, so feasibility is checked on several families of models; a partner model for self-deployment is first enabled, that is purchased, in Model Garden itself.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-garden/explore-models" target="_blank" rel="noreferrer">cloud.google.com, overview of Model Garden</a><a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-garden/use-models" target="_blank" rel="noreferrer">cloud.google.com, use models in Model Garden</a> The first prototype is assembled on synthetic data shaped like the bank's own, because access to the bank's data arrives after the approvals, while the answer about feasibility is needed before them.</p>
+
+<p data-level="2">On this platform the hardware constraint "data does not leave the country" decomposes into four placement options, and the choice between them is made during discovery, before deployment begins. Data stored on the platform stays at rest in the chosen location whichever endpoint is called, while the place of model computation is set by the endpoint: a regional endpoint keeps computation within the jurisdiction its region is associated with, for European regions processing inside a single country depends on the model, and the global endpoint gives no data residency guarantee.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/data-residency" target="_blank" rel="noreferrer">cloud.google.com, data residency</a> A VPC Service Controls perimeter by default blocks communication with Google Cloud services across its boundary and so reduces the risk of data being exfiltrated from managed services; it does not block third-party services on the internet and is not designed for comprehensive control of metadata movement.<a class="src" href="https://docs.cloud.google.com/vpc-service-controls/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, overview of VPC Service Controls</a> Google Distributed Cloud moves execution onto the customer's premises, and its air-gapped variant works without a connection to Google Cloud and still offers Google's generative models.<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/application/ao-user/genai/genai-overview" target="_blank" rel="noreferrer">cloud.google.com, generative AI on GDC air-gapped</a> Open-weights models on the customer's own accelerators are used where the vendor's hardware does not fit the site or the needed model is not offered, and this is the option CF6 chooses for its isolated plants in <a href="#ch-14" data-secref="14">Chapter 14</a>.</p>
+
+<p data-level="2">For discovery it follows that the residency question decomposes into four sharper questions: in which region or jurisdiction processing is admissible, whether metadata may transit beyond it, whether control over encryption keys is required, and whether a site without external connectivity exists. The answers distinguish the four placement options above, whose costs differ substantially, and go into the register under the hardware kind, because moving between the options after development has started requires rewriting the deployment layer.</p>
+
+<div class="aside" data-level="2"><b>Comparison with other platforms</b>The list of sharper residency questions does not depend on the vendor, and the answers are placed on the same ladder of placement whichever vendor is chosen. The decision diverges at the lowest rung: deployment into the customer's own infrastructure is not available for every closed model, so for a site without external connectivity discovery establishes which models the vendor delivers for disconnected operation; if there are none, the answer is a model with open weights. That fact is established during discovery, because the architecture depends on it.</div>
+
+<h3 id="s-2-10" data-level="3"><span class="num">2.10</span>In depth: untestable requirements, hardware constraints, the counterfactual</h3>
+
+<h4 data-level="3">Detecting an untestable requirement</h4>
+
+<p data-level="3">An untestable requirement is recognised by its grammar before its meaning: evaluative adjectives without a unit, verbs of state instead of verbs of action, a missing subject of measurement. Every such wording is answered with three questions to the customer: in what do we measure it, at which value do we call it met, and on which data do we check it.</p>
+
+<p data-level="3">The first device, used when no direct answer comes, is to propose a specific value the customer can reject. The question "which accuracy is sufficient" usually has no answer, while the statement "so eight correct answers out of ten will suit you" is, as a rule, answered at once and with a justification. The second device translates the requirement into a description of acceptance: "show me the set of conversations on which you will check the system before signing the certificate". A dataset named by the customer has already passed internal agreement, so acceptance on that dataset needs no new agreement.</p>
+
+<h4 data-level="3">Discovering the hardware constraint</h4>
+
+<p data-level="3">During discovery the phrase "data does not leave the country" is stated as one constraint but can mean between two and four different ones. The first distinction concerns what may not leave the country: the contents of a case, personal identifiers, or derivatives such as vector representations and logs. The second concerns who sets the requirement: a regulator, an internal policy, or a contract with a corporate client. The third concerns whether the requirement covers training, inference, or both. A register in which these distinctions are missing leads to an architecture built for the strictest reading of the requirement and therefore more expensive than necessary.</p>
+
+<p data-level="3">The answers assemble into a ladder of placement, each rung of which usually costs more than the one before it. A regional endpoint satisfies the residency of processing, a perimeter around the project restricts the transfer of data from Google Cloud services beyond it, and deployment into the customer's infrastructure satisfies the demand for the customer's own perimeter and, in its air-gapped variant, also suits a site without external connectivity. Open-weights models on the customer's own accelerators are used when the vendor's air-gapped option does not fit the site or lacks the needed model, and they raise questions that do not exist on the rungs above: how many accelerators, of what memory, what throughput at peak, and who maintains the fleet. Those questions are asked during discovery as numbers: cases in the peak hour, tokens per case, admissible latency and the replacement horizon of the hardware.</p>
+
+<h4 data-level="3">Biases in estimating the counterfactual</h4>
+
+<p data-level="3">Three sources of bias distort the measurement of ROI, and all three concern the design of the experiment. The Hawthorne effect: agents who know they are measured may work differently, and part of the improvement may disappear with the observation; a systematic review confirms that effects of research participation exist but finds their conditions, mechanisms and magnitude largely unknown.<a class="src" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC3969247/" target="_blank" rel="noreferrer">McCambridge et al., J Clin Epidemiol, 2014: a systematic review of the Hawthorne effect</a> Seasonality: at Nordbank the mix of cases in March differs from the mix in November, and handling time changes with the mix. Selection: pilots are staffed by volunteers, whose results may be above average even without the system, and then the difference from the control group includes the difference in the participants' motivation.</p>
+
+<p data-level="3">A design that accounts for all three biases is laid down before the pilot starts. Random assignment of agents to the group with the system and the group without it removes selection bias. A stepped roll-out of queues in random order, in which every queue receives the system on its own date, gives in every period a comparison of queues with and without the system; since more queues are switched on towards the end, calendar time is confounded with the effect of the system and is adjusted for in the analysis.<a class="src" href="https://www.bmj.com/content/350/bmj.h391" target="_blank" rel="noreferrer">Hemming et al., BMJ, 2015: the stepped wedge cluster randomised trial</a> A baseline measured before the pilot is announced can reduce the influence of the observation effect on the comparison. None of these decisions requires extra development, but each requires an agreement with the head of the contact centre, and so each is discussed in the scoping workshop.</p>
+
+<h4 data-level="3">Finding the approvers of the launch</h4>
+
+<p data-level="3">In a regulated organisation the signatures needed for a launch are spread across functions that rarely attend the first meetings. Processing personal data in a new way is authorised by the data protection officer, using a model in a process that affects a customer passes through model risk management, access to the systems of record is opened by the platform owner, and a change to the agent desktop is agreed with the works council. None of these functions reports to the project sponsor.</p>
+
+<p data-level="3">Hence a practice that takes one conversation: the approval chain is written as a list of steps with names, input documents and typical durations and laid onto the schedule in parallel with the development. A step that takes six weeks and starts only after a prototype has been demonstrated fixes the launch date more firmly than the speed of the team does. The first prototype is therefore built on synthetic data, so that the approvals start before access to the bank's data arrives.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Self-check questions</p>
+<details>
+<summary>A requirement is worded as "the answers must be relevant". What is missing from it, and what do you ask?</summary>
+<div class="ans"><p>The metric, the threshold and the dataset are missing. You ask in which units relevance is measured, at which value the requirement counts as met, and on which set of conversations the check will run before the certificate is signed. Until all three answers arrive the wording stays a requirement candidate.</p></div>
+</details>
+<details>
+<summary>The customer names two systems of record for the Customer entity. Why is the ontology not ready, and what happens if both are kept?</summary>
+<div class="ans"><p>Because it is unknown which answer counts as true when they disagree, and a read tool will sometimes return a wrong value with no sign of an error. One system stays the source and the other is recorded as a copy by an explicit decision of the customer; otherwise investigating the first disagreement takes a week in the pilot instead of one question during discovery.</p></div>
+</details>
+<details>
+<summary>The pilot shows average handling time down by fourteen per cent. Which three explanations must be ruled out before the effect is credited to the system?</summary>
+<div class="ans"><p>The observation effect, the seasonality of the case mix and the selection of participants. Their influence is controlled by the design of the measurement: random assignment of agents to groups, a stepped roll-out of queues in random order with the analysis adjusted for calendar time, and a baseline taken before the pilot is announced.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Chapter takeaways</p>
+<ul>
+<li>A wording becomes a testable requirement when a metric, a threshold and a dataset are named; a wording without them stays a candidate and returns into a conversation.</li>
+<li>The ontology is built before the model: every arrow from a system of record to an entity is an integration you will maintain, and the tool set is derived from the same list.</li>
+<li>Constraints differ by kind and by whether they block a candidate or narrow it; the hardware and regulatory ones are not open to negotiation and fix the architecture.</li>
+<li>The pilot is chosen by value, feasibility and a small blast radius, and the ROI hypothesis rests on a baseline measured before the customer saw a prototype.</li>
+</ul>
+<p class="seealso"><b>See also</b>
+<a href="#ch-1" data-secref="1">Chapter 1: the conversation turned into an artefact</a>
+<a href="#ch-6" data-secref="6">Chapter 6: the tools derived from the ontology</a>
+<a href="#ch-16" data-secref="16">Chapter 16: the business case by the same scheme</a>
+</p>
+</div>
+</section>

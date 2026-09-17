@@ -1,0 +1,943 @@
+<!-- ────────────────────────── ГЛАВА 4 ────────────────────────── -->
+<section class="chapter" id="ch-4">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава четвёртая</p>
+    <span class="strata" role="img" aria-label="Слой B: модель и агентный слой">
+      <i></i><i data-s="B"></i><i></i><i></i><i></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-4"><span class="num">4</span>Context engineering</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>разложить контекст запроса на блоки с источником, размером и приоритетом;</li>
+<li>назначить бюджет окна и усекать контекст целыми блоками по их приоритету;</li>
+<li>провести границу кэша так, чтобы префикс совпадал байт в байт между запросами;</li>
+<li>хранить память фактами с провенансом и сроком жизни;</li>
+<li>записывать состав контекста так, чтобы промах кэша и неверный ответ объяснялись по журналу.</li>
+</ul>
+</div>
+
+<h3 id="s-4-1"><span class="num">4.1</span>Задача: agent-assist в Orion</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-4" data-secref="G.4">Досье CF4 · Orion Telecom</a></span>
+  <span class="tag">BSS/OSS</span>
+  <span class="tag">биллинг</span>
+  <span class="tag">чат контакт-центра</span>
+  <span>телеком</span>
+</div>
+
+<p>Контакт-центр Orion Telecom принимает около сорока тысяч чатов в сутки, и оператор ведёт до четырёх разговоров одновременно. Ассистент оператора подсказывает ответ в реальном времени: он видит профиль абонента из CRM, начисления из биллинга, статьи базы знаний и историю обращения, а выдаёт проект ответа, который оператор правит и отправляет. Модель здесь одна и та же для всех пяти бизнес-единиц, а данные и правила у каждой свои.</p>
+
+<p>Ограничения задачи выражены в токенах и миллисекундах. На один запрос отводится тридцать две тысячи токенов входа, хотя модель принимает больше: цена чата и время до первого токена растут вместе с длиной входа, а платформа выставляет счёт бизнес-единицам по их собственному потреблению. Сборка контекста укладывается в четыреста миллисекунд, потому что подсказка обязана появиться раньше, чем оператор допечатает ответ сам. Обе величины проверяются на каждом запросе.</p>
+
+<p>Глава описывает часть решения, определяющую содержимое окна модели: сборщик контекста, реестр инструкций, память с провенансом и журнал состава. Качество извлечения статей, то есть выбор трёх фрагментов из ста тысяч, разбирается в <a href="#ch-5" data-secref="5">главе 5</a>, а цикл, который вызывает инструменты поверх собранного контекста, в <a href="#ch-7" data-secref="7">главе 7</a>.</p>
+
+<h3 id="s-4-2"><span class="num">4.2</span>Почему состав контекста влияет на ответ сильнее формулировок</h3>
+
+<p>Получив неверную подсказку, команда обычно начинает с переписывания системной инструкции. Переформулировка меняет стиль ответа, иногда его формат и редко его фактическую правильность. Фактическая ошибка обычно порождается составом контекста: модель отвечает верно относительно показанных ей данных, но эти данные неполны или неверны.</p>
+
+<dl class="def">
+<dt>Инженерия контекста <span class="en">(context engineering)</span></dt>
+<dd>Проектирование того, какие данные попадают в контекстное окно модели, в каком порядке и что из них исключается при нехватке бюджета. В отличие от инженерии промптов, которая работает с формулировкой инструкции, инженерия контекста работает с составом, порядком и размером блоков и потому одновременно определяет качество ответа, стоимость вызова и долю попаданий в кэш.</dd>
+</dl>
+
+<p>Разбор трёх жалоб операторов Orion показывает причины ошибок. В первом случае контекст содержал профиль абонента, прочитанный из ночной витрины, и модель сообщила о тарифе, отменённом неделю назад. Во втором в контекст попали три статьи базы знаний, две из которых относились к другой бизнес-единице, и модель смешала правила возврата. В третьем блок с начислениями был вытеснен историей чата, и модель ответила о списании, которого не видела. Ни одна из трёх ошибок не устраняется формулировкой инструкции.</p>
+
+<p>Рабочее положение главы: контекстное окно является бюджетируемым, упорядоченным и кэшируемым ресурсом. Бюджет определяет, сколько данных помещается в окно, порядок определяет, что оказывается в стабильном начале, а от кэшируемости зависит стоимость выбранного порядка. <a href="#ch-3" data-secref="3">Глава 3</a> рассматривала вызов модели как зависимость с контрактом; контекст является входом этого контракта, и единицей измерения остаётся токен из <a href="#s-3-3" data-secref="3.3">раздела 3.3</a>.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Сравнивать две формулировки инструкции, не зафиксировав состав контекста. Если между прогонами изменился набор извлечённых статей или длина истории, сравнение измеряет разницу в данных, и влияние инструкции от неё не отделяется. Прогон на оценочном наборе фиксирует состав и порядок блоков так же, как версию модели.</div>
+
+<h3 id="s-4-3"><span class="num">4.3</span>Анатомия контекста</h3>
+
+<p>Содержимое окна делится на пять видов, различающихся источником, темпом изменения и размером. Системные инструкции задают роль, границы и формат ответа. Определения инструментов описывают, что агент может вызвать, и поступают из <a href="#ch-6" data-secref="6">главы 6</a>. Извлечённые фрагменты содержат сведения, отсутствующие в модели. История диалога содержит уже сказанное. Черновик хранит промежуточные результаты работы самого агента.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Блок</th><th>Источник</th><th>Токены</th><th>Темп изменения</th><th>Зона</th></tr></thead>
+<tbody>
+<tr><td>Системные инструкции</td><td>реестр инструкций</td><td>1 180</td><td>выпуск раз в несколько недель</td><td>префикс</td></tr>
+<tr><td>Определения инструментов</td><td>MCP-сервер</td><td>2 400</td><td>выпуск раз в несколько недель</td><td>префикс</td></tr>
+<tr><td>Политика формата и эскалации</td><td>реестр инструкций</td><td>620</td><td>выпуск раз в несколько недель</td><td>префикс</td></tr>
+<tr><td>Профиль абонента</td><td>CRM</td><td>300</td><td>каждый чат</td><td>суффикс</td></tr>
+<tr><td>Начисления и списания</td><td>биллинг</td><td>740</td><td>каждый чат</td><td>суффикс</td></tr>
+<tr><td>Фрагменты базы знаний</td><td>поиск</td><td>5 900</td><td>каждый ход</td><td>суффикс</td></tr>
+<tr><td>Сводка памяти</td><td>память</td><td>260</td><td>каждый ход</td><td>суффикс</td></tr>
+<tr><td>Последние реплики</td><td>сессия</td><td>1 850</td><td>каждый ход</td><td>суффикс</td></tr>
+<tr><td>Вопрос оператора</td><td>интерфейс</td><td>40</td><td>каждый ход</td><td>суффикс</td></tr>
+</tbody></table></div>
+
+<p>Черновик агента в таблице отсутствует, потому что в agent-assist он пуст: подсказка порождается одним вызовом. В долгоживущих сценариях <a href="#ch-9" data-secref="9">главы 9</a> черновик растёт быстрее всех прочих блоков, так как в него записываются результаты каждого вызова инструмента, и поэтому он первым выводит размер контекста за пределы окна. Правила бюджета, разбираемые ниже, применяются к нему в первую очередь.</p>
+
+<p>Сумма блоков составляет тринадцать тысяч двести девяносто токенов при бюджете тридцать две тысячи. Запас в два с половиной раза исчерпывается длинным чатом: история за три часа разговора и пять статей вместо трёх занимают его полностью. Запас нужен для того, чтобы усечение наступало предсказуемо и в заранее выбранном месте. Три верхних блока таблицы образуют стабильный префикс, одинаковый у всех запросов, а линия под ними, граница кэша, отделяет его от изменчивой части; оба понятия определяются в <a href="#s-4-5" data-secref="4.5">разделе 4.5</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Стек блоков контекстного окна с размерами в токенах: три блока стабильного префикса сверху, горизонтальная граница кэша под ними и шесть изменчивых блоков снизу, справа подписаны суммы обеих зон и свободный остаток окна" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar4a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="34" y="36" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ОКНО 32 000 ТОКЕНОВ · ЗАНЯТО 13 290</text>
+
+  <rect x="34" y="46" width="480" height="112" rx="8" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="44" y="56" width="460" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="58" y="73" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">системные инструкции</text>
+  <text x="494" y="73" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">1 180</text>
+  <rect x="44" y="88" width="460" height="26" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="58" y="105" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">определения инструментов</text>
+  <text x="494" y="105" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">2 400</text>
+  <rect x="44" y="120" width="460" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="58" y="137" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">политика формата и эскалации</text>
+  <text x="494" y="137" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">620</text>
+
+  <line x1="34" y1="164" x2="514" y2="164" stroke="currentColor" stroke-width="1.4"/>
+
+  <rect x="34" y="170" width="480" height="196" rx="8" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <rect x="44" y="180" width="460" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="58" y="197" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">профиль абонента</text>
+  <text x="494" y="197" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">300</text>
+  <rect x="44" y="212" width="460" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="58" y="229" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">начисления и списания</text>
+  <text x="494" y="229" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">740</text>
+  <rect x="44" y="244" width="460" height="26" rx="4" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="58" y="261" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">фрагменты базы знаний</text>
+  <text x="494" y="261" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">5 900</text>
+  <rect x="44" y="276" width="460" height="26" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="58" y="293" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">сводка памяти</text>
+  <text x="494" y="293" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">260</text>
+  <rect x="44" y="308" width="460" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="58" y="325" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">последние реплики чата</text>
+  <text x="494" y="325" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">1 850</text>
+  <rect x="44" y="340" width="460" height="26" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="58" y="357" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">вопрос оператора</text>
+  <text x="494" y="357" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">40</text>
+
+  <line x1="524" y1="52" x2="524" y2="152" stroke="var(--line)" stroke-width="1.3"/>
+  <line x1="524" y1="176" x2="524" y2="360" stroke="var(--line)" stroke-width="1.3"/>
+  <line x1="524" y1="164" x2="560" y2="164" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4a)"/>
+
+  <text x="540" y="78" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">СТАБИЛЬНЫЙ ПРЕФИКС</text>
+  <text x="540" y="98" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">4 200 токенов, один и тот же у всех чатов</text>
+  <text x="540" y="116" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">версия инструкции 2026-03-04</text>
+  <text x="540" y="134" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">читается из кэша, TTL 300 с</text>
+
+  <text x="570" y="158" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">ГРАНИЦА КЭША</text>
+  <text x="570" y="176" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">всё выше совпадает байт в байт</text>
+
+  <text x="540" y="208" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">ИЗМЕНЧИВЫЙ СУФФИКС</text>
+  <text x="540" y="228" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">9 090 токенов, свой в каждом запросе</text>
+  <text x="540" y="246" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">порядок закреплён, состав меняется</text>
+  <text x="540" y="264" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">оплачивается по полной цене входа</text>
+
+  <text x="540" y="312" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">СВОБОДНО</text>
+  <text x="540" y="332" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">18 710 токенов на длинный чат</text>
+  <text x="540" y="350" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">и на ответ модели</text>
+
+  <text x="34" y="388" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Перенос блока через границу не меняет смысла контекста и меняет его цену.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Граница кэша задаётся проектным решением: инженер определяет, какие блоки совпадают байт в байт у всех запросов, и тем самым определяет стоимость каждого следующего чата.</figcaption>
+</figure>
+
+<h3 id="s-4-4"><span class="num">4.4</span>Бюджет и усечение по приоритету</h3>
+
+<p>Бюджет назначается задаче и может быть меньше окна модели. Модель принимает больше тридцати двух тысяч токенов, но каждый лишний токен входа оплачивается и увеличивает время до первого токена, разобранное в <a href="#s-3-3" data-secref="3.3">разделе 3.3</a>. Для Orion бюджет выведен снизу вверх: цена чата, помноженная на сорок тысяч чатов в сутки, не должна превысить согласованную с бизнес-единицами величину, а время до первого токена обязано уложиться в полторы секунды.</p>
+
+<p>Когда данных больше бюджета, применяется усечение, и наивное и продуманное решения выполняют его по-разному. Наивное усечение обрезает конец строки или удаляет самые старые реплики. Первый способ нарушает синтаксис блока и может отрезать сам вопрос, если вопрос стоит последним. Второй способ удаляет начало разговора, где обычно названа суть обращения.</p>
+
+<p>Продуманное усечение использует приоритет, заданный каждому блоку независимо от его позиции в тексте. Каждый блок несёт приоритет, размер в токенах, зону и признак обязательности. Распределитель бюджета отбирает блоки по возрастанию приоритета, пока бюджет не исчерпан, а размещает отобранное в закреплённом порядке. Нехватка бюджета для обязательного блока приводит к отказу сборки. Отказ записывается в журнал, а молчаливое сокращение блока не оставило бы следа.</p>
+
+<div class="note" data-level="2">Счёт токенов внутри сборщика приблизителен: точное число известно только токенизатору поставщика, и оно зависит от версии модели. Поэтому сборщик считает токены быстрым приближением, закладывает запас около десяти процентов и сверяет оценку с фактическим числом входных токенов из ответа, как это делает счётчик из <a href="#s-3-8" data-secref="3.8">раздела 3.8</a>.</div>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы собрать контекст">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="20">
+      <figcaption><span class="file">naive_context.py</span></figcaption>
+      <pre><code>SYSTEM = ("Ты ассистент оператора чата Orion Telecom. Отвечай на языке клиента, "
+          "коротко, и никогда не обещай компенсацию сам.")
+BUDGET_TOKENS = 32_000
+
+
+def build_prompt(profile: str, invoices: str, kb: str,
+                 history: list[str], question: str) -&gt; str:
+    """Сборка промпта конкатенацией в том порядке, в каком пришли данные."""
+    text = "Клиент: " + profile + "\n"
+    text += "Счета: " + invoices + "\n"
+    text += SYSTEM + "\n"
+    text += "База знаний: " + kb + "\n"
+    for turn in history:
+        text += turn + "\n"
+    return text + "Вопрос: " + question
+
+
+if __name__ == "__main__":
+    kb = "Двойное списание: сверить дату биллингового цикла, затем оформить возврат. " * 1200
+    history = [f"клиент: сообщение номер {i} про списание и тариф\n"
+               f"оператор: ответ номер {i} со ссылкой на условия тарифа" for i in range(800)]
+
+    first = build_prompt("Пётр Ильин, тариф Orion S", "счёт 1204 на 1490 рублей",
+                         kb, history, "почему списали дважды?")
+    second = build_prompt("Мария Ким, тариф Orion L", "счёт 8831 на 3200 рублей",
+                          kb, history, "почему списали дважды?")
+
+    assert count_tokens(first) &gt; BUDGET_TOKENS          # окно переполнено историей
+    shared = 0
+    for a, b in zip(first, second):
+        if a != b:
+            break
+        shared += 1
+    assert shared &lt; 12                                  # общего префикса для кэша нет
+    print(count_tokens(first), "токенов, общий префикс:", shared, "символов")</code></pre>
+    </figure>
+    <p>Сборка конкатенацией не имеет ни бюджета, ни приоритета. История растёт без ограничения, и на восьмисотой реплике промпт более чем вдвое превышает окно; ошибку возвращает поставщик, потому что код размер не проверяет. Профиль абонента стоит первым, поэтому два запроса расходятся уже на девятом символе, и кэшировать нечего. Наконец, состав контекста нигде не записан: по этому промпту нельзя сказать, что осталось за его пределами.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">context_assembler.py</span></figcaption>
+      <pre><code>import hashlib
+from dataclasses import dataclass, field
+from typing import Literal
+
+BUDGET_TOKENS = 32_000
+Zone = Literal["prefix", "suffix"]
+
+INSTRUCTIONS = "## РОЛЬ\nАссистент оператора чата Orion Telecom.\n" + "Правило поведения. " * 200
+TOOLS = "## ИНСТРУМЕНТЫ\n" + "get_invoice(subscriber_id, period) -&gt; Invoice\n" * 120
+POLICY = "## ФОРМАТ ОТВЕТА\nСначала вывод, затем ссылка на счёт или статью базы знаний.\n"
+
+
+class BudgetExceeded(Exception):
+    """Обязательная часть контекста не помещается в окно."""
+
+
+@dataclass(frozen=True)
+class ContextBlock:
+    """Кусок контекста с ценой в токенах, приоритетом и зоной кэширования."""
+
+    name: str
+    text: str
+    priority: int                 # 1 исключается последним
+    zone: Zone = "suffix"
+    required: bool = False
+
+    @property
+    def tokens(self) -&gt; int:
+        return count_tokens(self.render())
+
+    def render(self) -&gt; str:
+        return f"&lt;{self.name}&gt;\n{self.text}\n&lt;/{self.name}&gt;\n"
+
+
+@dataclass
+class Assembly:
+    prefix: str
+    suffix: str
+    included: list[str] = field(default_factory=list)
+    excluded: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def text(self) -&gt; str:
+        return self.prefix + self.suffix
+
+    @property
+    def tokens(self) -&gt; int:
+        return count_tokens(self.text)
+
+    @property
+    def prefix_digest(self) -&gt; str:
+        return hashlib.blake2b(self.prefix.encode("utf-8"), digest_size=8).hexdigest()
+
+
+def assemble(blocks: list[ContextBlock], budget: int = BUDGET_TOKENS) -&gt; Assembly:
+    """Отбор по приоритету, размещение по объявленному порядку."""
+    prefix_blocks = [b for b in blocks if b.zone == "prefix"]
+    suffix_blocks = [b for b in blocks if b.zone == "suffix"]
+    prefix = "".join(b.render() for b in prefix_blocks)
+    spent = count_tokens(prefix)
+    if spent &gt; budget:
+        raise BudgetExceeded(f"префикс занимает {spent} токенов из {budget}")
+
+    chosen: set[str] = set()
+    excluded: list[tuple[str, str]] = []
+    for block in sorted(suffix_blocks, key=lambda b: (b.priority, b.name)):
+        if spent + block.tokens &lt;= budget:
+            chosen.add(block.name)
+            spent += block.tokens
+        elif block.required:
+            raise BudgetExceeded(f"обязательный блок {block.name} не помещается")
+        else:
+            excluded.append((block.name, f"бюджет: {block.tokens} при остатке {budget - spent}"))
+
+    ordered = [b for b in suffix_blocks if b.name in chosen]
+    return Assembly(prefix=prefix, suffix="".join(b.render() for b in ordered),
+                    included=[b.name for b in prefix_blocks] + [b.name for b in ordered],
+                    excluded=sorted(excluded))
+
+
+def request_blocks(profile: str, invoices: str, passages: list[str],
+                   summary: str, tail: list[str], question: str) -&gt; list[ContextBlock]:
+    """Один запрос agent-assist: неизменная зона, затем данные обращения."""
+    blocks = [
+        ContextBlock("instructions", INSTRUCTIONS, priority=1, zone="prefix", required=True),
+        ContextBlock("tools", TOOLS, priority=1, zone="prefix", required=True),
+        ContextBlock("policy", POLICY, priority=1, zone="prefix", required=True),
+        ContextBlock("profile", profile, priority=2),
+        ContextBlock("invoices", invoices, priority=2),
+    ]
+    blocks += [ContextBlock(f"kb:{i}", text, priority=3 + i) for i, text in enumerate(passages)]
+    blocks += [
+        ContextBlock("memory", summary, priority=2),
+        ContextBlock("history", "\n".join(tail), priority=2),
+        ContextBlock("question", question, priority=1, required=True),
+    ]
+    return blocks
+
+
+if __name__ == "__main__":
+    passages = ["Статья базы знаний о двойном списании. " * 620,
+                "Статья о переносе платежа между лицевыми счетами. " * 480,
+                "Статья об аварии в сегменте сети и компенсации. " * 500]
+    tail = [f"клиент: реплика {i}" for i in range(20)]
+
+    first = assemble(request_blocks("Пётр Ильин, Orion S", "счёт 1204 на 1490 рублей",
+                                    passages, "клиент уже жаловался в марте",
+                                    tail, "почему списали дважды?"))
+    second = assemble(request_blocks("Мария Ким, Orion L", "счёт 8831 на 3200 рублей",
+                                     passages, "новых обращений не было",
+                                     tail, "как перенести платёж?"))
+
+    assert first.tokens &lt;= BUDGET_TOKENS and second.tokens &lt;= BUDGET_TOKENS
+    assert first.prefix == second.prefix                  # префикс совпадает байт в байт
+    assert first.prefix_digest == second.prefix_digest
+    assert "question" in first.included                   # обязательный блок на месте
+    assert [n for n, _ in first.excluded] == ["kb:2"]     # вытеснен блок с худшим приоритетом
+    assert first.included.index("memory") &lt; first.included.index("question")
+
+    tight = assemble(request_blocks("Пётр Ильин, Orion S", "счёт 1204 на 1490 рублей",
+                                    passages, "клиент уже жаловался в марте",
+                                    tail, "почему списали дважды?"), budget=4_000)
+    assert tight.included[-1] == "question"               # вопрос уцелел
+    assert [n for n, _ in tight.excluded] == ["kb:0", "kb:1", "kb:2"]
+
+    try:
+        assemble(request_blocks("Пётр Ильин, Orion S", "счёт 1204 на 1490 рублей",
+                                passages, "", tail, "почему?"), budget=1_000)
+        raise AssertionError("нехватка бюджета обязана быть отказом, а не усечением")
+    except BudgetExceeded:
+        pass
+    print(f"собрано {first.tokens} токенов, префикс {first.prefix_digest}, "
+          f"вытеснено {len(first.excluded)}")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="priority: int">строка 23</span><p>Приоритет задаётся блоку и не зависит от места блока в тексте. Поэтому решение о том, что исключать, принимается один раз при проектировании и остаётся объяснимым: у вытесненного блока есть число, по которому его вытеснили.</p></div>
+        <div><span class="at" data-anchor="def render(self)">строка 31</span><p>Блок оборачивается именованными скобками, поэтому модель видит границы данных, а сборщик видит, что блок либо вошёл целиком, либо не вошёл вовсе. Усечение внутри блока запрещено, потому что обрезанный и заново обёрнутый блок синтаксически неотличим от полного.</p></div>
+        <div><span class="at" data-anchor="key=lambda b: (b.priority, b.name)">строка 66</span><p>Отбор идёт по приоритету, и вторым ключом стоит имя: при равных приоритетах порядок обязан быть детерминированным, иначе два одинаковых запроса соберутся по-разному и сравнение трасс потеряет смысл.</p></div>
+        <div><span class="at" data-anchor="elif block.required:">строка 70</span><p>Обязательный блок, который не помещается, останавливает сборку. Если отправить запрос без вопроса оператора, модель сформирует ответ на отсутствующий вопрос и не сообщит о пропуске: во входе модели нет сведений о пропущенном блоке.</p></div>
+        <div><span class="at" data-anchor="ordered = [b for b in suffix_blocks">строка 75</span><p>Отбор и размещение разделены: отбор выполняется по приоритету, размещение по объявленному порядку. Если бы блоки укладывались в порядке приоритета, блоки суффикса менялись бы местами от запроса к запросу, и модель получала бы разную структуру при одинаковых данных.</p></div>
+        <div><span class="at" data-anchor="hashlib.blake2b(self.prefix.encode">строка 52</span><p>Хеш префикса вычисляется сборщиком и попадает в журнал. Хеш позволяет дёшево проверить утверждение «префикс не менялся»: сравнение самих текстов стоит дороже самой сборки.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается подсчёта. Наивная сборка не вычисляет размер контекста, и о переполнении сообщает ошибка поставщика. Продуманная сборка вычисляет цену каждого блока до отправки и принимает решение об исключении до вызова модели.</p>
+    <p>Второе различие касается нехватки места. Наивное решение теряет конец текста, то есть самые свежие данные и вопрос. Продуманное решение исключает целиком блок с худшим приоритетом и записывает его имя и причину исключения.</p>
+    <p>Третье различие касается стабильности начала. В наивной сборке имя абонента стоит перед инструкцией, и общего начала у двух запросов нет. В продуманной префикс собран из блоков, не зависящих от чата, и совпадает байт в байт, что подтверждается равенством хешей.</p>
+  </div>
+</div>
+
+<p>Источники контекста отвечают с разной скоростью, поэтому наряду с бюджетом токенов вводится бюджет времени. CRM отвечает за сто двадцать миллисекунд, биллинг за сто пятьдесят, поиск по базе знаний за двести, история читается локально. Сборщик запрашивает источники параллельно; для источника, не ответившего в срок, он подставляет заранее описанную замену и записывает подстановку. Подсказка с пометкой «данных биллинга нет» появляется вовремя, а подсказка, ожидающая биллинг, опоздала бы на полторы секунды, когда оператор уже допечатал ответ сам.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Поток сборки контекста: четыре источника с собственными таймаутами и заменами опрашиваются параллельно, сборщик с дедлайном в четыреста миллисекунд передаёт собранное распределителю бюджета, а тот укладывает отобранные блоки в префикс и суффикс запроса" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar4b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="125" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ИСТОЧНИКИ</text>
+  <text x="360" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">СБОРКА</text>
+  <text x="575" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">БЮДЖЕТ</text>
+  <text x="790" y="34" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЗАПРОС</text>
+
+  <rect x="20" y="48" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="68" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">CRM: профиль абонента</text>
+  <text x="34" y="86" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">таймаут 120 мс</text>
+  <text x="34" y="102" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">замена: только номер счёта</text>
+  <rect x="20" y="122" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="142" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">биллинг: начисления</text>
+  <text x="34" y="160" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">таймаут 150 мс</text>
+  <text x="34" y="176" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">замена: пометка «нет данных»</text>
+  <rect x="20" y="196" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="216" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">база знаний: 3 фрагмента</text>
+  <text x="34" y="234" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">таймаут 200 мс</text>
+  <text x="34" y="250" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">замена: без статей</text>
+  <rect x="20" y="270" width="210" height="62" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="34" y="290" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">сессия: реплики и память</text>
+  <text x="34" y="308" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">локально, 5 мс</text>
+  <text x="34" y="324" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">замена не нужна</text>
+
+  <rect x="280" y="48" width="160" height="284" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="360" y="76" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">сборщик</text>
+  <text x="360" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">дедлайн 400 мс</text>
+  <text x="360" y="112" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">опоздавших не ждёт</text>
+
+  <rect x="490" y="120" width="170" height="140" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="575" y="152" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">распределитель</text>
+  <text x="575" y="172" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">бюджет 32 000</text>
+  <text x="575" y="188" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">отбор по приоритету</text>
+
+  <rect x="720" y="120" width="140" height="140" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+
+  <g data-step="1" data-caption="Четыре источника опрашиваются параллельно, у каждого свой таймаут и заранее описанная замена.">
+    <line x1="230" y1="79" x2="272" y2="79" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <line x1="230" y1="153" x2="272" y2="153" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <line x1="230" y1="227" x2="272" y2="227" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <line x1="230" y1="301" x2="272" y2="301" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+  </g>
+
+  <g data-step="2" data-caption="Биллинг не ответил за сто пятьдесят миллисекунд: сборщик ставит пометку «нет данных» и записывает подстановку.">
+    <rect x="14" y="116" width="222" height="74" rx="6" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <rect x="292" y="286" width="136" height="34" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <text x="360" y="300" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">биллинг: замена</text>
+    <text x="360" y="314" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">записано в журнал</text>
+  </g>
+
+  <g data-step="3" data-caption="Распределитель отбирает блоки по приоритету, пока бюджет не исчерпан, и называет причину для каждого вытесненного.">
+    <line x1="440" y1="190" x2="482" y2="190" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <text x="575" y="216" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">вытеснено: kb:2</text>
+    <text x="575" y="232" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">причина: бюджет</text>
+  </g>
+
+  <g data-step="4" data-caption="Отобранное укладывается в две зоны: неизменный префикс сверху, изменчивый суффикс под ним.">
+    <line x1="660" y1="190" x2="712" y2="190" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar4b)"/>
+    <rect x="734" y="136" width="112" height="38" rx="4" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+    <text x="790" y="159" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">префикс</text>
+    <rect x="734" y="186" width="112" height="58" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+    <text x="790" y="211" text-anchor="middle" font-family="Inter,sans-serif" font-size="11.5" font-weight="600" fill="currentColor">суффикс</text>
+    <text x="790" y="229" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">9 090</text>
+  </g>
+
+  <text x="20" y="366" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Бюджет времени определяет, что успело прийти, бюджет токенов определяет, что поместилось.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Сборщик превращает отсутствие ответа от источника в помеченное отсутствие данных. Ожидание источника здесь не подходит: подсказка, опоздавшая на секунду, для оператора равнозначна отсутствующей.</figcaption>
+</figure>
+
+<h3 id="s-4-5"><span class="num">4.5</span>Порядок ради кэша</h3>
+
+<p>Кэш промптов, определённый в <a href="#s-3-8" data-secref="3.8">разделе 3.8</a>, требует точного совпадения начала запроса. Поэтому порядок блоков определяет, сколько токенов оплачивается по полной цене и сколько времени уходит на обработку входа. Для Orion при сорока тысячах чатов в сутки разница между стабильным и изменчивым началом измеряется тысячами долларов в месяц и сотнями миллисекунд на подсказку.</p>
+
+<dl class="def">
+<dt>Стабильный префикс <span class="en">(stable prefix)</span></dt>
+<dd>Начальная часть контекста, одинаковая байт в байт у всех запросов одного арендатора и одной версии решения. Стабильность проверяется хешем префикса, записанным в трассу: запросы с равными хешами могут попасть в одну запись кэша, запросы с разными хешами попасть в неё не могут.</dd>
+<dt>Граница кэша <span class="en">(cache boundary)</span></dt>
+<dd>Место в контексте, ниже которого содержимое меняется от запроса к запросу. Граница выбирается инженером: перенос блока выше неё требует, чтобы блок перестал зависеть от конкретного обращения, а перенос ниже переводит его токены на полную цену входа.</dd>
+</dl>
+
+<p>Выше границы у Orion располагаются системные инструкции, определения инструментов и политика формата, то есть всё, что зависит от версии решения и бизнес-единицы, но не от абонента. Ниже границы располагается всё, что меняется в каждом чате. Проверка принадлежности блока к префиксу формулируется одним вопросом: изменится ли этот текст, если в тот же момент придёт другой абонент. Утвердительный ответ означает суффикс.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Поместить в системную инструкцию текущее время, идентификатор сессии или имя оператора «для контекста». Один такой фрагмент в первых строках исключает попадания в кэш для всех запросов, и счёт растёт раньше, чем этот рост связывают с правкой инструкции. Те же данные, размещённые в конце контекста, не стоят ничего сверх собственного размера.</div>
+
+<p>У записи кэша есть срок жизни, поэтому при редких обращениях запись истекает до следующего запроса и запрос не попадает в кэш. В сценарии Orion такой режим возникает в двух случаях: ночью, когда поток чатов падает, и на границе бизнес-единиц, каждая из которых имеет собственный префикс и, следовательно, собственную запись кэша. Третий источник промахов создаёт само решение, и он показан на диаграмме: изменение набора инструментов между ходами делает запись непригодной целиком.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 300" role="img" aria-label="Шесть ходов одного разговора на оси времени и записи кэша префикса над ними: первые три хода попадают в первую запись, добавление инструмента на четвёртом ходе порождает вторую, а шестой ход после семиминутной паузы не попадает ни в одну из-за истёкшего срока жизни" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar4c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="34" y="34" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЗАПИСЬ КЭША ДЕЙСТВУЕТ 300 СЕКУНД И ТОЛЬКО ПРИ НЕИЗМЕННОМ ПРЕФИКСЕ</text>
+
+  <rect x="76" y="76" width="310" height="30" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="231" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">запись A · префикс 5f52 · 12 инструментов</text>
+  <rect x="466" y="122" width="220" height="30" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="576" y="142" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">запись B · префикс 9c0e · 13</text>
+  <rect x="742" y="76" width="110" height="30" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="797" y="96" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">запись C</text>
+
+  <line x1="100" y1="106" x2="100" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="230" y1="106" x2="230" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="360" y1="106" x2="360" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="490" y1="152" x2="490" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="620" y1="152" x2="620" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  <line x1="797" y1="106" x2="797" y2="202" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="3 3"/>
+
+  <line x1="34" y1="216" x2="856" y2="216" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar4c)"/>
+  <circle cx="100" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="100" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">1</text>
+  <circle cx="230" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="230" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">2</text>
+  <circle cx="360" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="360" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">3</text>
+  <circle cx="490" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="490" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">4</text>
+  <circle cx="620" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="620" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">5</text>
+  <circle cx="797" cy="216" r="12" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="797" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">6</text>
+
+  <path d="M646,196 H771" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <text x="708" y="190" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">пауза 7 минут</text>
+
+  <text x="100" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">0 с</text>
+  <text x="230" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">40 с</text>
+  <text x="360" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">95 с</text>
+  <text x="490" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">150 с</text>
+  <text x="620" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">205 с</text>
+  <text x="797" y="246" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">620 с</text>
+
+  <text x="100" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">промах</text>
+  <text x="230" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">попадание</text>
+  <text x="360" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">попадание</text>
+  <text x="490" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">промах</text>
+  <text x="620" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">попадание</text>
+  <text x="797" y="266" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">промах</text>
+
+  <text x="100" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">первая запись</text>
+  <text x="490" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">добавлен инструмент</text>
+  <text x="797" y="284" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">срок жизни истёк</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Доля попаданий в кэш зависит от двух независимых условий: от неизменности префикса, которую обеспечивает инженер, и от интервалов между запросами относительно срока жизни записи, которые определяются потоком запросов; изменение набора инструментов на середине разговора нарушает первое условие.</figcaption>
+</figure>
+
+<div class="note" data-level="2">Кэш промптов отличается от кэша ответов. Первый сохраняет внутреннее состояние поставщика для неизменного начала запроса и не влияет на содержание ответа.<a class="src" href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching" target="_blank" rel="noreferrer">platform.claude.com, prompt caching</a> Второй возвращает готовый ответ на похожий вопрос и потому требует отдельного решения о допустимости, поскольку два похожих вопроса разных абонентов относятся к разным лицевым счетам.</div>
+
+<p>Стабильность префикса проверяется, и для проверки текст инструкции должен быть артефактом с версией и содержимым, адресуемым хешем. Реестр инструкций хранит выпущенные версии, отказывается выпускать текст без обязательных разделов и запрещает менять уже выпущенную версию. Хеш, который он вычисляет, совпадает с тем, что попадает в трассу запроса, поэтому вопрос «почему кэш не сработал» сводится к сравнению двух строк.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">prompt_registry.py</span></figcaption>
+<pre><code>import hashlib
+import re
+from dataclasses import dataclass, field
+
+REQUIRED_SECTIONS = ("РОЛЬ", "ГРАНИЦЫ", "ФОРМАТ ОТВЕТА", "ЭСКАЛАЦИЯ")
+PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
+MAX_PREFIX_TOKENS = 4_000
+
+
+class PromptInvalid(Exception):
+    """Текст инструкции не проходит проверку и не попадает в реестр."""
+
+
+@dataclass(frozen=True)
+class Prompt:
+    name: str
+    version: str                  # выпуск, а не «последняя»
+    body: str
+
+    @property
+    def digest(self) -&gt; str:
+        return hashlib.blake2b(self.body.encode("utf-8"), digest_size=8).hexdigest()
+
+    def sections(self) -&gt; list[str]:
+        return [line[3:].strip() for line in self.body.splitlines() if line.startswith("## ")]
+
+
+def check(prompt: Prompt) -&gt; list[str]:
+    """Проверки, которые запускает CI на каждом изменении инструкции."""
+    problems = []
+    missing = [s for s in REQUIRED_SECTIONS if s not in prompt.sections()]
+    if missing:
+        problems.append(f"нет обязательных разделов: {missing}")
+    if PLACEHOLDER.search(prompt.body):
+        problems.append("остались неподставленные скобки шаблона")
+    if len(prompt.body) // 2 &gt; MAX_PREFIX_TOKENS:
+        problems.append("инструкция длиннее бюджета префикса")
+    return problems
+
+
+@dataclass
+class PromptRegistry:
+    """Выпущенные инструкции: версия неизменна, содержимое адресуется хешем."""
+
+    released: dict[tuple[str, str], Prompt] = field(default_factory=dict)
+
+    def release(self, prompt: Prompt) -&gt; Prompt:
+        problems = check(prompt)
+        if problems:
+            raise PromptInvalid("; ".join(problems))
+        key = (prompt.name, prompt.version)
+        earlier = self.released.get(key)
+        if earlier is not None and earlier.digest != prompt.digest:
+            raise PromptInvalid(f"версия {prompt.version} уже выпущена с другим текстом")
+        self.released[key] = prompt
+        return prompt
+
+    def get(self, name: str, version: str) -&gt; Prompt:
+        return self.released[(name, version)]
+
+
+BODY_V1 = """## РОЛЬ
+Ассистент оператора чата Orion Telecom.
+## ГРАНИЦЫ
+Не обещать компенсацию: это решение оператора.
+## ФОРМАТ ОТВЕТА
+Вывод, затем ссылка на счёт или статью базы знаний.
+## ЭСКАЛАЦИЯ
+При аварии в сети передать обращение дежурному инженеру.
+"""
+
+if __name__ == "__main__":
+    registry = PromptRegistry()
+    v1 = registry.release(Prompt("agent_assist", "2026-03-04", BODY_V1))
+    assert registry.get("agent_assist", "2026-03-04").digest == v1.digest
+    assert v1.digest == Prompt("agent_assist", "2026-03-04", BODY_V1).digest
+
+    without_escalation = BODY_V1.split("## ЭСКАЛАЦИЯ")[0]
+    try:
+        registry.release(Prompt("agent_assist", "2026-03-05", without_escalation))
+        raise AssertionError("инструкция без раздела эскалации не выпускается")
+    except PromptInvalid as err:
+        assert "ЭСКАЛАЦИЯ" in str(err)
+
+    try:
+        registry.release(Prompt("agent_assist", "2026-03-04", BODY_V1 + "Ещё правило.\n"))
+        raise AssertionError("выпущенная версия неизменна")
+    except PromptInvalid:
+        pass
+
+    v2 = registry.release(Prompt("agent_assist", "2026-03-11", BODY_V1 + "## ЯЗЫК\nОтвечать на языке клиента.\n"))
+    assert v2.digest != v1.digest                     # другой префикс, другой кэш
+    assert check(Prompt("agent_assist", "x", BODY_V1 + "{{tenant}}")) != []
+    print(f"выпущено {len(registry.released)} версий, текущая {v2.version} · {v2.digest}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="digest_size=8).hexdigest()">строка 22</span><p>Содержимое адресуется хешем, а версия остаётся человеческим именем выпуска. Пара из имени и хеша отвечает на два разных вопроса: какую инструкцию предполагалось применить и какой текст фактически передан модели.</p></div>
+  <div><span class="at" data-anchor="def sections(self)">строка 24</span><p>Разделы выделяются по разметке заголовков, поэтому проверка обязательных разделов остаётся дешёвой и выполняется на каждом изменении. Содержательная проверка инструкции выполняется оценочными наборами <a href="#ch-12" data-secref="12">главы 12</a>.</p></div>
+  <div><span class="at" data-anchor="if PLACEHOLDER.search(prompt.body):">строка 34</span><p>Неподставленные скобки шаблона являются частой причиной порчи префикса: строка вида «арендатор: {{tenant}}» уходит в модель как есть, выглядит правдоподобно в логе и меняет поведение непредсказуемо.</p></div>
+  <div><span class="at" data-anchor="earlier.digest != prompt.digest">строка 53</span><p>Выпущенная версия неизменна. Без этого запрета трасса недельной давности ссылалась бы на версию, текст которой с тех пор изменился, и разбор инцидента опирался бы на инструкцию, которой в тот момент не существовало.</p></div>
+</div>
+</figure>
+
+<p>Жизненный цикл этого реестра, то есть ревью, тесты и порядок выпуска новой версии, разбирается в <a href="#s-4-7" data-secref="4.7">разделе 4.7</a>. Для этого раздела существенно, что стабильность префикса обеспечивается запретом на изменение выпущенного текста и не зависит от дисциплины разработчика.</p>
+
+<h3 id="s-4-6"><span class="num">4.6</span>Память и суммаризация</h3>
+
+<p>Память требуется, когда разговор длиннее окна или абонент возвращается через неделю. Различаются три вида памяти, которые хранятся по-разному и имеют разный срок хранения.</p>
+
+<dl class="def">
+<dt>Кратковременная память <span class="en">(short-term memory)</span></dt>
+<dd>Последние реплики текущего разговора, находящиеся в контексте дословно. Ограничена бюджетом окна и исчезает вместе с сессией.</dd>
+<dt>Эпизодическая память <span class="en">(episodic memory)</span></dt>
+<dd>Сжатое изложение прошедших частей разговора и прошлых обращений: что произошло, когда и чем закончилось. Порождается суммаризацией и хранится вместе с отметкой времени.</dd>
+<dt>Семантическая память <span class="en">(semantic memory)</span></dt>
+<dd>Утверждения об абоненте, которые считаются верными вне конкретного разговора: тариф, предпочитаемый язык, наличие открытого спора. Хранится как набор фактов, каждый со своим источником и сроком жизни, и поэтому требует провенанса.</dd>
+</dl>
+
+<p>Скользящая суммаризация решает задачу кратковременной памяти: когда реплик становится больше порога, все, кроме последних, сворачиваются в несколько утверждений, которые занимают место одного абзаца вместо двадцати. Свёртка выполняется моделью и стоит денег и времени, поэтому она запускается по порогу, и её результат переиспользуется, пока разговор не вырастет снова. Кроме того, свёртка теряет информацию необратимо: исходные реплики из сводки не восстанавливаются, и решение о том, что сворачивать, принимается один раз.</p>
+
+<p>Каждый факт памяти хранится вместе с источником и моментом, до которого он считается верным. Источник определяет доверие: запись биллинга о списании и фраза абонента «мне обещали бесплатный роуминг» имеют разную достоверность, хотя в тексте контекста выглядят одинаково. Срок жизни определяет, когда факт удаляется автоматически: сведения из CRM устаревают за неделю, слова абонента за сутки, решение оператора хранится месяц. Провенанс и срок жизни вместе защищают от класса уязвимостей, который разбирается в <a href="#s-4-10" data-secref="4.10">разделе 4.10</a>.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">memory_summarizer.py</span></figcaption>
+<pre><code>from dataclasses import dataclass, field
+
+DAY = 24 * 3600.0
+TRUST = {"billing": 3, "crm": 3, "operator": 2, "customer": 1}
+TTL = {"billing": 7 * DAY, "crm": 7 * DAY, "operator": 30 * DAY, "customer": 1 * DAY}
+
+
+@dataclass(frozen=True)
+class Fact:
+    """Утверждение памяти вместе с тем, откуда оно взялось и когда истечёт."""
+
+    text: str
+    source: str                   # система записи, оператор или слова клиента
+    created_at: float
+
+    @property
+    def ttl_s(self) -&gt; float:
+        return TTL[self.source]
+
+    @property
+    def trust(self) -&gt; int:
+        return TRUST[self.source]
+
+    def alive(self, now: float) -&gt; bool:
+        return now - self.created_at &lt; self.ttl_s
+
+
+@dataclass
+class Memory:
+    facts: list[Fact] = field(default_factory=list)
+
+    def remember(self, fact: Fact) -&gt; None:
+        self.facts.append(fact)
+
+    def live(self, now: float) -&gt; list[Fact]:
+        return [f for f in self.facts if f.alive(now)]
+
+    def render(self, now: float, budget_tokens: int, min_trust: int = 1) -&gt; str:
+        """Сводка для контекста: сначала доверенные источники, потом свежесть."""
+        rows = [f for f in self.live(now) if f.trust &gt;= min_trust]
+        rows.sort(key=lambda f: (-f.trust, -f.created_at))
+        lines: list[str] = []
+        spent = 0
+        for fact in rows:
+            line = f"- {fact.text} [{fact.source}, t={fact.created_at:.0f}]"
+            cost = count_tokens(line)
+            if spent + cost &gt; budget_tokens:
+                break
+            lines.append(line)
+            spent += cost
+        return "\n".join(lines)
+
+
+def roll(history: list[str], memory: Memory, llm: LLMClient, now: float,
+         keep: int = 4) -&gt; list[str]:
+    """Свернуть всё, кроме последних keep реплик, в один факт с провенансом."""
+    if len(history) &lt;= keep:
+        return history
+    folded, tail = history[:-keep], history[-keep:]
+    reply = llm.complete("Сожми диалог в два-три утверждения:\n" + "\n".join(folded))
+    memory.remember(Fact(reply.text, "customer", now))
+    return tail
+
+
+if __name__ == "__main__":
+    memory = Memory()
+    memory.remember(Fact("лицевой счёт 4402, тариф Orion S", "crm", created_at=0.0))
+    memory.remember(Fact("двойное списание 1490 рублей 3 марта", "billing", created_at=120.0))
+    memory.remember(Fact("клиент говорит, что ему обещали бесплатный роуминг", "customer",
+                         created_at=0.0))
+
+    history = [f"клиент: реплика {i}" for i in range(12)]
+    llm = FakeLLM(["клиент жалуется на списание и просит вернуть деньги"])
+    tail = roll(history, memory, llm, now=600.0)
+    assert tail == history[-4:] and len(memory.live(600.0)) == 4
+
+    summary = memory.render(now=600.0, budget_tokens=200)
+    assert summary.splitlines()[0].startswith("- двойное списание")   # биллинг выше слов клиента
+    assert "[customer" in summary and "t=" in summary                 # провенанс виден модели
+
+    trusted = memory.render(now=600.0, budget_tokens=200, min_trust=2)
+    assert "роуминг" not in trusted                 # слова клиента не становятся фактом
+    later = memory.render(now=2 * DAY, budget_tokens=200)
+    assert "роуминг" not in later                   # срок жизни истёк сам
+    assert "[billing" in later
+
+    narrow = memory.render(now=600.0, budget_tokens=30)
+    assert len(narrow.splitlines()) &lt; len(summary.splitlines())   # при нехватке бюджета отбрасываются нижние строки
+    print(f"в памяти {len(memory.live(600.0))} фактов, в сводке {len(summary.splitlines())} строк")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="TTL = {">строка 5</span><p>Срок жизни задаётся для источника. Поэтому политика хранения обозрима: чтобы узнать, как долго хранятся слова абонента, достаточно посмотреть в одну таблицу.</p></div>
+  <div><span class="at" data-anchor="rows.sort(key=lambda f: (-f.trust, -f.created_at))">строка 41</span><p>Порядок сводки задаётся сначала доверием, затем свежестью. Свежая непроверенная фраза не должна оказываться выше подтверждённой записи системы: при нехватке бюджета сводка обрезается снизу, и порядок определяет, какие факты попадут в контекст.</p></div>
+  <div><span class="at" data-anchor="folded, tail = history[:-keep], history[-keep:]">строка 59</span><p>Последние реплики остаются дословными. Сводка применяется к давним частям разговора, поскольку последние реплики содержат уточнения, ради которых абонент переспрашивает, и при свёртке эти уточнения терялись бы.</p></div>
+  <div><span class="at" data-anchor="memory.remember(Fact(reply.text,">строка 61</span><p>Сводка разговора получает источник «слова абонента». Она порождена из реплик абонента, и присвоение ей источника «система» на том основании, что текст сгенерирован моделью, скрыло бы происхождение утверждения.</p></div>
+</div>
+</figure>
+
+<p>Данные, которые нельзя хранить дольше обращения, определяются требованиями резидентности и защиты персональных данных из <a href="#ch-10" data-secref="10">главы 10</a>, а механика долгоживущего состояния, переживающего перезапуск, разбирается в <a href="#ch-9" data-secref="9">главе 9</a>. По правилу Orion в память записывается вывод из разговора, например «абонент оспаривает списание от 3 марта», без стенограммы разговора.</p>
+
+<h3 id="s-4-7"><span class="num">4.7</span>Инструкции как код</h3>
+
+<p>Инструкция, хранящаяся в поле конфигурации веб-интерфейса, не имеет ни истории, ни ревью, ни связи с выпуском. Инструкция, хранящаяся в репозитории, проходит тот же путь, что и код: ветка, ревью, тесты, выпуск версии. Разница между двумя режимами обнаруживается при первом инциденте, когда требуется установить, какой текст передавался модели три дня назад.</p>
+
+<p>Тесты инструкции проверяют её структуру и размер. Проверка обязательных разделов не даёт выпустить текст, из которого исчезли границы или правила эскалации, а удаление этих разделов относится к частым правкам, вносимым в спешке. Проверка на неподставленные скобки ловит сломанный шаблон. Проверка длины удерживает префикс в границах бюджета, поскольку каждая добавленная строка инструкции оплачивается на каждом запросе. Содержательные проверки, то есть изменение качества ответов, выполняются оценочными наборами <a href="#ch-12" data-secref="12">главы 12</a>.</p>
+
+<p>Выпуск новой версии проходит по тому же порядку, что и смена версии модели из <a href="#s-3-8" data-secref="3.8">раздела 3.8</a>: теневой прогон на записанном потоке, сравнение с текущей версией, затем переключение. Хеш префикса записывается в трассу каждого запроса, поэтому недельный отчёт о качестве раскладывается по версиям инструкций без дополнительной разметки, а падение доли попаданий в кэш связывается с конкретным выпуском по времени.</p>
+
+<p>Мультиарендность Orion добавляет к этому одно требование. У пяти бизнес-единиц свои правила, и одно из возможных решений состоит в единой инструкции с условными вставками. Условная вставка в префиксе порождает столько разных префиксов, сколько ветвей, и эти префиксы нельзя просмотреть по отдельности. Пять явных версий, по одной на единицу, дают пять стабильных префиксов, пять записей кэша и пять отдельных отчётов.</p>
+
+<h3 id="s-4-8"><span class="num">4.8</span>Прозрачность контекста</h3>
+
+<p>Вопрос «что модель видела» задаётся при каждом разборе неверного ответа, и ответ на него берётся из записи. Реконструкция по времени и идентификатору абонента невозможна: источники успели измениться, поиск вернёт другие фрагменты, история выросла. Запись состава контекста стоит нескольких сотен байт на запрос и отвечает на вопрос за секунды.</p>
+
+<p>Записывается состав контекста: перечень блоков с зоной, размером в токенах, признаком включения и причиной исключения, а рядом хеш префикса и версия инструкции. Текст контекста не записывается по двум причинам: из-за объёма, поскольку тридцать две тысячи токенов на запрос при сорока тысячах чатов дают 1.28 миллиарда токенов в сутки уже при одном запросе на чат, и из-за защиты данных, поскольку контекст содержит сведения об абоненте, которые должны храниться в системах записи. Правила хранения трасс и выборочного сохранения полного текста разбираются в <a href="#s-13-9" data-secref="13.9">разделе 13.9</a>.</p>
+
+<p>Из двух таких записей выводится разность, и она отвечает на два практических вопроса. Первый: почему ответ на похожий вопрос оказался другим, и ответом обычно служит другой набор вытесненных блоков. Второй: почему запрос не попал в кэш, и ответом служит изменение префикса, названное поимённо.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">context_audit.py</span></figcaption>
+<pre><code>import hashlib
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BlockRecord:
+    name: str
+    zone: str                     # "prefix" или "suffix"
+    tokens: int
+    included: bool
+    reason: str = ""              # почему блок не вошёл
+
+
+@dataclass(frozen=True)
+class ContextRecord:
+    """Что модель увидела в одном запросе и чего не увидела."""
+
+    request_id: str
+    prompt_version: str
+    blocks: tuple[BlockRecord, ...]
+
+    def names(self, zone: str) -&gt; list[str]:
+        return [b.name for b in self.blocks if b.zone == zone and b.included]
+
+    @property
+    def prefix_digest(self) -&gt; str:
+        seed = self.prompt_version + "|" + "|".join(
+            f"{b.name}:{b.tokens}" for b in self.blocks if b.zone == "prefix" and b.included)
+        return hashlib.blake2b(seed.encode("utf-8"), digest_size=8).hexdigest()
+
+    @property
+    def tokens(self) -&gt; int:
+        return sum(b.tokens for b in self.blocks if b.included)
+
+    def dropped(self) -&gt; list[tuple[str, str]]:
+        return [(b.name, b.reason) for b in self.blocks if not b.included]
+
+
+def diff(before: ContextRecord, after: ContextRecord) -&gt; list[str]:
+    """Чем второй запрос отличается от первого и почему кэш не сработал."""
+    lines: list[str] = []
+    if before.prompt_version != after.prompt_version:
+        lines.append(f"версия инструкции: {before.prompt_version} → {after.prompt_version}")
+    for zone in ("prefix", "suffix"):
+        was, now = before.names(zone), after.names(zone)
+        added = [n for n in now if n not in was]
+        removed = [n for n in was if n not in now]
+        if added:
+            lines.append(f"{zone}: добавлено {added}")
+        if removed:
+            lines.append(f"{zone}: убрано {removed}")
+        if not added and not removed and was != now:
+            lines.append(f"{zone}: порядок изменён {was} → {now}")
+    if before.prefix_digest != after.prefix_digest:
+        lines.append("кэш промптов: промах, префикс изменился")
+    return lines
+
+
+def record(request_id: str, version: str, prefix: list[tuple[str, int]],
+           suffix: list[tuple[str, int]], dropped: list[tuple[str, int, str]]) -&gt; ContextRecord:
+    blocks = [BlockRecord(n, "prefix", t, True) for n, t in prefix]
+    blocks += [BlockRecord(n, "suffix", t, True) for n, t in suffix]
+    blocks += [BlockRecord(n, "suffix", t, False, why) for n, t, why in dropped]
+    return ContextRecord(request_id, version, tuple(blocks))
+
+
+if __name__ == "__main__":
+    turn_1 = record("req-1", "2026-03-04",
+                    prefix=[("instructions", 1_180), ("tools", 2_400), ("policy", 620)],
+                    suffix=[("profile", 300), ("invoices", 740), ("kb:0", 5_900),
+                            ("memory", 260), ("history", 1_850), ("question", 40)],
+                    dropped=[("kb:1", 6_100, "бюджет: 6100 при остатке 640")])
+    turn_2 = record("req-2", "2026-03-04",
+                    prefix=[("instructions", 1_180), ("tools", 2_620), ("policy", 620)],
+                    suffix=[("profile", 300), ("invoices", 740), ("kb:0", 5_900),
+                            ("memory", 300), ("history", 2_100), ("question", 44)],
+                    dropped=[("kb:1", 6_100, "бюджет: 6100 при остатке 380")])
+
+    assert turn_1.tokens == 13_290 and turn_1.dropped() == [
+        ("kb:1", "бюджет: 6100 при остатке 640")]
+    assert turn_1.prefix_digest != turn_2.prefix_digest       # список инструментов вырос
+
+    report = diff(turn_1, turn_2)
+    assert report == ["кэш промптов: промах, префикс изменился"]
+
+    turn_3 = record("req-3", "2026-03-11",
+                    prefix=[("instructions", 1_240), ("tools", 2_620), ("policy", 620)],
+                    suffix=[("profile", 300), ("question", 44)],
+                    dropped=[("kb:0", 5_900, "по правилу арендатора: статья другой единицы")])
+    lines = diff(turn_2, turn_3)
+    assert lines[0].startswith("версия инструкции")
+    assert any("убрано" in line and "kb:0" in line for line in lines)
+    assert turn_3.dropped()[0][1].startswith("по правилу арендатора")
+    print(f"запрос {turn_1.request_id}: {turn_1.tokens} токенов; расхождение: {report}")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="seed = self.prompt_version">строка 27</span><p>Хеш префикса вычисляется из версии инструкции и перечня блоков с их размерами, поэтому журнал не хранит содержимое. Подмену он всё равно обнаруживает: изменение инструкции меняет её версию, а изменение других блоков префикса, как правило, меняет их размер.</p></div>
+  <div><span class="at" data-anchor="if not added and not removed and was != now:">строка 52</span><p>Переупорядочивание отслеживается отдельно от добавления и удаления. Набор блоков, переставленных местами, даёт тот же перечень имён и тот же размер контекста, но другой префикс, и без этой проверки промах кэша остался бы в журнале без объяснения.</p></div>
+  <div><span class="at" data-anchor="for n, t, why in dropped]">строка 63</span><p>Исключённые блоки записываются наравне с включёнными, вместе с причиной. Эта строка отвечает на вопрос «почему модель не знала о списании»: блок был, его размер известен, и названо правило, по которому он не вошёл.</p></div>
+</div>
+</figure>
+
+<h3 id="s-4-9" data-level="2"><span class="num">4.9</span>На Google Cloud: context caching и Memory Bank</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Gemini Developer API</span>
+  <span class="tag">Gemini Enterprise Agent Platform</span>
+  <span class="tag">Agent Platform Memory Bank</span>
+</div>
+
+<p data-level="2">Кэширование контекста в Gemini Developer API и Gemini Enterprise Agent Platform (ранее Vertex AI) существует в двух режимах, и выбор режима выражает решение о границе кэша в терминах платформы. Явный режим создаёт для конкретной модели ресурс кэшированного содержимого со сроком жизни, по умолчанию 60 минут: инженер помещает в него системную инструкцию, определения инструментов и большие неизменные документы, получает имя ресурса и ссылается на него в каждом запросе; содержимое ресурса после создания не меняется, поэтому изменённая инструкция требует нового ресурса.<a class="src" href="https://ai.google.dev/api/caching" target="_blank" rel="noreferrer">ai.google.dev, CachedContent</a> Неявный режим включён по умолчанию и даёт скидку при совпадении начала запроса без создания ресурса. Минимальный размер кэшируемого содержимого зависит от модели и составляет от 2048 до 6144 токенов; для явного кэширования на моделях Gemini 3 порог равен 4096 токенам, и префикс Orion в четыре тысячи двести токенов выбран с учётом этого порога.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/context-cache/context-cache-overview" target="_blank" rel="noreferrer">cloud.google.com, кэширование контекста</a> Сведения приведены по документации на сентябрь 2026 года.</p>
+
+<p data-level="2">Явный режим гарантирует скидку на токены, ссылающиеся на кэш, и добавляет статью расходов: хранение оплачивается за время существования ресурса, поэтому ресурс с длинным сроком жизни и редкими обращениями может обходиться дороже повторной отправки префикса. Для пяти бизнес-единиц Orion создаются пять ресурсов кэша, срок жизни которых выбирается по фактическому темпу чатов: минуты для дневного потока; для ночного потока ресурс не создаётся.</p>
+
+<p data-level="2">Долговременную память обслуживает отдельный сервис, Agent Platform Memory Bank. Он порождает воспоминания из разговоров с помощью языковой модели, объединяет новые сведения с существующими, хранит воспоминания изолированно для каждой области, например для идентификатора пользователя, ищет их по сходству и удаляет по истечении срока жизни.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank" target="_blank" rel="noreferrer">cloud.google.com, Memory Bank</a> Источник факта можно записать в метаданные воспоминания, а стратегия объединения <code>REQUIRE_EXACT_MATCH</code> не допускает консолидации воспоминаний с разными метаданными.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/memory-bank/generate-memories" target="_blank" rel="noreferrer">cloud.google.com, порождение воспоминаний</a> Уровни доверия к источникам сервис не назначает, и порог доверия при отборе фактов в контекст задаёт инженер.</p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Поставщики различаются способом задания кэшируемой части, сроком жизни записи и минимальным размером префикса. У Anthropic граница кэша отмечается в самом запросе полем <code>cache_control</code> на блоке или на верхнем уровне запроса; срок жизни записи составляет пять минут и отсчитывается заново при каждом использовании, за доплату доступен час, минимальный размер составляет от 512 до 4096 токенов в зависимости от модели, а изменение определений инструментов делает недействительным весь кэш.<a class="src" href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching" target="_blank" rel="noreferrer">platform.claude.com, prompt caching</a> OpenAI кэширует совпадающее начало запроса по умолчанию, для моделей GPT-5.6 и новее позволяет отмечать точки кэширования явно и кэширует префиксы от 1024 токенов.<a class="src" href="https://developers.openai.com/api/docs/guides/prompt-caching" target="_blank" rel="noreferrer">developers.openai.com, prompt caching</a> Решение о том, какие блоки должны быть стабильными, от поставщика не зависит и переносится между платформами без изменений.</div>
+
+<h3 id="s-4-10" data-level="3"><span class="num">4.10</span>Вглубь: инвалидация кэша, две зоны, отравление памяти</h3>
+
+<h4 data-level="3">Инвалидация кэша порядком инструментов</h4>
+
+<p data-level="3">Определения инструментов входят в префикс контекста, и их состав задаётся сервером инструментов. Поэтому изменение на стороне MCP-сервера из <a href="#s-6-10" data-secref="6.10">раздела 6.10</a> делает недействительным кэш вызывающего его приложения. Если сервер отдаёт список инструментов в порядке обхода словаря с недетерминированной итерацией, префикс меняется между запросами при неизменном наборе инструментов.</p>
+
+<p data-level="3">Из этого следуют три правила. Список инструментов сортируется по имени перед сериализацией, и порядок фиксируется тестом. Набор инструментов версионируется целиком: агент, получающий новый инструмент в ходе разговора, платит полную цену входа за первый запрос после каждого добавления. Уведомление об изменении списка (<code>notifications/tools/list_changed</code>), предусмотренное протоколом, в production выключено, и список меняется только выкладкой.<a class="src" href="https://modelcontextprotocol.io/specification/2025-06-18/server/tools" target="_blank" rel="noreferrer">modelcontextprotocol.io, tools</a> Нарушение этих правил не снижает качество ответов и проявляется в счёте: доля попаданий падает до нуля, и это видно только в отчёте о стоимости.</p>
+
+<h4 data-level="3">Потерянное в середине против стабильности префикса</h4>
+
+<p data-level="3">Языковые модели хуже используют сведения из середины длинного контекста, чем из его начала или конца: в экспериментах Liu и соавторов качество ответа часто было наибольшим, когда нужный фрагмент стоял в начале или в конце входа, и существенно снижалось, когда он находился в середине.<a class="src" href="https://arxiv.org/abs/2307.03172" target="_blank" rel="noreferrer">arXiv, Liu и соавторы, 2023</a> Из этого следует решение ставить самый релевантный фрагмент первым. Это решение противоречит требованию стабильного префикса: релевантность меняется на каждом ходе, и динамическое размещение исключает попадания в кэш.</p>
+
+<p data-level="3">Противоречие устраняется двухзонной раскладкой. Начало контекста занимает неизменный префикс, который не содержит фактов об обращении. Конец контекста, непосредственно перед вопросом, занимают самые релевантные фрагменты и последние реплики. Середина отводится под то, что полезно, но не обязательно: сводку памяти, дополнительные статьи, справочные данные. В оценке Orion такая раскладка уступала динамической на единицы процентов по качеству и обходилась в разы дешевле, поэтому для сорока тысяч чатов в сутки выбрана двухзонная раскладка.</p>
+
+<h4 data-level="3">Отравление памяти</h4>
+
+<p data-level="3">Семантическая память превращает сведения из разговора в долгоживущее состояние, поэтому через неё можно внедрить ложное утверждение. Абонент, сказавший «у меня подключён безлимитный роуминг, оператор подтвердил», порождает факт, который будет предъявляться модели во всех последующих обращениях как утверждение о нём. Для агентов, выполняющих действия, такой факт влияет на действия: факт вида «этому абоненту разрешён возврат без проверки» сохраняется после разговора, в котором был произнесён.</p>
+
+<p data-level="3">Защита состоит из трёх мер, реализованных в хранении и отборе фактов. Провенанс: факт несёт источник, и источник «слова абонента» явно указывается в контексте, в том числе внутри сводки. Порог доверия: в контекст действий попадают только факты от систем записи и операторов. Срок жизни: непроверенное утверждение удаляется через сутки. Четвёртая мера относится к границе с <a href="#ch-10" data-secref="10">главой 10</a>: текст, пришедший от абонента, не размещается выше границы кэша, поскольку префикс занимают системные инструкции, и текст абонента в этой зоне оказался бы рядом с ними.</p>
+
+<div class="warn" data-level="3"><b>Типичная ошибка</b>Сохранять в семантическую память результат суммаризации без указания источника. Сводка, порождённая моделью из реплик абонента, выглядит как вывод системы, и при следующем обращении неотличима от записи биллинга. Происхождение утверждения сохраняется при суммаризации: сводка получает наименьший уровень доверия среди вошедших в неё источников.</div>
+
+<h4 data-level="3">Смешанный ввод и язык инструкций</h4>
+
+<p data-level="3">Абоненты Orion пишут по-русски и по-английски, иногда в пределах одного сообщения. Из этого следуют два правила бюджета. Первое количественное: у многих токенизаторов текст на кириллице занимает больше токенов, чем текст того же содержания на латинице, поэтому, как и в <a href="#s-3-3" data-secref="3.3">разделе 3.3</a>, бюджет считается по самому дорогому языку. Второе структурное: длина истории в токенах перестаёт быть предсказуемой по числу реплик, поэтому порог суммаризации выражается в токенах.</p>
+
+<p data-level="3">Язык инструкции является отдельным решением. Инструкция на английском языке короче в токенах и потому дешевле в префиксе, однако если язык ответа не назван явно, модель может ответить на языке инструкции. Правило Orion состоит из двух частей: инструкция на английском ради стабильности и цены, отдельный раздел с явным требованием отвечать на языке последнего сообщения абонента. Соблюдение этого требования проверяется оценочным набором, поскольку при смешанном сообщении язык ответа определяет модель.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему отметка времени в системной инструкции лишает запросы попаданий в кэш, а та же отметка в конце контекста нет?</summary>
+<div class="ans"><p>Кэш засчитывает совпадение начала запроса, и первое же различие обрывает совпадающую часть. Отметка времени в первых строках делает начало разным у всех запросов, поэтому кэшировать становится нечего. Та же отметка после всех стабильных блоков оставляет префикс неизменным и оплачивается только за собственные токены.</p></div>
+</details>
+<details>
+<summary>Что должен сделать сборщик, если обязательный блок не помещается в бюджет?</summary>
+<div class="ans"><p>Отказать в сборке и записать причину. Молчаливое усечение отправляет в модель контекст без вопроса или без начислений, а модель отвечает, не сообщая о пропуске, поскольку во входе нет сведений о пропущенном блоке. Отказ виден оператору и в журнале.</p></div>
+</details>
+<details>
+<summary>Почему факт, произнесённый абонентом, не хранится в памяти наравне с записью биллинга?</summary>
+<div class="ans"><p>Источник определяет доверие и срок жизни. Утверждение абонента не проверено, может быть ошибочным или намеренно ложным и потому получает низкий уровень доверия, короткий срок жизни и явную пометку об источнике в контексте. Без провенанса через память внедряются утверждения, которые модель использует как установленные.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Контекстное окно является бюджетируемым, упорядоченным и кэшируемым ресурсом, и состав контекста определяет правильность ответа сильнее, чем формулировка инструкции.</li>
+<li>Усечение выполняется по приоритету блока и целыми блоками; нехватка бюджета для обязательного блока приводит к отказу сборки, который записывается в журнал.</li>
+<li>Граница кэша выбирается инженером: выше неё располагается то, что не зависит от обращения, и стабильность префикса проверяется хешем в трассе.</li>
+<li>Память хранится фактами с источником и сроком жизни, а состав каждого контекста записывается, поэтому неверный ответ и промах кэша объясняются по журналу.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-3" data-secref="3">Глава 3: токены, стоимость и кэш промптов</a>
+<a href="#s-6-10" data-secref="6.10">Раздел 6.10: дрейф схем инструментов</a>
+<a href="#ch-9" data-secref="9">Глава 9: состояние и долговременная память</a>
+</p>
+</div>
+</section>

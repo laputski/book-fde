@@ -1,0 +1,817 @@
+<!-- ────────────────────────── ГЛАВА 6 ────────────────────────── -->
+<section class="chapter" id="ch-6">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава шестая</p>
+    <span class="strata" role="img" aria-label="Слои A, C и E: системы заказчика, инструменты, безопасность">
+      <i data-s="A"></i><i></i><i data-s="C"></i><i></i><i data-s="E"></i><i></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-6"><span class="num">6</span>Соединительная ткань: API, legacy и MCP-серверы</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>составить инвентарь систем заказчика так, чтобы из него следовал набор инструментов агента;</li>
+<li>спроектировать MCP-сервер как точку применения политики;</li>
+<li>описать инструмент так, чтобы модель вызывала его в нужный момент с нужными аргументами;</li>
+<li>обернуть legacy-систему адаптером с таймаутами, пагинацией и размыкателем цепи;</li>
+<li>сделать действие записи безопасным при повторах на любом из уровней.</li>
+</ul>
+</div>
+
+<h3 id="s-6-1"><span class="num">6.1</span>Задача: core banking через MCP</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Досье CF1 · Nordbank Regional</a></span>
+  <span class="tag">mainframe</span>
+  <span class="tag">SOAP 2009</span>
+  <span class="tag">CRM</span>
+  <span>региональный банк</span>
+</div>
+
+<p>Ассистент для контакт-центра Nordbank, спроектированный в <a href="#ch-2" data-secref="2">главе 2</a>, не может отвечать на вопросы о счетах, пока не получает данные счетов клиента. Счета хранятся в системе core banking на mainframe: доступ к ней идёт через очереди MQ и слой SOAP, написанный в 2009 году без расчёта на вызовы от языковой модели. История обращений хранится в CRM с собственным REST API, документы клиента хранятся в хранилище с ACL. Таким образом, агенту нужен доступ к трём системам с тремя протоколами и тремя моделями идентичности.</p>
+
+<p>Требуется дать агенту доступ к этим системам так, чтобы выполнялись четыре условия. Агент читает счета, историю и документы от имени конкретного оператора и видит те же данные, что и оператор. Агент выполняет одно действие записи, создание спорной транзакции, и это действие не должно выполниться дважды. Ни одна учётная запись с правами на core banking не покидает периметр банка. Всё, что агент сделал, восстанавливается по журналу.</p>
+
+<p>Решение, разбираемое в главе, состоит из MCP-сервера внутри периметра банка, адаптеров к трём системам за ним и правил, по которым сервер решает, что можно вызвать, кому и с какими аргументами. Глава строится вокруг этого сервера, а его инструменты используются в <a href="#ch-7" data-secref="7">главе 7</a> одиночным агентом и в <a href="#ch-9" data-secref="9">главе 9</a> долгоживущим.</p>
+
+<h3 id="s-6-2"><span class="num">6.2</span>Почему интеграция является продуктом FDE</h3>
+
+<p>Модель, промпты и агентный цикл при поставке у заказчика обычно составляют меньшую часть работы. Большая часть уходит на то, чтобы соединить модель с системами, которые существовали до неё и продолжат работать после её замены: с их протоколами, лимитами, часами обслуживания, схемами идентичности и режимами отказов. Вакансия Staff Forward Deployed Engineer в Google Cloud описывает эту работу как «соединительную ткань между AI-продуктами Google и действующей инфраструктурой заказчика».<a class="src" href="https://www.google.com/about/careers/applications/jobs/results/124220019683795654-staff-forward-deployed-engineer-genai-google-cloud" target="_blank" rel="noreferrer">Google Careers, Staff Forward Deployed Engineer, GenAI, Google Cloud</a> Эта работа отличает роль FDE от роли инженера, который разрабатывает продукт без подключения к системам заказчика.</p>
+
+<dl class="def">
+<dt>Соединительная ткань <span class="en">(connective tissue)</span></dt>
+<dd>Слой кода и конфигурации, который переводит вызовы агента в операции над системами заказчика и обратно: инструменты, адаптеры, политики доступа, журналы. После окончания engagement слой переходит к заказчику, поэтому он проектируется как продукт с владельцем.</dd>
+</dl>
+
+<p>Ошибки в соединительной ткани проявляются в другом компоненте, чем тот, в котором они допущены. Инструмент с неточным описанием приводит к неверным ответам модели, и причину ищут в модели. Адаптер без таймаута блокирует агентный цикл, и причину ищут во фреймворке. Повтор вызова без ключа создаёт две спорные транзакции, и причину ищут в системе банка. Глава связывает каждую из этих ошибок с компонентом, в котором она возникает. Компонент, который исполняет решения о доступе и который нельзя обойти, называется точкой применения политики; определение и остальные такие точки агентной системы даны в <a href="#s-10-4" data-secref="10.4">разделе 10.4</a>.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 340" role="img" aria-label="Карта границ доверия: среда исполнения агента в облаке, MCP-сервер в демилитаризованной зоне банка и системы записи в ядре банка разделены двумя рамками; на первом переходе взаимная TLS-аутентификация и делегированный токен оператора, на втором сервисная учётная запись с областями действия, и только MCP-сервер видит обе стороны" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar6a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="14" y="40" width="250" height="250" rx="8" fill="none" stroke="var(--sB)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="26" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sB)">Облако: среда исполнения агента</text>
+  <rect x="316" y="40" width="250" height="250" rx="8" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="328" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sC)">Банк, DMZ: MCP-сервер</text>
+  <rect x="618" y="40" width="248" height="250" rx="8" fill="none" stroke="var(--sA)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="630" y="30" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sA)">Банк, ядро: системы записи</text>
+
+  <rect x="40" y="80" width="198" height="56" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.8"/>
+  <text x="139" y="103" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">агентный цикл</text>
+  <text x="139" y="121" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">глава 7</text>
+  <rect x="40" y="160" width="198" height="56" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="139" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">MCP-клиент</text>
+  <text x="139" y="201" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">tools/list, tools/call</text>
+  <rect x="40" y="236" width="198" height="36" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="139" y="259" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">токен оператора: on-behalf-of</text>
+
+  <rect x="342" y="80" width="198" height="56" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.8"/>
+  <text x="441" y="103" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">политика</text>
+  <text x="441" y="121" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">кто · что · с чем · сколько</text>
+  <rect x="342" y="160" width="198" height="56" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="441" y="183" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">инструменты</text>
+  <text x="441" y="201" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">адаптеры · ключи · журнал</text>
+  <rect x="342" y="236" width="198" height="36" rx="5" fill="none" stroke="var(--sE)" stroke-width="1.5"/>
+  <text x="441" y="259" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">сервисная учётная запись банка</text>
+
+  <rect x="644" y="66" width="198" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="743" y="93" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">mainframe · MQ · SOAP</text>
+  <rect x="644" y="128" width="198" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="743" y="155" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">CRM · REST</text>
+  <rect x="644" y="190" width="198" height="44" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="743" y="217" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">документы · ACL</text>
+
+  <line x1="238" y1="188" x2="334" y2="188" stroke="currentColor" stroke-width="1.5" marker-start="url(#ar6a)" marker-end="url(#ar6a)"/>
+  <text x="286" y="308" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">mTLS, private link</text>
+  <line x1="540" y1="188" x2="636" y2="188" stroke="currentColor" stroke-width="1.5" marker-start="url(#ar6a)" marker-end="url(#ar6a)"/>
+  <line x1="286" y1="194" x2="286" y2="296" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <line x1="588" y1="194" x2="588" y2="296" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="588" y="308" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">области действия</text>
+  <line x1="139" y1="136" x2="139" y2="154" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6a)"/>
+  <line x1="441" y1="136" x2="441" y2="154" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6a)"/>
+  <path d="M540,100 H600 V88 H636" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <path d="M540,204 H600 V212 H636" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3"/>
+
+  <text x="440" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Учётные данные ядра не пересекают левую рамку: в облако передаются только адрес MCP-сервера и токен оператора.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Три области доверия и два перехода между ними. MCP-сервер стоит на пересечении областей и является единственным компонентом, которому одновременно известно, от чьего имени пришёл вызов, и доступны учётные данные систем записи. Поэтому права проверяются на этом сервере, и он является точкой применения политики.</figcaption>
+</figure>
+
+<h3 id="s-6-3"><span class="num">6.3</span>Инвентаризация silo</h3>
+
+<p>Набор инструментов агента выводится из инвентаря систем заказчика. Инвентарь составляется по онтологии из <a href="#s-2-4" data-secref="2.4">раздела 2.4</a>: для каждой сущности указывается система записи, способ доступа, свежесть данных и режим обслуживания. Из строки инвентаря следует инструмент, из свойств доступа следует адаптер, а из свежести следуют сведения о задержке данных, которые инструмент сообщает агенту.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Сущность</th><th>Система записи</th><th>Доступ</th><th>Свежесть</th><th>Инструмент</th></tr></thead>
+<tbody>
+<tr><td>Счёт, баланс, операции</td><td>core banking, mainframe</td><td>MQ и SOAP; 40 запросов в секунду на всех; окно обслуживания 02:00–04:00</td><td>секунды, кроме окна</td><td><code>get_account</code>, <code>list_transactions</code></td></tr>
+<tr><td>Обращение, история контактов</td><td>CRM</td><td>REST с OAuth, лимит на пользователя</td><td>секунды</td><td><code>get_case_history</code></td></tr>
+<tr><td>Документ клиента</td><td>хранилище документов</td><td>REST, ACL по группам оператора</td><td>минуты</td><td><code>search_documents</code></td></tr>
+<tr><td>Спорная транзакция</td><td>core banking</td><td>SOAP, действие записи, подтверждается вручную</td><td>ночной батч</td><td><code>create_dispute</code></td></tr>
+</tbody></table></div>
+
+<p>Две строки таблицы определяют поведение инструментов. Окно обслуживания означает, что в это время инструмент отвечает «система недоступна до 04:00». Агент, получивший такой ответ, сообщает оператору причину; агент, получивший таймаут, повторяет попытку. Ночной батч у спорной транзакции означает, что после успешного вызова результат ещё несколько часов не виден в других инструментах, и агент, проверяющий свою работу чтением, может заключить, что действие не выполнилось.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Проектировать инструменты по документации API вместо инвентаря сущностей. API ядра банка содержит сотни методов, и с ростом числа инструментов модели труднее выбрать нужный. Инструмент соответствует вопросу оператора, и один инструмент может объединять несколько методов системы.</div>
+
+<h3 id="s-6-4"><span class="num">6.4</span>MCP: инструменты, ресурсы, транспорты</h3>
+
+<dl class="def">
+<dt>Model Context Protocol, MCP <span class="en">(Model Context Protocol)</span></dt>
+<dd>Открытый протокол, по которому приложение с языковой моделью подключается к серверам, предоставляющим инструменты, ресурсы и промпты. Обмен идёт сообщениями JSON-RPC 2.0 поверх стандартных потоков процесса или HTTP; клиент запрашивает список инструментов и вызывает их по имени, сервер отвечает содержимым и признаком ошибки.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28" target="_blank" rel="noreferrer">modelcontextprotocol.io, спецификация, редакция 2026-07-28</a></dd>
+</dl>
+
+<p>Протокол различает три вида возможностей сервера. Инструментом управляет модель: она выбирает и вызывает функцию, которая выполняет действие или возвращает данные. Ресурсом управляет приложение: оно читает данные по URI и добавляет их в контекст. Промптом управляет пользователь: промпт представляет собой шаблон сообщений, который пользователь выбирает явно, например как команду интерфейса.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/server" target="_blank" rel="noreferrer">modelcontextprotocol.io, возможности сервера</a> Для Nordbank инструментами становятся операции над счетами и обращениями и поиск документов, ресурсами сами документы клиента, которые приложение читает по URI из результата поиска, а промптами шаблоны типовых операций с формулировками политик банка, которые оператор выбирает явно и которые попадают в контекст дословно.</p>
+
+<p data-level="2">Транспорт выбирается по месту исполнения. Сервер, который клиент запускает как дочерний процесс, обменивается сообщениями через стандартные потоки (транспорт stdio); сервер за сетевой границей, как в Nordbank, использует транспорт Streamable HTTP, в котором каждое сообщение передаётся запросом POST, а ответ приходит объектом JSON или потоком SSE.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/basic/transports" target="_blank" rel="noreferrer">modelcontextprotocol.io, транспорты</a> Авторизация в протоколе необязательна; реализации с HTTP-транспортом, которые её поддерживают, следуют спецификации на основе OAuth 2.1: клиент получает токен у сервера авторизации и передаёт его в каждом HTTP-запросе, а MCP-сервер проверяет, что токен выдан для него.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization" target="_blank" rel="noreferrer">modelcontextprotocol.io, авторизация</a> Этот токен передаёт идентичность оператора через левую рамку диаграммы из <a href="#s-6-2" data-secref="6.2">раздела 6.2</a>.</p>
+
+<p>Списки инструментов сервер отдаёт по запросу, и клиент вправе запросить их снова после уведомления об изменении.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/server/tools" target="_blank" rel="noreferrer">modelcontextprotocol.io, инструменты</a> Описания инструментов входят в контекст модели, поэтому их изменение делает недействительным кэш промптов; последствия разбираются в <a href="#s-4-10" data-secref="4.10">разделе 4.10</a>.</p>
+
+<h3 id="s-6-5"><span class="num">6.5</span>Проектирование инструментов для моделей</h3>
+
+<p>Описание инструмента используется двумя сторонами: моделью, которая решает, когда вызвать инструмент и с какими аргументами, и сервером, который решает, разрешён ли вызов. Модели нужны имя, описание и схема аргументов; серверу нужны principal, то есть субъект, которому приписывается действие (определение в <a href="#s-10-2" data-secref="10.2">разделе 10.2</a>), границы результата и конверт ошибки. Наивное решение содержит только сведения для модели, и этих сведений недостаточно для выбора инструмента.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы описать инструмент">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="0">
+      <figcaption><span class="file">naive_tool.py</span></figcaption>
+      <pre><code>import json
+
+ACCOUNTS = [{"id": str(i), "name": f"client {i}", "iban": f"NB00{i:04d}", "balance": str(i * 10)}
+            for i in range(2000)]
+
+
+def tool(query: str) -> str:
+    """Поиск по счетам."""
+    rows = [a for a in ACCOUNTS if query in a["name"]]
+    return json.dumps(rows)
+
+
+if __name__ == "__main__":
+    out = tool("client")
+    print(len(out), "символов ответа на один вопрос")   # ~150 000</code></pre>
+    </figure>
+    <p>Имя <code>tool</code> и описание «поиск по счетам» не сообщают модели, в каких случаях инструмент следует вызывать. Запрос «client» возвращает две тысячи записей одной строкой, и весь ответ попадает в контекст. Ошибка адаптера поднимается исключением, которое сервер преобразует в строку без машинно-читаемого кода. Инструмент не получает сведений о спрашивающем и возвращает любой счёт любому пользователю.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">mcp_server.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic import BaseModel, Field, ValidationError
+
+MAX_RESULT_BYTES = 8_000
+
+
+@dataclass(frozen=True)
+class Principal:
+    user_id: str
+    groups: frozenset[str]
+
+
+@dataclass
+class ToolResult:
+    content: str
+    is_error: bool = False
+    code: str = ""              # машинно-читаемый код ошибки для модели
+
+
+class ProtocolError(Exception):
+    """Ошибка JSON-RPC: неверен сам запрос, и результат инструмента не формируется."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    args: type[BaseModel]
+    handler: Callable[[BaseModel, Principal], Any]
+    side_effect: bool = False
+    allowed_groups: frozenset[str] = field(default_factory=frozenset)
+
+    def descriptor(self) -> dict[str, Any]:
+        return {"name": self.name, "description": self.description,
+                "inputSchema": self.args.model_json_schema()}
+
+
+class McpServer:
+    """Каркас MCP-сервера: список инструментов и вызов с проверками."""
+
+    def __init__(self) -> None:
+        self.tools: dict[str, Tool] = {}
+        self.audit: list[dict[str, Any]] = []
+
+    def register(self, tool: Tool) -> None:
+        self.tools[tool.name] = tool
+
+    def list_tools(self) -> list[dict[str, Any]]:
+        return [t.descriptor() for t in self.tools.values()]
+
+    def call(self, name: str, arguments: dict[str, Any], principal: Principal) -> ToolResult:
+        tool = self.tools.get(name)
+        if tool is None:
+            raise ProtocolError(-32602, f"Неизвестный инструмент: {name}")
+        if tool.allowed_groups and not (tool.allowed_groups & principal.groups):
+            self.audit.append({"tool": name, "user": principal.user_id, "denied": True})
+            return ToolResult("недостаточно прав", True, "forbidden")
+        try:
+            args = tool.args.model_validate(arguments)
+        except ValidationError as err:
+            return ToolResult(err.json(), True, "invalid_arguments")
+        try:
+            raw = tool.handler(args, principal)
+        except TimeoutError:
+            return ToolResult("система не ответила вовремя", True, "upstream_timeout")
+        self.audit.append({"tool": name, "user": principal.user_id, "args": arguments})
+        text = json.dumps(raw, ensure_ascii=False, default=str)
+        if len(text.encode("utf-8")) &gt; MAX_RESULT_BYTES:
+            return ToolResult("результат слишком велик: сузьте запрос", True, "result_too_large")
+        return ToolResult(text)
+
+
+class SearchAccounts(BaseModel):
+    query: str = Field(min_length=3, description="Фамилия или фрагмент IBAN")
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+ACCOUNTS = [{"id": str(i), "name": f"client {i}", "iban": f"NB00{i:04d}", "owner_group": "retail"}
+            for i in range(2000)]
+
+
+def search_accounts(args: BaseModel, principal: Principal) -> list[dict[str, str]]:
+    assert isinstance(args, SearchAccounts)
+    visible = [a for a in ACCOUNTS if a["owner_group"] in principal.groups]
+    return [a for a in visible if args.query in a["name"] or args.query in a["iban"]][: args.limit]
+
+
+if __name__ == "__main__":
+    server = McpServer()
+    server.register(Tool(
+        name="search_accounts",
+        description=("Найти счета клиента по фамилии или фрагменту IBAN. Используйте, когда "
+                     "оператор называет клиента, но не номер счёта. Не для истории операций."),
+        args=SearchAccounts, handler=search_accounts, allowed_groups=frozenset({"retail"})))
+    operator = Principal("op-17", frozenset({"retail"}))
+    ok = server.call("search_accounts", {"query": "client 1"}, operator)
+    assert not ok.is_error and len(json.loads(ok.content)) == 5
+    bad = server.call("search_accounts", {"query": "cl"}, operator)
+    assert bad.is_error and bad.code == "invalid_arguments"
+    try:
+        server.call("delete_account", {}, operator)
+    except ProtocolError as err:
+        assert err.code == -32602
+    else:
+        raise AssertionError("неизвестный инструмент должен давать ошибку протокола")
+    outsider = Principal("op-99", frozenset({"cards"}))
+    assert server.call("search_accounts", {"query": "client 1"}, outsider).code == "forbidden"
+    assert server.list_tools()[0]["inputSchema"]["properties"]["query"]["minLength"] == 3
+    print("инструмент описан, ограничен и проверен")</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="code: str =">строка 23</span><p>Код ошибки предназначен для модели. По строке <code>invalid_arguments</code> модель исправляет аргументы и повторяет вызов, по <code>upstream_timeout</code> сообщает оператору, по <code>forbidden</code> прекращает попытки. В свободном тексте ошибки эти случаи формально не различаются.</p></div>
+        <div><span class="at" data-anchor="side_effect: bool = False">строка 40</span><p>Признак побочного эффекта записан в описании инструмента: по нему агентный цикл <a href="#ch-7" data-secref="7">главы 7</a> решает, можно ли повторять вызов, а слой одобрений <a href="#ch-11" data-secref="11">главы 11</a> решает, спрашивать ли человека.</p></div>
+        <div><span class="at" data-anchor="self.args.model_json_schema()">строка 45</span><p>Схема аргументов порождается из модели pydantic. Ограничения вроде минимальной длины запроса попадают в схему и видны модели до вызова.</p></div>
+        <div><span class="at" data-anchor="raise ProtocolError(-32602">строка 64</span><p>Неизвестный инструмент спецификация MCP относит к ошибкам протокола: сервер отвечает ошибкой JSON-RPC с кодом −32602 и не формирует результат инструмента. Отказ в правах, неверные аргументы и таймаут системы возвращаются результатом с признаком ошибки, потому что по ним модель может исправить вызов.</p></div>
+        <div><span class="at" data-anchor="if tool.allowed_groups and not">строка 65</span><p>Проверка прав выполняется до проверки аргументов: отказ в доступе не должен раскрывать, какие аргументы были бы верными.</p></div>
+        <div><span class="at" data-anchor="MAX_RESULT_BYTES:">строка 78</span><p>Граница размера результата ограничивает объём, который попадает в контекст модели. При превышении границы сервер возвращает ошибку с просьбой сузить запрос. Усечённый список модель не отличила бы от полного и сделала бы вывод по неполным данным.</p></div>
+        <div><span class="at" data-anchor="visible = [a for a in ACCOUNTS">строка 94</span><p>Видимость счетов вычисляется из групп principal внутри обработчика. Инструкция «показывай только свои счета» в промпте контролем доступа не является, поскольку модель может её не выполнить.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие касается адресата описания. Наивное описание написано для разработчика, которому назначение функции уже известно. Продуманное описание написано для модели и сообщает три сведения: что делает инструмент, в каких случаях его вызывать и в каких не вызывать.</p>
+    <p>Второе различие касается сведений о спрашивающем. Наивный инструмент не получает principal, поэтому не может ни ограничить видимость, ни записать в журнал, кто что запросил. Продуманный инструмент получает principal при каждом вызове и применяет права внутри обработчика.</p>
+    <p>Третье различие касается формы отказа. Исключение, переданное модели строкой, по форме не отличается от любой другой ошибки; код ошибки позволяет модели выбрать действие: исправить аргументы, подождать, сообщить оператору или прекратить попытки. Спецификация MCP различает два вида отказов: неизвестный инструмент и неверно сформированный запрос возвращаются ошибкой JSON-RPC, а ошибки проверки аргументов, бизнес-логики и внешних систем возвращаются результатом инструмента с признаком <code>isError</code>, чтобы модель могла исправить вызов.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/server/tools#error-handling" target="_blank" rel="noreferrer">MCP, спецификация 2026-07-28: Tools, Error Handling</a></p>
+  </div>
+</div>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 300" role="img" aria-label="Лестница из четырёх ступеней качества описания инструмента: от безымянной функции до описания с границами применимости и кодами ошибок; справа от каждой ступени поведение модели, от случайных вызовов до вызова в нужный момент с исправлением аргументов" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar6b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="120" y="28" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ОПИСАНИЕ ИНСТРУМЕНТА</text>
+  <text x="640" y="28" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЧТО ДЕЛАЕТ МОДЕЛЬ</text>
+
+  <rect x="20" y="228" width="300" height="48" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="34" y="248" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">tool(query)</text>
+  <text x="34" y="266" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">назначение не указано в имени, схемы нет</text>
+  <rect x="20" y="164" width="300" height="48" rx="4" fill="none" stroke="var(--line-strong)" stroke-width="1.5"/>
+  <text x="34" y="184" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">search_accounts(query: str)</text>
+  <text x="34" y="202" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">имя и типы, но не «когда»</text>
+  <rect x="20" y="100" width="300" height="48" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="34" y="120" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">+ «используйте, когда…; не для…»</text>
+  <text x="34" y="138" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">границы применимости в описании</text>
+  <rect x="20" y="36" width="300" height="48" rx="4" fill="none" stroke="var(--sC)" stroke-width="1.8"/>
+  <text x="34" y="56" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="currentColor">+ ограничения в схеме, коды ошибок</text>
+  <text x="34" y="74" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">minLength, limit ≤ 20, invalid_arguments</text>
+
+  <line x1="170" y1="228" x2="170" y2="216" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar6b)"/>
+  <line x1="170" y1="164" x2="170" y2="152" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar6b)"/>
+  <line x1="170" y1="100" x2="170" y2="88" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar6b)"/>
+
+  <line x1="320" y1="252" x2="400" y2="252" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+  <line x1="320" y1="188" x2="400" y2="188" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+  <line x1="320" y1="124" x2="400" y2="124" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+  <line x1="320" y1="60" x2="400" y2="60" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar6b)"/>
+
+  <rect x="410" y="228" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="248" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">вызывает наугад или не вызывает вовсе</text>
+  <text x="424" y="266" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">аргументы угадываются по имени параметра</text>
+  <rect x="410" y="164" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="184" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">вызывает для любого вопроса о клиенте</text>
+  <text x="424" y="202" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">в том числе там, где нужна история операций</text>
+  <rect x="410" y="100" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="120" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">выбирает инструмент по ситуации</text>
+  <text x="424" y="138" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">но короткий запрос всё ещё уходит на сервер</text>
+  <rect x="410" y="36" width="450" height="48" rx="4" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="424" y="56" font-family="Inter,sans-serif" font-size="11.5" fill="currentColor">вызывает в нужный момент с допустимыми аргументами</text>
+  <text x="424" y="74" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">по коду ошибки исправляет вызов или останавливается</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Каждая ступень описания инструмента устраняет один класс ошибочных вызовов: имя и типы задают аргументы, границы применимости задают момент вызова, а ограничения схемы и коды ошибок позволяют модели самостоятельно исправить вызов.</figcaption>
+</figure>
+
+<h3 id="s-6-6"><span class="num">6.6</span>Адаптеры legacy</h3>
+
+<p>Между инструментом и системой записи стоит адаптер, задача которого состоит в том, чтобы внешняя система вела себя для инструмента предсказуемо: ответ приходит за ограниченное время, данные передаются порциями, а обращения к отказавшей системе прекращаются. Для SOAP-слоя Nordbank эти требования реализуются тремя механизмами: таймаутом, пагинацией и размыкателем цепи.</p>
+
+<dl class="def">
+<dt>Размыкатель цепи <span class="en">(circuit breaker)</span></dt>
+<dd>Обёртка вызова с тремя состояниями. В замкнутом состоянии вызовы проходят. После порога отказов цепь размыкается, и вызовы отвергаются немедленно, не дожидаясь таймаута. По истечении паузы цепь становится полуоткрытой и пропускает одно пробное обращение, исход которого решает, замкнуть цепь или разомкнуть снова.<a class="src" href="https://martinfowler.com/bliki/CircuitBreaker.html" target="_blank" rel="noreferrer">Fowler, Circuit Breaker, 2014</a></dd>
+</dl>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">legacy_adapter.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from functools import partial
+
+
+class LegacyDown(Exception):
+    """Адаптер отказал сам, не дожидаясь системы."""
+
+
+@dataclass
+class Clock:
+    t: float = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+
+@dataclass
+class CircuitBreaker:
+    clock: Clock
+    threshold: int = 3          # отказов подряд до размыкания
+    cooldown: float = 30.0      # секунд до пробного обращения
+    failures: int = 0
+    opened_at: float | None = None
+
+    @property
+    def state(self) -> str:
+        if self.opened_at is None:
+            return "closed"
+        if self.clock.now() - self.opened_at &gt;= self.cooldown:
+            return "half_open"
+        return "open"
+
+    def call[T](self, fn: Callable[[], T]) -> T:
+        if self.state == "open":
+            raise LegacyDown("цепь разомкнута")
+        try:
+            result = fn()
+        except (TimeoutError, ConnectionError):
+            self.failures += 1
+            if self.failures &gt;= self.threshold or self.state == "half_open":
+                self.opened_at = self.clock.now()
+            raise
+        self.failures = 0
+        self.opened_at = None
+        return result
+
+
+@dataclass
+class SoapAccounts:
+    """Заглушка SOAP-слоя: страницы по 50 записей, иногда молчит."""
+    rows: list[dict[str, str]]
+    fail_next: int = 0
+    calls: int = 0
+
+    def page(self, cursor: int, size: int = 50) -> tuple[list[dict[str, str]], int | None]:
+        self.calls += 1
+        if self.fail_next:
+            self.fail_next -= 1
+            raise TimeoutError("SOAP не ответил за 5 с")
+        chunk = self.rows[cursor:cursor + size]
+        nxt = cursor + size if cursor + size &lt; len(self.rows) else None
+        return chunk, nxt
+
+
+@dataclass
+class TransactionsAdapter:
+    soap: SoapAccounts
+    breaker: CircuitBreaker
+    max_pages: int = 4          # не более 200 операций за один вызов инструмента
+    deadline_s: float = 8.0
+
+    def transactions(self, started_at: float) -> Iterator[dict[str, str]]:
+        cursor: int | None = 0
+        pages = 0
+        while cursor is not None and pages &lt; self.max_pages:
+            if self.breaker.clock.now() - started_at &gt; self.deadline_s:
+                raise TimeoutError("бюджет времени инструмента исчерпан")
+            chunk, cursor = self.breaker.call(partial(self.soap.page, cursor))
+            pages += 1
+            yield from chunk
+
+
+if __name__ == "__main__":
+    clock = Clock()
+    soap = SoapAccounts(rows=[{"id": str(i)} for i in range(320)])
+    adapter = TransactionsAdapter(soap, CircuitBreaker(clock))
+    got = list(adapter.transactions(started_at=clock.now()))
+    assert len(got) == 200 and soap.calls == 4         # пагинация с потолком
+
+    soap.fail_next = 3
+    for _ in range(3):
+        try:
+            list(adapter.transactions(clock.now()))
+        except TimeoutError:
+            pass
+    assert adapter.breaker.state == "open"
+    try:
+        list(adapter.transactions(clock.now()))
+        raise AssertionError("разомкнутая цепь обязана отказать сразу")
+    except LegacyDown:
+        pass
+    assert soap.calls == 7                              # система не тронута
+    clock.t += 31
+    assert adapter.breaker.state == "half_open"
+    assert len(list(adapter.transactions(clock.now()))) == 200
+    assert adapter.breaker.state == "closed"
+    print("адаптер пагинирует, укладывается в бюджет и размыкает цепь")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def state(self) -&gt; str:">строка 29</span><p>Состояние вычисляется по времени: между размыканием и пробным обращением адаптер не выполняет вызовов, и момент пробного обращения определяется показанием часов. Часы передаются явно, чтобы тест не ждал тридцать секунд.</p></div>
+  <div><span class="at" data-anchor="or self.state ==">строка 43</span><p>Отказ в полуоткрытом состоянии размыкает цепь заново с новым отсчётом паузы. Без этого одно неудачное пробное обращение оставило бы цепь полуоткрытой, и следующий вызов снова пошёл бы в отказавшую систему.</p></div>
+  <div><span class="at" data-anchor="max_pages: int = 4">строка 72</span><p>Потолок числа страниц ограничивает вызов инструмента сверху по объёму, а бюджет времени по длительности. Оба нужны: медленная система с маленькими страницами исчерпает время, быстрая с большими исчерпает объём.</p></div>
+  <div><span class="at" data-anchor="partial(self.soap.page, cursor)">строка 81</span><p>Вызов страницы передаётся размыкателю как частично применённая функция с уже подставленным курсором. Замыкание над переменной цикла получило бы значение курсора в момент вызова, которое может отличаться от значения в момент создания.</p></div>
+</div>
+</figure>
+
+<div class="note" data-level="2">Порог размыкания выражен числом отказов подряд ради краткости листинга. В production порог задают долей отказов за скользящее окно, поскольку десять отказов из десяти обращений и десять из тысячи означают разное состояние системы; этот способ разобран в главе о повторах учебника по Python.</div>
+
+<h3 id="s-6-7"><span class="num">6.7</span>Периметр и идентичность</h3>
+
+<p>Диаграмма в <a href="#s-6-2" data-secref="6.2">разделе 6.2</a> показывает, что MCP-сервер является единственным компонентом с доступом к обеим сторонам: к токену оператора слева и к учётным данным систем записи справа. Отсюда следует принцип: чтение выполняется от имени оператора, запись от имени сервера, и учётные данные ядра за пределы периметра не передаются.</p>
+
+<dl class="def">
+<dt>Делегирование от имени пользователя <span class="en">(on-behalf-of)</span></dt>
+<dd>Схема, при которой сервис, получивший запрос пользователя, обращается к следующей системе с отдельным токеном, который выдан для этой системы и несёт идентичность пользователя. Целевая система проверяет права пользователя и записывает в журнал его имя. Спецификация MCP запрещает серверу передавать дальше токен, полученный от клиента: для вышестоящего API используется отдельный токен.<a class="src" href="https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations" target="_blank" rel="noreferrer">modelcontextprotocol.io, безопасность авторизации</a></dd>
+</dl>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">tool_auth.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class UserToken:
+    user_id: str
+    scopes: frozenset[str]
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class ServiceAccount:
+    name: str
+    scopes: frozenset[str]
+
+
+@dataclass
+class AuthDecision:
+    allowed: bool
+    identity: str               # чьё имя попадёт в журнал целевой системы
+    reason: str = ""
+
+
+@dataclass
+class ToolAuth:
+    """Чтение от имени оператора, запись от имени сервера с одобрением."""
+    service: ServiceAccount
+    approvals: set[str] = field(default_factory=set)   # ключи одобренных записей
+
+    def authorize(self, tool: str, side_effect: bool, token: UserToken,
+                  now: float, approval_key: str = "") -> AuthDecision:
+        if token.expires_at &lt;= now:
+            return AuthDecision(False, token.user_id, "токен истёк")
+        if not side_effect:
+            needed = f"read:{tool}"
+            if needed not in token.scopes:
+                return AuthDecision(False, token.user_id, f"нет области {needed}")
+            return AuthDecision(True, token.user_id)
+        needed = f"write:{tool}"
+        if needed not in self.service.scopes:
+            return AuthDecision(False, self.service.name, f"сервер не имеет {needed}")
+        if approval_key not in self.approvals:
+            return AuthDecision(False, self.service.name, "нет одобрения оператора")
+        return AuthDecision(True, f"{self.service.name} for {token.user_id}")
+
+
+if __name__ == "__main__":
+    auth = ToolAuth(ServiceAccount("mcp-nordbank", frozenset({"write:create_dispute"})))
+    op = UserToken("op-17", frozenset({"read:search_accounts"}), expires_at=1_000.0)
+    assert auth.authorize("search_accounts", False, op, now=10.0).allowed
+    assert not auth.authorize("search_accounts", False, op, now=2_000.0).allowed
+    denied = auth.authorize("create_dispute", True, op, now=10.0)
+    assert not denied.allowed and denied.reason == "нет одобрения оператора"
+    auth.approvals.add("dispute:op-17:tx-42")
+    ok = auth.authorize("create_dispute", True, op, now=10.0, approval_key="dispute:op-17:tx-42")
+    assert ok.allowed and ok.identity == "mcp-nordbank for op-17"
+    print("чтение от имени оператора, запись от имени сервера по одобрению")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="if not side_effect:">строка 36</span><p>Чтение требует области действия в токене оператора: если оператор не вправе искать счета, не вправе и агент, работающий от его имени. Права агента являются подмножеством прав оператора.</p></div>
+  <div><span class="at" data-anchor="write:{tool}">строка 41</span><p>Запись выполняется учётной записью сервера, потому что у операторов нет прав записи в ядро, но только при наличии одобрения, привязанного к конкретному действию. Одобрение «на всё» равносильно выдаче оператору прав записи.</p></div>
+  <div><span class="at" data-anchor="for {token.user_id}">строка 46</span><p>Строка идентичности для журнала называет обоих участников: кто выполнил действие и от чьего имени. В журнале целевой системы записан сервер, а журнал MCP связывает запись с оператором.</p></div>
+</div>
+</figure>
+
+<div class="warn"><b>Типичная ошибка</b>Хранить в среде исполнения агента учётные данные систем записи «для простоты пилота». Пилот может перейти в production без пересмотра архитектуры, и тогда учётные данные ядра банка остаются в облачном окружении, которое директор по информационной безопасности не рассматривал. Поэтому периметр проектируется в первую неделю engagement.</div>
+
+<h3 id="s-6-8"><span class="num">6.8</span>Действия записи</h3>
+
+<p>Создание спорной транзакции является единственным действием записи в задаче. Риск для этого действия создают повторы: агентный цикл повторяет вызов инструмента после таймаута, MCP-клиент повторяет запрос после обрыва соединения, HTTP-библиотека повторяет после сетевой ошибки. Три уровня повторов, каждый из которых по отдельности обоснован, вместе могут создать несколько спорных транзакций вместо одной.</p>
+
+<figure class="dia" data-steps>
+<div class="svg-wrap">
+<svg viewBox="0 0 880 400" role="img" aria-label="Диаграмма последовательности с четырьмя участниками: агент, MCP-сервер, SOAP-адаптер и mainframe; первый вызов создания спора доходит до mainframe, но ответ теряется по таймауту, повтор без ключа создаёт вторую запись, а повтор с ключом идемпотентности возвращает сохранённый результат первого вызова, не трогая mainframe" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar6c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <rect x="40" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sB)" stroke-width="1.6"/>
+  <text x="105" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">агент</text>
+  <rect x="270" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="335" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">MCP-сервер</text>
+  <rect x="500" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sC)" stroke-width="1.6"/>
+  <text x="565" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">SOAP-адаптер</text>
+  <rect x="720" y="20" width="130" height="34" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.6"/>
+  <text x="785" y="42" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="currentColor">mainframe</text>
+  <line x1="105" y1="54" x2="105" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="335" y1="54" x2="335" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="565" y1="54" x2="565" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="785" y1="54" x2="785" y2="380" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <g data-step="1" data-caption="Первый вызов доходит до mainframe и создаёт запись, но ответ теряется: адаптер отвечает таймаутом.">
+    <line x1="105" y1="90" x2="327" y2="90" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="82" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">create_dispute(tx-42)</text>
+    <line x1="335" y1="112" x2="557" y2="112" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <line x1="565" y1="134" x2="777" y2="134" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <rect x="770" y="140" width="30" height="20" rx="3" fill="var(--sA)" opacity="0.85"/>
+    <text x="808" y="154" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">запись № 1</text>
+    <line x1="777" y1="170" x2="600" y2="170" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="690" y="184" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ответ потерян</text>
+    <line x1="557" y1="196" x2="343" y2="196" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="450" y="188" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="currentColor">TimeoutError</text>
+  </g>
+
+  <g data-step="2" data-caption="Повтор без ключа проходит весь путь заново и создаёт вторую запись о том же споре.">
+    <line x1="105" y1="230" x2="327" y2="230" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="222" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sE)">повтор без ключа</text>
+    <line x1="335" y1="252" x2="557" y2="252" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <line x1="565" y1="274" x2="777" y2="274" stroke="var(--sE)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <rect x="770" y="280" width="30" height="20" rx="3" fill="var(--sE)" opacity="0.85"/>
+    <text x="808" y="294" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">запись № 2</text>
+  </g>
+
+  <g data-step="3" data-caption="Повтор с ключом идемпотентности останавливается на сервере: сохранённый результат первого вызова возвращается без обращения к mainframe.">
+    <line x1="105" y1="330" x2="327" y2="330" stroke="var(--sB)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="322" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sB)">повтор с ключом</text>
+    <rect x="320" y="338" width="30" height="20" rx="3" fill="var(--sB)" opacity="0.85"/>
+    <text x="358" y="352" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">ключ известен: сохранённый результат</text>
+    <line x1="327" y1="372" x2="113" y2="372" stroke="var(--sB)" stroke-width="1.4" marker-end="url(#ar6c)"/>
+    <text x="216" y="364" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--sB)">dispute_id=D-1</text>
+  </g>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Для вызывающего потерянный ответ неотличим от невыполненного действия, поэтому вызывающий повторяет вызов. Защита от повтора размещается там, где выполняется действие: по ключу идемпотентности сервер возвращает сохранённый результат вместо повторного выполнения.</figcaption>
+</figure>
+
+<dl class="def">
+<dt>Ключ идемпотентности <span class="en">(idempotency key)</span></dt>
+<dd>Значение, однозначно определяющее намерение выполнить действие один раз. Сервер, получив вызов с уже известным ключом, возвращает сохранённый результат первого выполнения и действие повторно не выполняет. Ключ выводится из сессии, шага агента и аргументов, то есть из данных, которые делают намерение уникальным; время вызова для этого не подходит, поскольку меняется при каждом повторе.</dd>
+</dl>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">idempotent_write.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+
+def idempotency_key(session_id: str, step: int, tool: str, args: dict[str, Any]) -> str:
+    payload = json.dumps({"s": session_id, "n": step, "t": tool, "a": args},
+                         sort_keys=True, ensure_ascii=False)
+    return hashlib.blake2b(payload.encode("utf-8"), digest_size=16).hexdigest()
+
+
+@dataclass
+class IdempotencyStore:
+    """Сохранённые результаты по ключу, с истечением по времени."""
+    now: Callable[[], float]
+    ttl_s: float = 24 * 3600
+    rows: dict[str, tuple[float, str]] = field(default_factory=dict)
+    in_flight: set[str] = field(default_factory=set)
+
+    def run(self, key: str, action: Callable[[], str]) -> str:
+        entry = self.rows.get(key)
+        if entry and self.now() - entry[0] &lt; self.ttl_s:
+            return entry[1]                          # повтор: чтение вместо действия
+        if key in self.in_flight:
+            raise RuntimeError("действие ещё выполняется: подождите его исхода")
+        self.in_flight.add(key)
+        try:
+            result = action()
+        finally:
+            self.in_flight.discard(key)
+        self.rows[key] = (self.now(), result)
+        return result
+
+
+if __name__ == "__main__":
+    clock = {"t": 0.0}
+    created: list[str] = []
+
+    def create_dispute() -> str:
+        created.append(f"D-{len(created) + 1}")
+        return created[-1]
+
+    store = IdempotencyStore(now=lambda: clock["t"])
+    key = idempotency_key("sess-9", 4, "create_dispute", {"tx": "tx-42", "reason": "double charge"})
+    first = store.run(key, create_dispute)
+    second = store.run(key, create_dispute)             # повтор после таймаута
+    assert first == second == "D-1" and created == ["D-1"]
+    other = idempotency_key("sess-9", 5, "create_dispute", {"tx": "tx-42", "reason": "double charge"})
+    assert store.run(other, create_dispute) == "D-2"    # новый шаг: новое намерение
+    clock["t"] += 25 * 3600
+    assert store.run(key, create_dispute) == "D-3"      # ключ истёк: действие заново
+    print("повтор в пределах срока возвращает сохранённый результат")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="payload = json.dumps(">строка 11</span><p>В ключ входит номер шага агента. Без него два разных намерения с одинаковыми аргументами, например два спора по одной транзакции по разным причинам в одной сессии, слились бы в одно. С ним повтор того же шага после таймаута попадает в тот же ключ.</p></div>
+  <div><span class="at" data-anchor="if key in self.in_flight:">строка 28</span><p>Множество выполняющихся ключей закрывает окно между началом действия и записью результата: второй вызов, пришедший в это окно, не должен ни выполнить действие повторно, ни вернуть пустой результат. Он ждёт или отказывает явно.</p></div>
+  <div><span class="at" data-anchor="+= 25 * 3600">строка 54</span><p>Ключ имеет срок действия: спор по той же транзакции через сутки после первого считается новым намерением оператора. Срок выбирается больше самого длинного возможного повтора и меньше самого короткого осмысленного нового намерения.</p></div>
+</div>
+</figure>
+
+<p data-level="2">Хранилище ключей сохраняет данные при перезапуске MCP-сервера; в противном случае повтор после сбоя сервера снова создаст запись. В Nordbank хранилище находится в базе данных в DMZ; в облачном варианте, разобранном в <a href="#s-6-9" data-secref="6.9">разделе 6.9</a>, в управляемом хранилище с условной записью. Необходимое условие: операция «записать, если ключа нет» выполняется атомарно.</p>
+
+<h3 id="s-6-9" data-level="2"><span class="num">6.9</span>На Google Cloud: MCP на Cloud Run, Private Service Connect, Secret Manager</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">Cloud Run</span>
+  <span class="tag">Private Service Connect</span>
+  <span class="tag">Secret Manager</span>
+</div>
+
+<p data-level="2">Архитектура из <a href="#s-6-2" data-secref="6.2">раздела 6.2</a> переносится на Google Cloud без изменения границ; меняются только компоненты, которые эти границы реализуют. По требованиям Nordbank MCP-сервер стоит внутри периметра банка, а другой вариант размещает его в облаке в проекте заказчика. В этом варианте ядро банка подключено к VPC через Cloud Interconnect или Cloud VPN, сервер запущен как сервис Cloud Run, отправляет исходящий трафик в VPC через Direct VPC egress и использует настройку входящего трафика internal, при которой запросы из интернета отклоняются.<a class="src" href="https://docs.cloud.google.com/run/docs/securing/private-networking" target="_blank" rel="noreferrer">cloud.google.com, Cloud Run в частной сети</a><a class="src" href="https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc" target="_blank" rel="noreferrer">cloud.google.com, Direct VPC egress</a><a class="src" href="https://docs.cloud.google.com/run/docs/securing/ingress" target="_blank" rel="noreferrer">cloud.google.com, входящий трафик Cloud Run</a> Если среда исполнения агента работает в VPC другого проекта, сервис публикуется через Private Service Connect за внутренним балансировщиком нагрузки приложений и вызывается через конечную точку Private Service Connect. Идентичность сервера обеспечивает сервисная учётная запись Cloud Run, и файл с ключом не требуется;<a class="src" href="https://docs.cloud.google.com/run/docs/securing/service-identity" target="_blank" rel="noreferrer">cloud.google.com, идентичность сервиса Cloud Run</a> учётные данные SOAP-слоя передаются сервису из Secret Manager как переменные окружения, которые разрешаются при запуске экземпляра, или как файлы в смонтированном томе.<a class="src" href="https://docs.cloud.google.com/run/docs/configuring/services/secrets" target="_blank" rel="noreferrer">cloud.google.com, секреты в Cloud Run</a></p>
+
+<p data-level="2">Токен оператора выдаёт корпоративный поставщик идентичности банка. Workforce Identity Federation позволяет пользователям внешнего поставщика идентичности с поддержкой OIDC или SAML 2.0 входить в ресурсы Google Cloud через единый вход, поэтому операторы работают со средой исполнения агента под корпоративными учётными записями.<a class="src" href="https://docs.cloud.google.com/iam/docs/workforce-identity-federation" target="_blank" rel="noreferrer">cloud.google.com, Workforce Identity Federation</a> MCP-сервер проверяет токен в каждом запросе, как требует спецификация MCP для авторизации по HTTP. Agent Development Kit подключает MCP-сервер через класс <code>McpToolset</code>, который запрашивает список инструментов и преобразует их в инструменты ADK, поэтому агент <a href="#ch-7" data-secref="7">главы 7</a> получает инструменты Nordbank тем же способом, что и локальные функции.<a class="src" href="https://adk.dev/tools-custom/mcp-tools/" target="_blank" rel="noreferrer">adk.dev, инструменты MCP</a> Хранилищем ключей идемпотентности служит Firestore с транзакцией, которая читает документ ключа и создаёт его только при отсутствии,<a class="src" href="https://docs.cloud.google.com/firestore/native/docs/manage-data/transactions" target="_blank" rel="noreferrer">cloud.google.com, транзакции Firestore</a> либо Memorystore for Redis с командой <code>SET</code> и параметром <code>NX</code>, при котором ключ устанавливается только при его отсутствии.<a class="src" href="https://docs.cloud.google.com/memorystore/docs/redis/supported-commands" target="_blank" rel="noreferrer">cloud.google.com, команды Memorystore for Redis</a><a class="src" href="https://redis.io/docs/latest/commands/set/" target="_blank" rel="noreferrer">redis.io, команда SET</a></p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Границы доверия и делегирование от имени пользователя не зависят от поставщика; различается способ подключения MCP-сервера к агенту. Claude API и OpenAI Responses API подключаются к удалённым MCP-серверам из самого API без отдельного MCP-клиента; оба варианта рассчитаны на серверы, доступные по HTTP из интернета, а для закрытого сервера OpenAI предлагает Secure MCP Tunnel.<a class="src" href="https://platform.claude.com/docs/en/agents-and-tools/mcp-connector" target="_blank" rel="noreferrer">platform.claude.com, MCP connector</a><a class="src" href="https://developers.openai.com/api/docs/guides/tools-connectors-mcp" target="_blank" rel="noreferrer">developers.openai.com, MCP и коннекторы</a> В LangGraph библиотека langchain-mcp-adapters преобразует инструменты MCP в инструменты LangChain, которые граф вызывает через узел <code>ToolNode</code>.<a class="src" href="https://github.com/langchain-ai/langchain-mcp-adapters" target="_blank" rel="noreferrer">github.com, langchain-mcp-adapters</a> Размещение сервера внутри периметра определяется требованиями заказчика; к такому серверу подключается MCP-клиент в среде исполнения агента по частному каналу, а подключение из API поставщика возможно только через туннель, если поставщик его предлагает.</div>
+
+<h3 id="s-6-10" data-level="3"><span class="num">6.10</span>Вглубь: многоуровневые повторы, confused deputy, дрейф схем</h3>
+
+<h4 data-level="3">Повторы на трёх уровнях и вывод ключа</h4>
+
+<p data-level="3">Раздел 6.8 показал один повтор; в production источников повторов не меньше трёх, и каждый источник по-своему определяет «тот же вызов». HTTP-клиент повторяет запрос с тем же телом, поэтому ключ, переданный в аргументах инструмента, сохраняется. MCP-клиент повторяет вызов инструмента после обрыва потока, и ключ сохраняется, если клиент передаёт в аргументах ключ, полученный от агентного цикла; ключ, порождаемый при каждой отправке, при повторе меняется. Агентный цикл повторяет шаг после ошибки, и здесь ключ сохраняется только тогда, когда выводится из номера шага; счётчик вызовов для этого не подходит, поскольку увеличивается с каждой попыткой.</p>
+
+<p data-level="3">Отсюда правило вывода ключа: он строится на самом верхнем уровне, где известно намерение, и передаётся вниз неизменным. Намерение известно агентному циклу, поэтому ключ порождает цикл и помещает его в аргументы инструмента, а MCP-сервер и адаптер передают его дальше без изменений. Ключ, порождённый на сервере, от повторов не защищает, поскольку сервер не отличает повтор от нового намерения.</p>
+
+<h4 data-level="3">Результат слишком велик</h4>
+
+<p data-level="3">Инструмент <code>list_transactions</code> для активного клиента возвращает тысячи операций, и граница размера из листинга <code>mcp_server.py</code> отвергнет ответ. Отказ корректен, но модели также нужен способ получить нужную часть данных. Для этого используются два способа, которые можно сочетать. Первый: инструмент принимает курсор и возвращает страницу с признаком продолжения, и модель листает, пока не найдёт нужное. Второй: сервер вычисляет сводку и возвращает её вместе с первой страницей, так что во многих случаях модели не нужно листать страницы.</p>
+
+<figure class="code" data-fold="0" data-level="3">
+<figcaption><span class="file">result_shaping.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class Shaped:
+    rows: list[dict[str, Any]]
+    total: int
+    summary: dict[str, Any]
+    next_cursor: int | None
+
+
+def shape(rows: list[dict[str, Any]], cursor: int, limit_bytes: int) -> Shaped:
+    """Первая страница, укладывающаяся в бюджет, плюс сводка по всему набору."""
+    summary = {"count": len(rows), "sum": sum(r["amount"] for r in rows),
+               "first": rows[0]["date"] if rows else None, "last": rows[-1]["date"] if rows else None}
+    page: list[dict[str, Any]] = []
+    used = len(json.dumps(summary))
+    i = cursor
+    while i &lt; len(rows):
+        size = len(json.dumps(rows[i], ensure_ascii=False))
+        if used + size &gt; limit_bytes:
+            break
+        page.append(rows[i])
+        used += size
+        i += 1
+    return Shaped(page, len(rows), summary, i if i &lt; len(rows) else None)
+
+
+if __name__ == "__main__":
+    ops = [{"id": i, "date": f"2026-0{1 + i % 9}-01", "amount": 10 + i} for i in range(400)]
+    first = shape(ops, cursor=0, limit_bytes=2_000)
+    assert 0 &lt; len(first.rows) &lt; 400 and first.next_cursor is not None
+    assert first.summary["count"] == 400 and first.summary["sum"] == sum(10 + i for i in range(400))
+    second = shape(ops, cursor=first.next_cursor, limit_bytes=2_000)
+    assert second.rows[0]["id"] == first.rows[-1]["id"] + 1
+    print("страница по бюджету, сводка по всему набору, курсор для продолжения")</code></pre>
+</figure>
+
+<h4 data-level="3">Confused deputy</h4>
+
+<p data-level="3">Сервер, который выполняет запросы пользователей от собственного имени, воспроизводит уязвимость confused deputy: он обладает правами, которых у пользователя нет, и пользователь может заставить его применить эти права в своих интересах. Для MCP-сервера это означает, что аргумент инструмента, указывающий на чужой счёт, будет обработан, если проверка прав опирается на права сервера. В листинге <code>tool_auth.py</code> чтение защищено делегированием; запись сервер выполняет от своего имени, и защитой служит одобрение: сервер выполняет только те записи, которые оператор явно одобрил по ключу, привязанному к аргументам. Одобрение «создать спор» без привязки к транзакции восстанавливает уязвимость.</p>
+
+<h4 data-level="3">Дрейф схем инструментов</h4>
+
+<p data-level="3">Изменение описания или схемы инструмента является изменением интерфейса модели, и последствия у него такие же, как у изменения API. Кэш промптов становится недействительным, поскольку описания входят в стабильный префикс контекста. Оценочные наборы <a href="#ch-12" data-secref="12">главы 12</a> перестают соответствовать поведению: траектории, записанные со старым описанием, содержат вызовы, которые новое описание запрещает. Долгоживущие агенты <a href="#ch-9" data-secref="9">главы 9</a>, возобновляемые после смены схемы, содержат в сохранённом состоянии аргументы, которых в новой схеме нет.</p>
+
+<p data-level="3">Отсюда требование версионировать набор инструментов как единое целое и записывать версию в трассу каждого вызова. Смена версии проходит через те же ворота, что и смена промпта: теневой прогон на оценочном наборе, сравнение траекторий, затем переключение. Обновление списка инструментов по уведомлению сервера, которое протокол допускает, в production Nordbank отключено: список меняется только при выкладке новой версии.</p>
+
+<div class="warn" data-level="3"><b>Batch-only системы</b>Спорная транзакция, созданная через SOAP, появится в выписке после ночного батча. Если инструмент чтения не сообщает свежесть данных, агент может заключить, что запись не создана, и создать её снова с новым ключом. Каждый инструмент чтения возвращает отметку свежести, а описание инструмента записи предупреждает модель о задержке.</div>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Почему MCP-сервер Nordbank назван точкой применения политики, а не прокси?</summary>
+<div class="ans"><p>MCP-сервер является единственным участником, которому одновременно известно, от чьего имени пришёл вызов, и доступны учётные данные систем записи. Прокси только передаёт вызовы дальше; точка применения политики решает, кому, что и с какими аргументами разрешено, и записывает решение в журнал.</p></div>
+</details>
+<details>
+<summary>Из чего выводится ключ идемпотентности и почему не из времени вызова?</summary>
+<div class="ans"><p>Ключ выводится из сессии, номера шага агента и аргументов, то есть из данных, которые делают намерение уникальным. Время вызова меняется при каждом повторе, поэтому ключ на его основе был бы разным для исходного вызова и для повтора.</p></div>
+</details>
+<details>
+<summary>Что должен вернуть инструмент чтения, если система записи находится в окне обслуживания?</summary>
+<div class="ans"><p>Инструмент возвращает явную ошибку с кодом и временем окончания окна. По коду ошибки модель сообщает оператору причину и не повторяет вызов; таймаут модель приняла бы за временный сбой и повторила бы вызов.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Набор инструментов выводится из инвентаря сущностей и систем записи, и каждый инструмент соответствует вопросу оператора.</li>
+<li>MCP-сервер стоит на пересечении областей доверия и потому является точкой применения политики: чтение от имени оператора, запись от имени сервера по одобрению.</li>
+<li>Описание инструмента написано для модели и содержит границы применимости; ограничения записаны в схеме, а отказы содержат машинно-читаемый код.</li>
+<li>Адаптер legacy отвечает за время, объём и размыкание цепи; действие записи защищено ключом идемпотентности, выведенным из намерения.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-7" data-secref="7">Глава 7: агент, вызывающий эти инструменты</a>
+<a href="#ch-9" data-secref="9">Глава 9: повторы и checkpoint</a>
+<a href="#ch-10" data-secref="10">Глава 10: границы доверия целиком</a>
+</p>
+</div>
+</section>

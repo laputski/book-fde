@@ -1,0 +1,882 @@
+<!-- ────────────────────────── ГЛАВА 2 ────────────────────────── -->
+<section class="chapter" id="ch-2">
+<div class="chead">
+  <div class="row">
+    <p class="eyebrow">Глава вторая</p>
+    <span class="strata" role="img" aria-label="Слои A и F: системы и данные заказчика, люди и процесс">
+      <i data-s="A"></i><i></i><i></i><i></i><i></i><i data-s="F"></i><i></i>
+    </span>
+  </div>
+  <h2 id="s-2"><span class="num">2</span>Discovery, требования и scoping</h2>
+</div>
+
+<div class="goals">
+<p class="eyebrow">По прочтении главы читатель сможет</p>
+<ul>
+<li>превратить фразу заказчика в требования, у каждого из которых есть метрика, порог и набор данных;</li>
+<li>построить онтологию заказчика и вывести из неё список интеграций, которые придётся сопровождать;</li>
+<li>извлечь ограничения пяти видов, включая аппаратные и регуляторные, и отличить блокирующее от сужающего;</li>
+<li>выбрать пилот по ценности, осуществимости и радиусу поражения;</li>
+<li>собрать гипотезу ROI с базовой линией и месяцем окупаемости и уместить решение в меморандум на одну страницу.</li>
+</ul>
+</div>
+
+<h3 id="s-2-1"><span class="num">2.1</span>Задача: «ассистент для 400 операторов»</h3>
+
+<div class="rec">
+  <span class="name"><a href="#s-g-1" data-secref="G.1">Досье CF1 · Nordbank Regional</a></span>
+  <span class="tag">400 операторов</span>
+  <span class="tag">GDPR, PSD2</span>
+  <span class="tag">одобрение: директор по информационной безопасности</span>
+  <span>региональный банк</span>
+</div>
+
+<p>Четвёртого марта технический директор банка Nordbank Regional формулирует задачу одной фразой: «нам нужен умный AI-ассистент для четырёхсот операторов контакт-центра». Фраза не содержит ни одной измеримой величины, ни одной границы и ни одного имени, кроме имени самого технического директора. За фразой стоит проблема, с которой сотрудники банка сталкиваются ежедневно и стоимость которой в банке уже оценена в деньгах. Работа инженера начинается с того, чтобы отделить эту проблему от её первой формулировки.</p>
+
+<p>Неизвестного в задаче больше, чем известного. Неизвестно, работают ли четыреста операторов одинаково: очереди по картам, по блокировкам, по ипотеке и для бизнес-клиентов различаются сценариями, длительностью разговора и ценой ошибки. Неизвестно, что оператор делает руками и сколько времени тратит на поиск ответа. Неизвестно, кто вправе разрешить обработку персональных данных языковой моделью и сколько недель это занимает.</p>
+
+<p>Глава доводит фразу технического директора до пилота с границей, ценой, сроком и способом проверки за пять разговоров. Результатом становятся пять артефактов: онтология, реестр требований, реестр ограничений, тонкий срез работы и гипотеза ROI в меморандуме на одну страницу. Артефакты переиспользуются дальше: набор инструментов MCP-сервера в <a href="#ch-6" data-secref="6">главе 6</a> выводится из онтологии, а бизнес-кейс <a href="#s-16-6" data-secref="16.6">раздела 16.6</a> строится по той же схеме: от базовой линии, измеренной на discovery, к месяцу окупаемости.</p>
+
+<h3 id="s-2-2"><span class="num">2.2</span>Почему проекты останавливаются на этапе scoping</h3>
+
+<p>Остановку проекта на scoping трудно заметить: встречи продолжаются, презентации обновляются, и только через три месяца выясняется, что работа по проекту не начиналась. Разбор таких случаев выделяет три механизма остановки, и все три относятся к слою людей и процесса.</p>
+
+<dl class="def">
+<dt>Discovery, обследование <span class="en">(discovery)</span></dt>
+<dd>Инженерная фаза engagement, на которой формулировка заказчика превращается в проверяемые артефакты: онтологию систем и данных, реестр требований с метриками и порогами, реестр ограничений, границу пилота и гипотезу ROI. Результатом discovery является набор утверждений, каждое из которых можно опровергнуть измерением.</dd>
+</dl>
+
+<p>Первый механизм: требование сформулировано так, что его выполнение нельзя ни подтвердить, ни опровергнуть. «Ассистент должен быть точным» не содержит метрики, порога и набора данных, поэтому приёмка превращается в спор о впечатлениях. Требование становится проверяемым, когда названы все три части: что измеряем, при каком значении считаем выполненным и на каких данных. Требование, в котором не хватает любой из трёх частей, возвращается на уточнение в разговор с заказчиком и в SOW не включается.</p>
+
+<p>Второй механизм состоит в отсутствии базовой линии. Если длительность обработки звонка до пилота никто не измерял, то после пилота любое изменение числа можно объяснить другими причинами: сезонностью, обучением операторов, изменением скриптов, сменой состава смен. Базовая линия измеряется до того, как заказчик увидел первый прототип, потому что ожидание может изменить поведение операторов раньше, чем система начнёт работать.</p>
+
+<p>Третий механизм состоит в том, что подпись получена у лица, которое не вправе разрешить запуск. Спонсор распоряжается бюджетом, но в регулируемой организации он обычно не вправе разрешить новый способ обработки персональных данных. Такое разрешение дают директор по информационной безопасности, офицер по защите данных и функция управления модельным риском, а их цепочка одобрения имеет собственную длительность, которая включается в критический путь проекта наравне с разработкой.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Принять в SOW формулировку «система должна давать точные и полезные ответы». Через три месяца стороны придут к противоположным выводам о результате, и спор будет решён на основании отношений между ними, поскольку данных для решения нет. Формулировка без метрики, порога и набора данных является только кандидатом в требования.</div>
+
+<h3 id="s-2-3"><span class="num">2.3</span>Протокол discovery-интервью</h3>
+
+<p>Разговор на discovery устроен как лестница: каждый следующий вопрос опирается на ответ на предыдущий и сужает пространство решений. Лестница идёт от исхода к успеху, и ступени проходятся в этом порядке: вопрос о данных, заданный раньше вопроса об исходе, даёт перечень таблиц, из которого не следует ни одного решения.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Ступень</th><th>Вопрос заказчику</th><th>Что появляется в записи</th></tr></thead>
+<tbody>
+<tr><td>Исход</td><td>Кто и что перестанет делать, если система заработает?</td><td>кандидат в требования с названным бенефициаром</td></tr>
+<tr><td>Процесс</td><td>Что человек делает сегодня, шаг за шагом, и где теряет время?</td><td>карта шагов с длительностями</td></tr>
+<tr><td>Данные</td><td>Откуда берётся каждый факт, нужный на этом шаге?</td><td>строка онтологии: сущность и система записи</td></tr>
+<tr><td>Ограничения</td><td>Что запрещено, кем и на основании какого документа?</td><td>запись в реестре ограничений с видом и источником</td></tr>
+<tr><td>Успех</td><td>По какому числу через три месяца вы скажете, что это сработало?</td><td>метрика с базовой линией и порогом</td></tr>
+</tbody></table></div>
+
+<p>Каждый разговор заканчивается артефактом, иначе от него останется только впечатление. Артефакт получает идентификатор и ссылку на тот, из которого выведен: заметка ссылается на разговор, требование на заметку, пункт scope на требование и ограничения, метрика на пункт scope. Превращение записи разговора в артефакт показано в <a href="#s-1-4" data-secref="1.4">разделе 1.4</a> листингом <code>conversation_to_artifact</code>; здесь цепочка продолжается до метрики успеха. Цепочка используется при обратном проходе: любой пункт границы пилота раскрывается в имя человека и дату разговора.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 330" role="img" aria-label="Три дорожки прослеживаемости: разговор с руководителем контакт-центра превращается в заметку, требование, пункт scope и метрику успеха; разговор с директором по информационной безопасности даёт ограничение, которое сужает тот же пункт scope; разговор с техническим директором даёт требование без порога, которое возвращается в разговор вместо scope" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="24" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЛЕСТНИЦА DISCOVERY: ОТ РАЗГОВОРА К ПРОВЕРЯЕМОМУ ПУНКТУ SCOPE</text>
+
+  <rect x="20" y="44" width="140" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="90" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">разговор</text>
+  <text x="90" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">C-2 · контакт-центр</text>
+  <rect x="195" y="44" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="265" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">заметка</text>
+  <text x="265" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">N-12 ← C-2</text>
+  <rect x="370" y="44" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">требование</text>
+  <text x="440" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">R-7 ← N-12</text>
+  <rect x="545" y="44" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="615" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">пункт scope</text>
+  <text x="615" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">S-1 ← R-7, K-1</text>
+  <rect x="720" y="44" width="140" height="52" rx="5" fill="none" stroke="var(--sD)" stroke-width="1.8"/>
+  <text x="790" y="65" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">метрика успеха</text>
+  <text x="790" y="83" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">M-4 ← S-1</text>
+
+  <rect x="20" y="126" width="140" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="90" y="147" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">разговор</text>
+  <text x="90" y="165" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">C-5 · безопасность</text>
+  <rect x="195" y="126" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="265" y="147" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">заметка</text>
+  <text x="265" y="165" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">N-21 ← C-5</text>
+  <rect x="370" y="126" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="147" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">ограничение</text>
+  <text x="440" y="165" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">K-1 ← N-21</text>
+
+  <rect x="20" y="208" width="140" height="52" rx="5" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <text x="90" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">разговор</text>
+  <text x="90" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">C-1 · спонсор</text>
+  <rect x="195" y="208" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="265" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">заметка</text>
+  <text x="265" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">N-30 ← C-1</text>
+  <rect x="370" y="208" width="140" height="52" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">требование</text>
+  <text x="440" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">R-9 ← N-30</text>
+  <rect x="545" y="208" width="140" height="52" rx="5" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="615" y="229" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="var(--muted)">не в scope</text>
+  <text x="615" y="247" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">нет порога</text>
+
+  <line x1="160" y1="70" x2="187" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="335" y1="70" x2="362" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="510" y1="70" x2="537" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="685" y1="70" x2="712" y2="70" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="160" y1="152" x2="187" y2="152" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="335" y1="152" x2="362" y2="152" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="160" y1="234" x2="187" y2="234" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="335" y1="234" x2="362" y2="234" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <line x1="510" y1="234" x2="537" y2="234" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ar2a)"/>
+
+  <path d="M510,152 H615 V104" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2a)"/>
+  <text x="563" y="144" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">сужает</text>
+  <path d="M615,260 V286 H265 V268" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar2a)"/>
+  <text x="440" y="281" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">уточнить и вернуть в разговор</text>
+
+  <text x="440" y="314" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Любой пункт scope раскрывается обратно в имя человека и дату разговора.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> При прослеживаемости граница пилота выводится из записей: пункт включается в scope, когда к нему ведёт цепочка идентификаторов от разговора, а требование без порога возвращается в разговор и в scope не попадает.</figcaption>
+</figure>
+
+<div class="note" data-level="2">Заметка пишется дословно там, где заказчик называет число, документ или имя, и своими словами там, где он описывает процесс. Пересказанное число теряет единицу измерения и условие замера, и через месяц выясняется, что «четыре минуты» относились не ко всему звонку, а к поиску ответа.</div>
+
+<p>Записанное после трёх разговоров существует в двух видах. Первый вид представляет собой список пожеланий: строки естественного языка, которые невозможно ни отсортировать, ни проверить. Второй вид представляет собой структуру, в которой у требования есть источник, метрика, порог, набор данных и связь с ограничениями, а у ограничения есть вид и способ подтверждения. Разница между ними определяет, может ли состояться приёмка.</p>
+
+<div class="tabs" data-tabs>
+  <div role="tablist" aria-label="Способы записать требования после discovery">
+    <button role="tab" aria-selected="false" data-level="2">Наивно</button>
+    <button role="tab" aria-selected="true">Продуманно</button>
+    <button role="tab" aria-selected="false" data-level="2">В чём разница</button>
+  </div>
+
+  <div role="tabpanel" data-title="Наивно" data-level="2">
+    <figure class="code" data-fold="0">
+      <figcaption><span class="file">naive_requirements.py</span></figcaption>
+      <pre><code>NOTES = """- ассистент должен быть точным
+- отвечать быстро
+- интеграция с CRM
+- безопасность на уровне банка
+- снизить нагрузку на операторов"""
+
+BULLETS = [line.removeprefix("- ") for line in NOTES.splitlines()]
+
+if __name__ == "__main__":
+    assert len(BULLETS) == 5
+    assert not any(c.isdigit() for b in BULLETS for c in b)   # ни порогов, ни объёмов, ни дат
+    print(len(BULLETS), "пунктов и ни одного проверяемого требования")</code></pre>
+    </figure>
+    <p>Ни одну из пяти строк нельзя ни подтвердить, ни опровергнуть измерением. В списке нет чисел, поэтому утверждение о выполнении опирается на впечатление; нет автора, поэтому уточнить формулировку не у кого; нет связей, поэтому порядок работ выбирается заново на каждой встрече.</p>
+  </div>
+
+  <div role="tabpanel" data-title="Продуманно">
+    <figure class="code" data-fold="26">
+      <figcaption><span class="file">requirements.py</span></figcaption>
+      <pre><code>from __future__ import annotations
+
+from enum import StrEnum
+
+from pydantic import BaseModel, Field
+
+
+class ConstraintKind(StrEnum):
+    REGULATORY = "regulatory"            # закон, надзор, внутренняя политика
+    DATA = "data"                        # состав, качество, срок хранения
+    INFRASTRUCTURE = "infrastructure"    # сети, окна обслуживания, лимиты
+    ORGANISATIONAL = "organisational"    # цепочка одобрения, календарь, бюджет
+    HARDWARE = "hardware"                # где физически исполняется модель
+
+
+FIXED = frozenset({ConstraintKind.REGULATORY, ConstraintKind.HARDWARE})
+
+
+class Constraint(BaseModel):
+    id: str
+    kind: ConstraintKind
+    statement: str
+    source: str                          # роль и дата разговора
+    verified: bool = False               # подтверждено документом
+    mitigation: str = ""                 # как требование выполняется, не нарушая ограничение
+
+    @property
+    def negotiable(self) -&gt; bool:
+        return self.kind not in FIXED
+
+    @property
+    def blocking(self) -&gt; bool:
+        return not self.mitigation
+
+
+class Requirement(BaseModel):
+    id: str
+    statement: str
+    source: str
+    metric: str = ""
+    threshold: float | None = None
+    dataset: str = ""
+    value: int = Field(ge=0, le=5)
+    feasibility: int = Field(ge=0, le=5)
+    blast_radius: int = Field(ge=1, le=5)
+    constrained_by: tuple[str, ...] = ()
+
+    @property
+    def missing(self) -&gt; tuple[str, ...]:
+        gaps: list[str] = []
+        if not self.metric:
+            gaps.append("метрика")
+        if self.threshold is None:
+            gaps.append("порог")
+        if not self.dataset:
+            gaps.append("набор данных")
+        return tuple(gaps)
+
+    @property
+    def testable(self) -&gt; bool:
+        return not self.missing
+
+
+def score(req: Requirement, limits: dict[str, Constraint]) -&gt; float:
+    """Ценность на единицу радиуса поражения; непроверяемое и заблокированное стоит нуль."""
+    if not req.testable:
+        return 0.0
+    if any(limits[k].blocking for k in req.constrained_by if k in limits):
+        return 0.0
+    return round(req.value * req.feasibility / req.blast_radius, 2)
+
+
+def rank(reqs: list[Requirement], limits: list[Constraint]) -&gt; list[Requirement]:
+    index = {c.id: c for c in limits}
+    return sorted(reqs, key=lambda r: (-score(r, index), r.id))
+
+
+if __name__ == "__main__":
+    limits = [
+        Constraint(id="K-1", kind=ConstraintKind.HARDWARE, verified=True,
+                   source="директор по информационной безопасности, 6 марта",
+                   statement="персональные данные обрабатываются только в регионе",
+                   mitigation="региональный эндпоинт модели внутри периметра VPC"),
+        Constraint(id="K-2", kind=ConstraintKind.REGULATORY, source="комплаенс, 7 марта", verified=True,
+                   statement="решение, видимое клиенту, подтверждает человек"),
+        Constraint(id="K-3", kind=ConstraintKind.INFRASTRUCTURE, source="владелец платформы, 6 марта",
+                   statement="core banking недоступен с 02:00 до 04:00",
+                   mitigation="инструмент отвечает «система недоступна до 04:00»"),
+    ]
+    candidates = [
+        Requirement(id="R-7", source="руководитель контакт-центра, 5 марта",
+                    statement="подсказывать оператору ответ по базе знаний",
+                    metric="средняя длительность обработки, с", threshold=335.0,
+                    dataset="400 звонков очереди «карты» за март",
+                    value=5, feasibility=4, blast_radius=1, constrained_by=("K-1", "K-3")),
+        Requirement(id="R-9", source="технический директор, 4 марта",
+                    statement="ассистент должен быть точным",
+                    value=5, feasibility=3, blast_radius=2),
+        Requirement(id="R-12", source="технический директор, 4 марта",
+                    statement="отвечать клиенту без участия оператора",
+                    metric="доля обращений, закрытых без оператора", threshold=0.25,
+                    dataset="30 дней входящих обращений",
+                    value=5, feasibility=2, blast_radius=5, constrained_by=("K-2",)),
+        Requirement(id="R-15", source="оператор, 6 марта",
+                    statement="сохранять резюме звонка в CRM",
+                    metric="доля резюме, принятых без правки", threshold=0.8,
+                    dataset="200 звонков с разметкой супервизора",
+                    value=3, feasibility=5, blast_radius=2, constrained_by=("K-1",)),
+    ]
+    index = {c.id: c for c in limits}
+    assert candidates[1].missing == ("метрика", "порог", "набор данных")
+    assert score(candidates[1], index) == 0.0             # непроверяемое пожелание
+    assert candidates[2].testable and score(candidates[2], index) == 0.0
+    assert score(candidates[3], index) == 7.5             # ограничение названо и снято проектом
+    assert [c.id for c in limits if not c.negotiable] == ["K-1", "K-2"]
+    order = [r.id for r in rank(candidates, limits)]
+    assert order == ["R-7", "R-15", "R-12", "R-9"]
+    print("ранжировано:", order, "· в пилот идёт", order[0])</code></pre>
+      <div class="gloss" data-level="2">
+        <div><span class="at" data-anchor="HARDWARE = ">строка 13</span><p>Аппаратное ограничение вынесено в отдельный вид, потому что оно определяет место исполнения модели и через него всю архитектуру. Требование «данные не покидают страну» выполняется выбором варианта размещения: регионального эндпоинта, периметра, развёртывания у заказчика или собственных ускорителей заказчика, как разобрано в <a href="#s-2-10" data-secref="2.10">разделе 2.10</a>.</p></div>
+        <div><span class="at" data-anchor="verified: bool = False">строка 24</span><p>Ограничение считается подтверждённым только тогда, когда предъявлен документ или его назвал владелец соответствующей функции. Пересказанные ограничения составляют заметную долю реестра, и часть из них при проверке не подтверждается документом и отражает сложившуюся практику.</p></div>
+        <div><span class="at" data-anchor="def blocking(self)">строка 32</span><p>Блокирующим ограничение делает отсутствие способа его выполнить. Вид ограничения на это свойство не влияет: аппаратное ограничение K-1 с названным способом выполнения кандидата не блокирует. Ограничение с названным способом выполнения требует работы и времени; ограничение без него обнуляет оценку кандидата независимо от его ценности.</p></div>
+        <div><span class="at" data-anchor="gaps: list[str] = []">строка 50</span><p>Свойство возвращает список недостающих частей. Этот список служит повесткой следующего разговора: вопросы задаются о недостающих метрике, пороге или наборе данных.</p></div>
+        <div><span class="at" data-anchor="req.value * req.feasibility">строка 70</span><p>Деление на радиус поражения делает формулу несимметричной намеренно. Кандидат, ошибка которого видна клиенту банка (радиус 5), попадает в пилот раньше кандидата, ошибка которого видна одному оператору (радиус 1), только если произведение его ценности на осуществимость более чем в пять раз больше.</p></div>
+      </div>
+    </figure>
+  </div>
+
+  <div role="tabpanel" data-title="В чём разница" data-level="2">
+    <p>Первое различие в проверяемости. Наивная строка не содержит метрики, порога и набора данных, поэтому вопрос «выполнено ли» не имеет ответа. Структура возвращает список недостающих частей, и незаполненное требование сохраняется в реестре как повестка следующего разговора.</p>
+    <p>Второе различие в источнике. В наивном списке нет автора, поэтому уточнять формулировку не у кого, а через месяц авторство формулировки установить нельзя. В структуре источник указан для требований и для ограничений, и ограничение дополнительно имеет признак подтверждения документом.</p>
+    <p>Третье различие в порядке. Порядок пунктов наивного списка устанавливается по интуиции участников заново на каждой встрече. Структура даёт ранжирование, в котором непроверяемое и заблокированное стоит нуль, а остальное упорядочено ценностью, осуществимостью и радиусом поражения.</p>
+  </div>
+</div>
+
+<h3 id="s-2-4"><span class="num">2.4</span>Онтология заказчика прежде модели</h3>
+
+<p>После трёх разговоров выбор модели откладывается, потому что выбор модели обычно меняет стоимость проекта значительно меньше, чем состав интеграций. Прежде модели строится онтология: перечень сущностей, которыми заказчик описывает работу, и систем, в которых эти сущности хранятся. Онтология показывает, откуда берётся каждый факт, который агент предъявит оператору.</p>
+
+<dl class="def">
+<dt>Онтология заказчика <span class="en">(customer ontology)</span></dt>
+<dd>Описание предметной области заказчика в его собственных терминах: сущности, ключи, по которым сущности сопоставляются между системами, события, которые их меняют, и системы, в которых они хранятся. Онтология отличается от схемы базы данных тем, что описывает понятия, которыми пользуются сотрудники заказчика, и только затем сопоставляется с таблицами.</dd>
+<dt>Система записи <span class="en">(system of record)</span></dt>
+<dd>Единственная система, значение в которой считается истинным для данной сущности. Копии той же сущности в других системах используются только как кэш: расхождение между копией и системой записи разрешается в пользу системы записи, и инструмент чтения обращается к системе записи.</dd>
+</dl>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 412" role="img" aria-label="Онтология Nordbank: четыре системы записи слева связаны стрелками с шестью сущностями в центре, на каждой стрелке указана свежесть данных, пунктирная стрелка отмечает копию клиента в CRM, а рамка справа показывает инструменты агента, выведенные из тех же сущностей" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <rect x="20" y="58" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="80" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">core banking</text>
+  <text x="110" y="97" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">mainframe · SOAP</text>
+  <rect x="20" y="144" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="166" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">CRM</text>
+  <text x="110" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">REST · OAuth</text>
+  <rect x="20" y="230" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="252" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">база знаний</text>
+  <text x="110" y="269" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">REST · ACL</text>
+  <rect x="20" y="310" width="180" height="48" rx="5" fill="none" stroke="var(--sA)" stroke-width="1.8"/>
+  <text x="110" y="332" text-anchor="middle" font-family="Inter,sans-serif" font-size="13" font-weight="600" fill="currentColor">телефония</text>
+  <text x="110" y="349" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="var(--muted)">транскрипты · батч</text>
+
+  <rect x="390" y="44" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="62" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Клиент</text>
+  <text x="480" y="77" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ключ: customer_id</text>
+  <rect x="390" y="102" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="120" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Счёт</text>
+  <text x="480" y="135" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ключ: iban</text>
+  <rect x="390" y="160" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="178" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Обращение</text>
+  <text x="480" y="193" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ключ: case_id</text>
+  <rect x="390" y="218" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="236" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Оператор</text>
+  <text x="480" y="251" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ключ: agent_id</text>
+  <rect x="390" y="276" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="294" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Документ политики</text>
+  <text x="480" y="309" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ключ: doc_id</text>
+  <rect x="390" y="334" width="180" height="40" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="480" y="352" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="600" fill="currentColor">Взаимодействие</text>
+  <text x="480" y="367" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">ключ: call_id</text>
+
+  <path d="M200,82 H232 V64 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,82 H232 V122 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,168 H252 V180 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,168 H252 V238 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,254 H272 V296 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <path d="M200,334 H292 V354 H382" fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar2b)"/>
+  <text x="378" y="58" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">секунды</text>
+  <text x="378" y="116" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">секунды</text>
+  <text x="378" y="174" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">секунды</text>
+  <text x="378" y="232" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">сутки</text>
+  <text x="378" y="290" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">недели</text>
+  <text x="378" y="348" text-anchor="end" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">15 минут</text>
+
+  <path d="M20,168 H10 V22 H480 V36" fill="none" stroke="var(--line-strong)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ar2b)"/>
+  <text x="500" y="26" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">копия: чтение запрещено</text>
+
+  <rect x="660" y="44" width="200" height="330" rx="8" fill="none" stroke="var(--sC)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="760" y="36" text-anchor="middle" font-family="Inter,sans-serif" font-size="12" font-weight="600" fill="var(--sC)">инструменты агента</text>
+  <line x1="570" y1="180" x2="652" y2="180" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2b)"/>
+  <text x="611" y="172" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10.5" fill="var(--muted)">глава 6</text>
+  <rect x="680" y="76" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="95" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">get_account</text>
+  <rect x="680" y="120" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="139" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">get_case_history</text>
+  <rect x="680" y="164" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="183" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">search_documents</text>
+  <rect x="680" y="208" width="160" height="30" rx="5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="760" y="227" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="currentColor">create_dispute</text>
+  <text x="760" y="272" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">описание инструмента несёт</text>
+  <text x="760" y="290" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">свежесть и систему записи</text>
+
+  <text x="440" y="398" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Сплошная стрелка означает интеграцию, которую придётся построить и сопровождать; пунктирная означает копию, читать из которой нельзя.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Каждая сплошная стрелка на схеме является интеграцией, которую команда engagement строит и сопровождает: онтология переводит разговор о «доступе к данным» в перечень работ, у каждой из которых есть протокол, владелец и свежесть.</figcaption>
+</figure>
+
+<p>На discovery правило «одна система записи на сущность» проверяется для каждой сущности. Заказчик Nordbank называет для клиента и CRM, и core banking, потому что в обеих системах есть имя и телефон. Пока это расхождение не разрешено, инструмент чтения будет иногда отвечать неверно, а расследование такой ошибки может занять неделю. Валидатор в листинге отказывается строить список интеграций, пока у сущности не останется один источник.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">ontology.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+class OntologyError(ValueError):
+    """Онтология не готова к тому, чтобы выводить из неё инструменты."""
+
+
+@dataclass(frozen=True)
+class System:
+    id: str
+    name: str
+    access: str                       # протокол, идентичность, лимиты
+
+
+@dataclass(frozen=True)
+class Entity:
+    name: str
+    key: str                          # чем сущность склеивается между системами
+    systems: tuple[str, ...]          # кандидаты, названные на discovery
+    freshness: str                    # задержка от события до чтения
+    copies: tuple[str, ...] = ()      # где лежит ещё, но откуда читать нельзя
+
+
+@dataclass(frozen=True)
+class Integration:
+    entity: str
+    system: str
+    access: str
+    freshness: str
+
+
+@dataclass
+class Ontology:
+    systems: dict[str, System] = field(default_factory=dict)
+    entities: list[Entity] = field(default_factory=list)
+
+    def problems(self) -&gt; list[str]:
+        found: list[str] = []
+        seen: set[str] = set()
+        for e in self.entities:
+            if e.name in seen:
+                found.append(f"«{e.name}»: сущность описана дважды")
+            seen.add(e.name)
+            if len(e.systems) != 1:
+                found.append(f"«{e.name}»: систем записи {len(e.systems)}, требуется ровно одна")
+            found.extend(f"«{e.name}»: система {sid} не описана"
+                         for sid in e.systems + e.copies if sid not in self.systems)
+            if set(e.systems) &amp; set(e.copies):
+                found.append(f"«{e.name}»: одна система названа и источником, и копией")
+        return found
+
+    def integrations(self) -&gt; list[Integration]:
+        """Каждая стрелка от системы записи к сущности является интеграцией."""
+        found = self.problems()
+        if found:
+            raise OntologyError("; ".join(found))
+        return [Integration(e.name, self.systems[e.systems[0]].name,
+                            self.systems[e.systems[0]].access, e.freshness)
+                for e in self.entities]
+
+
+def nordbank() -&gt; Ontology:
+    systems = [
+        System("core", "core banking", "mainframe, SOAP, 40 запросов в секунду"),
+        System("crm", "CRM", "REST, OAuth, лимит на пользователя"),
+        System("kb", "база знаний", "REST, ACL по группам"),
+        System("tel", "телефония", "транскрипты пакетами"),
+    ]
+    entities = [
+        Entity("Клиент", "customer_id", ("core",), "секунды", copies=("crm",)),
+        Entity("Счёт", "iban", ("core",), "секунды"),
+        Entity("Обращение", "case_id", ("crm",), "секунды"),
+        Entity("Оператор", "agent_id", ("crm",), "сутки"),
+        Entity("Документ политики", "doc_id", ("kb",), "недели"),
+        Entity("Взаимодействие", "call_id", ("tel",), "15 минут"),
+    ]
+    return Ontology(systems={s.id: s for s in systems}, entities=entities)
+
+
+if __name__ == "__main__":
+    onto = nordbank()
+    arrows = onto.integrations()
+    assert len(arrows) == len(onto.entities) == 6          # шесть интеграций из четырёх систем
+    assert {a.system for a in arrows} == {"core banking", "CRM", "база знаний", "телефония"}
+    assert next(a.freshness for a in arrows if a.entity == "Взаимодействие") == "15 минут"
+
+    onto.entities[0] = Entity("Клиент", "customer_id", ("core", "crm"), "секунды")
+    try:
+        onto.integrations()
+        raise AssertionError("две системы записи у одной сущности обязаны быть ошибкой")
+    except OntologyError as err:
+        assert "систем записи 2" in str(err)
+    print(len(arrows), "интеграций из", len(onto.systems), "систем записи")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="systems: tuple[str, ...]">строка 21</span><p>Поле хранит кандидатов, названных на discovery. На первом разговоре их бывает два или три, и задача discovery состоит в том, чтобы к концу обследования остался один, а остальные перешли в поле копий по явному решению заказчика.</p></div>
+  <div><span class="at" data-anchor="copies: tuple[str, ...] = ()">строка 23</span><p>Копии сохраняются в онтологии: они объясняют, почему оператор видит на экране другое значение, и служат кандидатами на сверку. Инструмент чтения к ним не обращается.</p></div>
+  <div><span class="at" data-anchor="len(e.systems) != 1">строка 46</span><p>Два источника у одной сущности записываются как ошибка, и вывод интеграций из такой онтологии прерывается. Предупреждения было бы недостаточно: из онтологии с двумя источниками у одной сущности нельзя вывести ни одного инструмента, потому что неизвестно, какой ответ считать верным.</p></div>
+  <div><span class="at" data-anchor="raise OntologyError(">строка 58</span><p>Список интеграций строится только из проверенной онтологии, и это тот же список, из которого <a href="#s-6-3" data-secref="6.3">раздел 6.3</a> выводит инструменты MCP-сервера. Ошибка, обнаруженная в онтологии, исправляется до того, как из неё выведены инструменты, и поэтому обходится дешевле.</p></div>
+</div>
+</figure>
+
+<p>Свежесть данных записывается в онтологию как свойство стрелки: одна система отдаёт разные сущности с разной задержкой, например CRM отдаёт обращение за секунды, а карточку оператора обновляет ночным заданием раз в сутки. В Nordbank транскрипт звонка появляется через пятнадцать минут после звонка, а документ политики не меняется неделями между публикациями. Агент, не знающий этих задержек, сообщит, что действие не выполнено, и предложит выполнить его ещё раз. Описание инструмента в <a href="#ch-6" data-secref="6">главе 6</a> содержит отметку свежести из этой таблицы.</p>
+
+<h3 id="s-2-5"><span class="num">2.5</span>Извлечение ограничений</h3>
+
+<dl class="def">
+<dt>Ограничение <span class="en">(constraint)</span></dt>
+<dd>Утверждение о том, что некоторое решение недопустимо, вместе с указанием источника, вида и способа проверки. Ограничение отличается от требования направлением: требование говорит, что система обязана делать, ограничение говорит, чего она не вправе делать ни при каких обстоятельствах.</dd>
+</dl>
+
+<p>Ограничения разделяются на пять видов, и вид определяет, к кому обращаться за подтверждением и что произойдёт при нарушении. Регуляторное ограничение нарушать нельзя; ограничение по данным определяет состав доступных наборов; организационное можно обсуждать; инфраструктурное часто устраняется дополнительными расходами; аппаратное определяет архитектуру.</p>
+
+<div class="tw"><table>
+<thead><tr><th>Вид</th><th>Пример в Nordbank</th><th>Кто подтверждает</th><th>Что меняет</th></tr></thead>
+<tbody>
+<tr><td>Регуляторное</td><td>решение, видимое клиенту, подтверждает человек</td><td>служба комплаенса, юридическая служба</td><td>обязательный шаг одобрения в сценарии</td></tr>
+<tr><td>Данные</td><td>транскрипты старше 90 дней удаляются</td><td>офицер по защите данных</td><td>размер оценочного набора и обучающих данных</td></tr>
+<tr><td>Инфраструктурное</td><td>core banking недоступен с 02:00 до 04:00</td><td>владелец платформы</td><td>поведение инструмента и текст ответа агента</td></tr>
+<tr><td>Организационное</td><td>изменение в рабочем месте оператора согласуется с профсоюзом</td><td>руководитель контакт-центра</td><td>сроки выкладки и план обучения</td></tr>
+<tr><td>Аппаратное</td><td>персональные данные обрабатываются только в регионе</td><td>директор по информационной безопасности</td><td>место исполнения модели и весь дизайн развёртывания</td></tr>
+</tbody></table></div>
+
+<p>Ограничения делятся также на блокирующие и сужающие. Блокирующее обнуляет кандидата, пока не найден способ выполнения: требование отвечать клиенту без оператора остаётся нулевым, пока не появится сценарий с подтверждением человеком. Сужающее стоит работы и времени, но кандидата не отменяет: обработка данных в регионе решается выбором места исполнения модели. В листинге <code>requirements.py</code> это различие выражено полем со способом выполнения; вид ограничения на него не влияет.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Записать ограничение со слов того, кто его пересказал. «Служба безопасности запрещает облако» нередко означает «два года назад отклонили конкретный проект по конкретной причине». Ограничение без названного документа или владельца функции остаётся гипотезой, и её проверяют до того, как на её основе выбрана архитектура.</div>
+
+<h3 id="s-2-6"><span class="num">2.6</span>Воркшоп scoping</h3>
+
+<dl class="def">
+<dt>Радиус поражения <span class="en">(blast radius)</span></dt>
+<dd>Наибольший ущерб, который причиняет ошибка или компрометация компонента, и круг тех, кого этот ущерб затрагивает. На scoping радиус кандидата оценивается по тому, кто увидит ошибку: один оператор, очередь целиком или клиент банка; для ассистента в production тем же словом обозначается ущерб при полной компрометации модели или инструмента.</dd>
+</dl>
+
+<p>К четвёртому разговору кандидатов набирается больше, чем помещается в пилот, и выбор между ними делается на воркшопе с заказчиком. Ценность показывает, сколько стоит решённая задача в единицах, которыми заказчик уже пользуется. Осуществимость показывает, сколько неизвестного остаётся после discovery. Радиус поражения показывает, кто пострадает от ошибки: один оператор, очередь целиком или клиент банка.</p>
+
+<p>Ценность и осуществимость обычно обсуждаются на каждой встрече, а вопрос о радиусе поражения, то есть «что произойдёт, когда система ошибётся, и кто это увидит», задаётся реже. На этот вопрос отвечает руководитель контакт-центра, поскольку последствия ошибок проявляются в процессах, которыми он управляет. Ответ отделяет пилот, который можно выключить в пятницу вечером, от пилота, выключение которого станет инцидентом.</p>
+
+<figure class="dia">
+<div class="svg-wrap">
+<svg viewBox="0 0 880 362" role="img" aria-label="Матрица scoping: семь кандидатов Nordbank размещены по осям ценности и осуществимости, размер круга означает радиус поражения, а пунктирная рамка в правом верхнем углу выделяет зону пилота, в которую попадает только подсказка оператору с малым радиусом" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <line x1="236" y1="40" x2="236" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="352" y1="40" x2="352" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="468" y1="40" x2="468" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="584" y1="40" x2="584" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="700" y1="40" x2="700" y2="300" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="248" x2="700" y2="248" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="196" x2="700" y2="196" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="144" x2="700" y2="144" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="92" x2="700" y2="92" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="40" x2="700" y2="40" stroke="var(--line)" stroke-width="1"/>
+  <line x1="120" y1="40" x2="120" y2="300" stroke="var(--line-strong)" stroke-width="1.3"/>
+  <line x1="120" y1="300" x2="700" y2="300" stroke="var(--line-strong)" stroke-width="1.3"/>
+
+  <rect x="526" y="40" width="174" height="78" rx="8" fill="none" stroke="var(--sF)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="613" y="56" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--sF)">зона пилота</text>
+
+  <circle cx="248" cy="66" r="20" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="248" y="100" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">скоринг заявок</text>
+  <circle cx="398" cy="71" r="20" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="398" y="104" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">автоответ клиенту</text>
+  <circle cx="306" cy="118" r="17" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="306" y="149" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">голосовой бот</text>
+  <circle cx="584" cy="144" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="584" y="170" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">резюме звонка</text>
+  <circle cx="514" cy="196" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="514" y="222" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">классификация обращений</text>
+  <circle cx="653" cy="165" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="653" y="188" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">поиск по базе</text>
+  <circle cx="607" cy="92" r="8" fill="none" stroke="var(--sF)" stroke-width="1.8"/>
+  <circle cx="607" cy="92" r="3" fill="var(--sF)" opacity="0.85"/>
+  <text x="607" y="76" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="currentColor">подсказка оператору</text>
+
+  <text x="16" y="34" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ЦЕННОСТЬ ДЛЯ ЗАКАЗЧИКА</text>
+  <text x="700" y="330" text-anchor="end" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">ОСУЩЕСТВИМОСТЬ</text>
+  <text x="112" y="46" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">высокая</text>
+  <text x="112" y="300" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">низкая</text>
+  <text x="126" y="318" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">низкая</text>
+  <text x="700" y="318" text-anchor="end" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">высокая</text>
+
+  <rect x="716" y="40" width="148" height="260" rx="8" fill="none" stroke="var(--line)" stroke-width="1"/>
+  <text x="790" y="64" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" font-weight="600" fill="var(--muted)">РАДИУС ПОРАЖЕНИЯ</text>
+  <circle cx="744" cy="96" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="772" y="100" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">1 · оператор</text>
+  <circle cx="744" cy="132" r="11" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="772" y="136" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">3 · очередь</text>
+  <circle cx="744" cy="176" r="20" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="772" y="180" font-family="Inter,sans-serif" font-size="10.5" fill="currentColor">5 · клиент</text>
+  <text x="790" y="220" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">пилот:</text>
+  <text x="790" y="238" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">высокая ценность,</text>
+  <text x="790" y="256" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">высокая осуществимость,</text>
+  <text x="790" y="274" text-anchor="middle" font-family="Inter,sans-serif" font-size="10.5" fill="var(--muted)">малый радиус.</text>
+
+  <text x="440" y="348" text-anchor="middle" font-family="Inter,sans-serif" font-size="11" fill="var(--muted)">Большой круг в правом верхнем углу означает программу; её начинают после того, как малый круг прошёл приёмку.</text>
+</svg>
+</div>
+<figcaption><b>Диаграмма {{DIA}}.</b> Пилот выбирается на пересечении трёх условий: высокая ценность, высокая осуществимость, малый радиус поражения. У Nordbank кандидаты с наибольшей ценностью имеют и наибольший радиус, и начало с любого из них превращает пилот в программу с согласованиями на квартал.</figcaption>
+</figure>
+
+<p>Выбранный кандидат превращается в тонкий срез: сценарий, проходящий через все слои системы, но покрывающий узкую часть работы. Для Nordbank это подсказка ответа оператору в одной очереди по картам, с чтением счетов и истории обращений и с резюме звонка, которое оператор правит вручную. Срез проходит через интерфейс, агента, инструменты, системы записи и журнал, поэтому интеграционные проблемы обнаруживаются в первые недели.</p>
+
+<div class="warn"><b>Типичная ошибка</b>Выбрать пилотом самый заметный сценарий, потому что он произвёл впечатление на совете директоров. Заметный сценарий, как правило, имеет и больший радиус поражения: чем виднее сценарий, тем больше согласований, тем дольше цикл обратной связи и тем выше цена первой ошибки. Пилот выбирается по скорости получения доказательства.</div>
+
+<h3 id="s-2-7"><span class="num">2.7</span>Метрики успеха и гипотеза ROI</h3>
+
+<dl class="def">
+<dt>Гипотеза ROI <span class="en">(ROI hypothesis)</span></dt>
+<dd>Утверждение вида «при таких-то допущениях вложение окупится к такому-то месяцу», записанное так, что каждое допущение проверяемо отдельно. Гипотеза состоит из базовой линии, измеренной до начала работ, ожидаемого изменения каждой величины, стоимости построения и эксплуатации и плана измерения, который отделяет эффект системы от посторонних причин.</dd>
+</dl>
+
+<p>Руководитель контакт-центра отслеживает среднюю длительность обработки, которая измеряет скорость работы. Вторая величина, доля повторных обращений, которых удалось избежать, измеряет, как часто ответ оператора закрывает вопрос клиента с первого раза. Третья величина, стоимость одного обращения, связывает первые две с деньгами и одновременно ограничивает расходы на саму систему. Трёх величин достаточно для пилота, и каждая из них измеряется на названном наборе данных.</p>
+
+<p>Гипотеза ROI записывается кодом по той же причине, по которой требования записываются структурой: в такой форме её можно опровергнуть. Модель ниже считает экономию от сокращения длительности и от повторных обращений, которых удалось избежать, вычитает стоимость запросов и эксплуатации, учитывает скорость выхода на охват и вычисляет величину, которую спонсор предъявляет правлению: месяц, в котором накопленная выгода перекроет стоимость построения.</p>
+
+<figure class="code" data-fold="22">
+<figcaption><span class="file">roi_model.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass, replace
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """Измерено до пилота: источник каждого числа назван."""
+    agents: int = 400
+    calls_per_agent_day: int = 38
+    aht_s: float = 372.0                 # средняя длительность обработки
+    loaded_cost_per_hour: float = 31.0   # полная стоимость часа оператора
+    working_days: int = 21
+
+    @property
+    def calls_per_month(self) -&gt; int:
+        return self.agents * self.calls_per_agent_day * self.working_days
+
+    @property
+    def cost_per_call(self) -&gt; float:
+        return self.aht_s / 3600.0 * self.loaded_cost_per_hour
+
+
+@dataclass(frozen=True)
+class Hypothesis:
+    aht_reduction: float = 0.12          # доля, на которую падает длительность
+    deflection: float = 0.05             # доля повторных обращений, которых удалось избежать
+    cost_per_request: float = 0.014      # модель, retrieval, инфраструктура
+    build_cost: float = 240_000.0
+    run_cost_month: float = 11_000.0
+    ramp: tuple[float, ...] = (0.15, 0.40, 0.70, 1.0)   # охват по месяцам
+
+
+def net_month(base: Baseline, hyp: Hypothesis, month: int) -&gt; float:
+    adoption = hyp.ramp[min(month, len(hyp.ramp)) - 1]
+    covered = base.calls_per_month * adoption
+    deflected = covered * hyp.deflection
+    handled = covered - deflected
+    saved = deflected * base.cost_per_call + handled * base.cost_per_call * hyp.aht_reduction
+    spent = covered * hyp.cost_per_request + hyp.run_cost_month
+    return saved - spent
+
+
+def break_even(base: Baseline, hyp: Hypothesis, horizon: int = 24) -&gt; int | None:
+    cumulative = -hyp.build_cost
+    for month in range(1, horizon + 1):
+        cumulative += net_month(base, hyp, month)
+        if cumulative &gt;= 0:
+            return month
+    return None
+
+
+def sensitivity(base: Baseline, hyp: Hypothesis, factor: float) -&gt; dict[str, int | None]:
+    """Что станет с окупаемостью, если каждое допущение окажется слабее в factor раз."""
+    return {
+        "aht_reduction": break_even(base, replace(hyp, aht_reduction=hyp.aht_reduction * factor)),
+        "deflection": break_even(base, replace(hyp, deflection=hyp.deflection * factor)),
+        "run_cost_month": break_even(base, replace(hyp, run_cost_month=hyp.run_cost_month / factor)),
+    }
+
+
+if __name__ == "__main__":
+    base, hyp = Baseline(), Hypothesis()
+    assert base.calls_per_month == 319_200
+    assert round(base.cost_per_call, 4) == 3.2033
+    assert break_even(base, hyp) == 4
+    weak = sensitivity(base, hyp, factor=0.5)
+    assert weak["aht_reduction"] == 5 and weak["deflection"] == 4
+    assert break_even(base, replace(hyp, aht_reduction=0.0, deflection=0.0)) is None
+    print("окупаемость на месяце", break_even(base, hyp), "· при половинных допущениях", weak)</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="def cost_per_call">строка 20</span><p>Стоимость обращения выводится из измеренной длительности и полной стоимости часа оператора в самом банке. Полная стоимость включает налоги, рабочее место и обучение и превышает оклад на величину, зависящую от страны и работодателя; по этой причине число из отраслевого отчёта не подходит, а источник числа называется в меморандуме.</p></div>
+  <div><span class="at" data-anchor="ramp: tuple[float, ...]">строка 31</span><p>Кривая выхода на охват отделяет техническую готовность от организационной. В гипотезе Nordbank система, доступная всем операторам с первого дня, в первый месяц охватывает 15 % звонков, и в модели эта разница сдвигает окупаемость со второго месяца на четвёртый.</p></div>
+  <div><span class="at" data-anchor="deflected * base.cost_per_call + handled">строка 39</span><p>Два источника экономии складываются, но не перекрывают друг друга: обращение, которого удалось избежать, не даёт экономии на длительности, потому что оператор его не обрабатывал. Сложение без этого вычитания завышает экономию на длительности примерно на долю обращений, которых удалось избежать.</p></div>
+  <div><span class="at" data-anchor="def sensitivity">строка 53</span><p>Анализ чувствительности показывает, какое допущение способно изменить вывод. Если половинное значение одного из допущений сдвигает окупаемость на месяц, гипотеза устойчива; если на год, это допущение становится первым, что проверяет пилот.</p></div>
+</div>
+</figure>
+
+<p>Числа гипотезы можно приписать системе только после того, как назван контрфактуал: что произошло бы без системы. В Nordbank средняя длительность обработки падает в марте из-за сезонного состава обращений, растёт в сентябре после найма и меняется при любом изменении скриптов. План измерения поэтому фиксирует и способ сравнения: контрольная группа операторов, ступенчатое подключение очередей в случайном порядке или сопоставление с тем же периодом прошлого года. Источники смещения этого сравнения разобраны в <a href="#s-2-10" data-secref="2.10">разделе 2.10</a>.</p>
+
+<div class="note" data-level="2">Стоимость запроса в модели указана как одно число, хотя складывается из вызова модели, retrieval и инфраструктуры. На этапе scoping такая точность достаточна: в модели Nordbank стоимость запросов составляет меньше трёх процентов экономии. Разложение стоимости по составляющим и её измерение в production разбираются в <a href="#ch-13" data-secref="13">главе 13</a>.</div>
+
+<h3 id="s-2-8"><span class="num">2.8</span>Меморандум на одну страницу</h3>
+
+<p>Всё, что собрано за пять разговоров, умещается на одной странице, которую спонсор прочитает целиком. Меморандум представляет решение так, чтобы его можно было утвердить или отклонить за десять минут. Он отвечает на семь вопросов: что решаем, что входит, что не входит, как проверим, что ограничивает, сколько стоит и кто подписывает.</p>
+
+<p>Раздел «что не входит» предотвращает расширение границ, при котором пилот незаметно превращается в программу, а срок сдвигается на квартал. Поэтому он заполняется так же подробно, как раздел «что входит». Названные в нём исключения не отменяются позднее устно: возвращение исключённого пункта проходит ту же процедуру, что и любое новое требование.</p>
+
+<figure class="code" data-fold="24">
+<figcaption><span class="file">scope_memo.py</span></figcaption>
+<pre><code>from __future__ import annotations
+
+from dataclasses import dataclass
+
+WORD_LIMIT = 320          # одна страница, которую спонсор прочитает целиком
+
+
+@dataclass(frozen=True)
+class Metric:
+    name: str
+    baseline: str         # измеренное значение до пилота
+    target: str           # порог приёмки
+    dataset: str          # на чём измеряем, чтобы результат был воспроизводим
+
+    def line(self) -&gt; str:
+        return f"{self.name}: {self.baseline} → {self.target}; набор: {self.dataset}"
+
+
+@dataclass(frozen=True)
+class Memo:
+    customer: str
+    decision: str
+    in_scope: tuple[str, ...]
+    out_of_scope: tuple[str, ...]
+    metrics: tuple[Metric, ...]
+    constraints: tuple[str, ...]
+    money: tuple[str, ...]
+    approvers: tuple[str, ...]
+
+
+def section(title: str, items: tuple[str, ...]) -&gt; str:
+    return title + "\n" + "\n".join(f"- {item}" for item in items)
+
+
+def render(memo: Memo) -&gt; str:
+    return "\n\n".join([
+        f"{memo.customer}. Решение: {memo.decision}",
+        section("Входит в пилот:", memo.in_scope),
+        section("Не входит:", memo.out_of_scope),
+        section("Как проверим:", tuple(m.line() for m in memo.metrics)),
+        section("Ограничения:", memo.constraints),
+        section("Деньги:", memo.money),
+        section("Подписывают:", memo.approvers),
+    ])
+
+
+def words(text: str) -&gt; int:
+    return sum(1 for w in text.split() if any(c.isalnum() for c in w))
+
+
+if __name__ == "__main__":
+    memo = Memo(
+        customer="Nordbank Regional",
+        decision="пилот подсказок оператору в очереди «карты», 10 недель",
+        in_scope=("подсказка ответа по базе знаний в интерфейсе оператора",
+                  "чтение счетов и истории обращений от имени оператора",
+                  "резюме звонка, которое оператор правит и сохраняет в CRM"),
+        out_of_scope=("ответы клиенту без оператора", "изменение данных в core banking",
+                      "очереди «блокировки», «ипотека» и «бизнес»"),
+        metrics=(
+            Metric("средняя длительность обработки", "372 с", "не выше 335 с",
+                   "400 звонков очереди «карты» за март"),
+            Metric("доля резюме без правки", "0", "не ниже 0,80",
+                   "200 звонков с разметкой супервизора"),
+            Metric("стоимость обращения", "3,20 €", "не выше 3,00 €",
+                   "биллинг пилота за четвёртый месяц"),
+        ),
+        constraints=("персональные данные обрабатываются только в регионе "
+                     "(директор по информационной безопасности)",
+                     "видимое клиенту решение подтверждает человек (комплаенс)",
+                     "core banking недоступен с 02:00 до 04:00 (владелец платформы)"),
+        money=("построение 240 000 €, эксплуатация 11 000 € в месяц",
+               "окупаемость на четвёртом месяце при охвате 70 % к третьему"),
+        approvers=("технический директор как спонсор",
+                   "директор по информационной безопасности как владелец периметра",
+                   "руководитель контакт-центра как владелец метрики"),
+    )
+    text = render(memo)
+    assert words(text) &lt;= WORD_LIMIT, words(text)
+    for m in memo.metrics:
+        assert m.name in text and m.baseline in text and m.target in text and m.dataset in text
+    assert text.count("→") == len(memo.metrics)          # база и порог у каждой метрики
+    assert all(memo.in_scope) and all(memo.out_of_scope)
+    print(words(text), "слов, метрик", len(memo.metrics), "· границы пилота названы с обеих сторон")</code></pre>
+<div class="gloss" data-level="2">
+  <div><span class="at" data-anchor="WORD_LIMIT = 320">строка 5</span><p>Ограничение объёма является инженерным требованием: меморандум длиннее страницы, как правило, читают по диагонали, и решение принимается по заголовкам, то есть по той части, которую автор продумал последней.</p></div>
+  <div><span class="at" data-anchor="dataset: str">строка 13</span><p>Набор данных стоит рядом с метрикой и порогом, потому что одно и то же число на разных наборах означает разное. Порог без набора приводит к спору о выборке на приёмке, где исправление обходится дороже всего.</p></div>
+  <div><span class="at" data-anchor="assert words(text)">строка 79</span><p>Утверждения в конце листинга проверяют полноту: меморандум без базовой линии, порога или набора данных не собирается. Неполный меморандум обнаруживается при сборке, до того как его подпишут.</p></div>
+</div>
+</figure>
+
+<p>Меморандум подписывают три роли. Спонсор подтверждает ценность и деньги, владелец периметра подтверждает допустимость обработки данных, владелец метрики подтверждает, что названное число измеряет работу его подразделения. Если любой из трёх подписей нет, проект продолжится, но остановится позже и с большими затратами.</p>
+
+<h3 id="s-2-9" data-level="2"><span class="num">2.9</span>На Google Cloud: инструменты discovery</h3>
+
+<div class="rec" data-level="2">
+  <span class="name"><a href="#s-b-1" data-secref="B.1">Приложение B · трек Google Cloud</a></span>
+  <span class="tag">калькулятор стоимости</span>
+  <span class="tag">Model Garden</span>
+  <span class="tag">VPC Service Controls</span>
+</div>
+
+<p data-level="2">На discovery используются инструменты, которые дают числа за часы. Калькулятор стоимости Google Cloud содержит продукт Agent Platform GenAI Models, то есть генеративные модели Gemini Enterprise Agent Platform (ранее Vertex AI), и переводит оценку объёма, сделанную на воркшопе, в порядок величины ежемесячного счёта: триста девятнадцать тысяч обращений Nordbank в месяц при известной длине контекста дают вилку, которой достаточно для меморандума.<a class="src" href="https://cloud.google.com/products/calculator" target="_blank" rel="noreferrer">cloud.google.com, калькулятор стоимости Google Cloud</a> Model Garden собирает в одном месте модели Google и партнёров, включая открытые, и позволяет отправить тестовый промпт прямо из карточки модели, поэтому осуществимость проверяется на нескольких семействах моделей; партнёрскую модель для самостоятельного развёртывания сначала включают, то есть покупают, в самом Model Garden.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-garden/explore-models" target="_blank" rel="noreferrer">cloud.google.com, обзор Model Garden</a><a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-garden/use-models" target="_blank" rel="noreferrer">cloud.google.com, работа с моделями в Model Garden</a> Первый прототип собирается на синтетических данных, похожих по форме на банковские, поскольку доступ к реальным данным появится после одобрений, а ответ об осуществимости нужен до них.</p>
+
+<p data-level="2">Аппаратное ограничение «данные не покидают страну» на этой платформе раскладывается на четыре варианта размещения, и выбор между ними делается на discovery, до начала выкладки. Данные, хранимые на платформе, остаются в выбранном расположении независимо от вызываемого эндпоинта, а место вычислений модели определяется эндпоинтом: региональный эндпоинт удерживает вычисления в юрисдикции, к которой относится регион, для европейских регионов обработка внутри одной страны зависит от модели, а глобальный эндпоинт не даёт гарантий резидентности.<a class="src" href="https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/data-residency" target="_blank" rel="noreferrer">cloud.google.com, резидентность данных</a> Периметр VPC Service Controls по умолчанию блокирует обмен с сервисами Google Cloud через свою границу и тем самым снижает риск вывода данных из управляемых сервисов; сторонние сервисы в интернете он не блокирует и для полного контроля перемещения метаданных не предназначен.<a class="src" href="https://docs.cloud.google.com/vpc-service-controls/docs/overview" target="_blank" rel="noreferrer">cloud.google.com, обзор VPC Service Controls</a> Google Distributed Cloud выносит исполнение на площадку заказчика, и его изолированный вариант air-gapped работает без связи с Google Cloud и при этом предлагает генеративные модели Google.<a class="src" href="https://docs.cloud.google.com/distributed-cloud/hosted/docs/latest/gdcag/application/ao-user/genai/genai-overview" target="_blank" rel="noreferrer">cloud.google.com, генеративный AI в GDC air-gapped</a> Открытые модели на собственных ускорителях заказчика применяются там, где оборудование поставщика не помещается на площадке или нужной модели нет, и этот вариант выбирает CF6 для изолированных заводов в <a href="#ch-14" data-secref="14">главе 14</a>.</p>
+
+<p data-level="2">Для discovery отсюда следует, что вопрос о резидентности раскладывается на четыре уточняющих вопроса: в каком регионе или юрисдикции допустима обработка, допустим ли транзит метаданных за её пределы, требуется ли контроль над ключами шифрования и существует ли площадка без внешней связности. Ответы различают четыре варианта размещения выше, стоимость которых существенно различается, и записываются в реестр с видом «аппаратное», поскольку переход между вариантами после начала разработки требует переписать слой развёртывания.</p>
+
+<div class="aside" data-level="2"><b>Сопоставление с другими платформами</b>Список уточняющих вопросов о резидентности не зависит от поставщика, и ответы располагаются на той же лестнице размещения при любом выбранном поставщике. Решение расходится на нижней ступени: развёртывание в инфраструктуре заказчика доступно не для всех закрытых моделей, поэтому для площадки без внешней связности discovery устанавливает, какие модели поставщик поставляет для работы без связи; если таких моделей нет, ответом становится модель с открытыми весами. Этот факт устанавливается на discovery, потому что от него зависит архитектура.</div>
+
+<h3 id="s-2-10" data-level="3"><span class="num">2.10</span>Вглубь: нетестируемые требования, аппаратные ограничения, контрфактуал</h3>
+
+<h4 data-level="3">Распознавание нетестируемого требования</h4>
+
+<p data-level="3">Нетестируемое требование распознаётся по грамматике раньше, чем по смыслу: оценочные прилагательные без единицы измерения, глаголы состояния вместо глаголов действия, отсутствие субъекта измерения. К каждой такой формулировке заказчику задаются три вопроса: в чём измеряем, при каком значении считаем выполненным и на каких данных проверяем.</p>
+
+<p data-level="3">Первый приём, когда прямого ответа нет, состоит в том, чтобы предложить конкретное значение, которое заказчик может отвергнуть. На вопрос «какая точность достаточна» ответа обычно нет, а на утверждение «значит, восемь ответов из десяти верных нас устроят» заказчик, как правило, отвечает сразу и с обоснованием. Второй приём переводит требование в описание приёмки: «покажите набор разговоров, на котором вы будете проверять систему перед подписанием акта». Набор данных, названный заказчиком, уже прошёл внутреннее согласование, поэтому приёмка на нём не требует нового согласования.</p>
+
+<h4 data-level="3">Обнаружение аппаратных ограничений</h4>
+
+<p data-level="3">Фраза «данные не покидают страну» на discovery формулируется как одно ограничение, но может означать от двух до четырёх различных. Первое различение касается того, что не должно покидать страну: содержимое обращения, персональные идентификаторы или производные вроде векторных представлений и журналов. Второе касается того, кто устанавливает требование: регулятор, внутренняя политика или контракт с корпоративным клиентом. Третье касается того, распространяется ли требование на обучение, на вывод или на оба режима. Реестр, в котором эти различения не сделаны, приводит к архитектуре, рассчитанной на самое строгое толкование требования и потому более дорогой, чем необходимо.</p>
+
+<p data-level="3">Из ответов складывается лестница размещения, каждая ступень которой обычно дороже предыдущей. Региональный эндпоинт выполняет требование резидентности обработки, периметр вокруг проекта ограничивает передачу данных из сервисов Google Cloud за его пределы, развёртывание в инфраструктуре заказчика выполняет требование собственного периметра, а в изолированном варианте подходит и для площадки без внешней связности. Открытые модели на собственных ускорителях применяются, когда изолированный вариант поставщика не подходит площадке или не содержит нужной модели, и порождают вопросы, которых нет на верхних ступенях: сколько ускорителей, какой памяти, какая пропускная способность при пиковой нагрузке и кто обслуживает парк. Эти вопросы задаются на discovery в виде чисел: обращений в час пик, токенов на обращение, допустимой задержки и срока замены оборудования.</p>
+
+<h4 data-level="3">Смещения в оценке контрфактуала</h4>
+
+<p data-level="3">Три источника смещения искажают измерение ROI, и все три относятся к устройству эксперимента. Эффект Хоторна: операторы, знающие об измерении, могут работать иначе, и часть улучшения может исчезнуть вместе с наблюдением; систематический обзор подтверждает, что эффекты участия в исследовании существуют, но условия их действия, механизмы и величина по большей части неизвестны.<a class="src" href="https://pmc.ncbi.nlm.nih.gov/articles/PMC3969247/" target="_blank" rel="noreferrer">McCambridge и др., J Clin Epidemiol, 2014: систематический обзор эффекта Хоторна</a> Сезонность: в Nordbank состав обращений в марте отличается от ноябрьского, и длительность обработки меняется вместе с составом. Отбор участников: в пилот идут добровольцы, у которых и без системы результаты могут быть выше среднего, и тогда разница с контрольной группой включает различие в мотивации участников.</p>
+
+<p data-level="3">Устройство измерения, учитывающее все три смещения, закладывается до старта пилота. Случайное распределение операторов между группой с системой и группой без неё устраняет смещение отбора. Ступенчатое подключение очередей в случайном порядке, при котором каждая очередь получает систему в свой срок, в каждом периоде даёт сравнение очередей с системой и без неё; поскольку к концу подключено больше очередей, календарное время смешивается с эффектом системы и учитывается при анализе.<a class="src" href="https://www.bmj.com/content/350/bmj.h391" target="_blank" rel="noreferrer">Hemming и др., BMJ, 2015: ступенчатое кластерное рандомизированное исследование</a> Базовая линия, измеренная до объявления о пилоте, может уменьшить влияние эффекта наблюдения на сравнение. Ни одно из этих решений не требует дополнительной разработки, но каждое требует договорённости с руководителем контакт-центра и потому обсуждается на воркшопе scoping.</p>
+
+<h4 data-level="3">Поиск лиц, утверждающих запуск</h4>
+
+<p data-level="3">В регулируемой организации подписи, необходимые для запуска, распределены между функциями, которые редко присутствуют на первых встречах. Обработку персональных данных новым способом разрешает офицер по защите данных, использование модели в процессе, влияющем на клиента, проходит через управление модельным риском, доступ к системам записи открывает владелец платформы, а изменение рабочего места оператора согласуется с профсоюзом. Ни одна из этих функций не подчинена спонсору проекта.</p>
+
+<p data-level="3">Отсюда практика, которая занимает один разговор: цепочка одобрений составляется как список шагов с именами, входными документами и типичной длительностью и ставится в график параллельно разработке. Шаг, который занимает шесть недель и начинается только после демонстрации прототипа, определяет дату запуска сильнее, чем скорость команды. Поэтому первый прототип строится на синтетических данных: так одобрения начинаются раньше, чем появляется доступ к реальным данным.</p>
+
+<div class="quiz" data-level="2">
+<p class="eyebrow">Вопросы для самопроверки</p>
+<details>
+<summary>Требование сформулировано как «ответы должны быть релевантными». Чего в нём не хватает и что нужно спросить?</summary>
+<div class="ans"><p>Не хватает метрики, порога и набора данных. Спросить нужно, в каких единицах измеряется релевантность, при каком значении требование считается выполненным и на каком наборе разговоров пройдёт проверка перед подписанием акта. До получения трёх ответов формулировка остаётся кандидатом в требования.</p></div>
+</details>
+<details>
+<summary>Заказчик называет для сущности «Клиент» две системы записи. Почему онтологию нельзя считать готовой и что произойдёт, если оставить обе?</summary>
+<div class="ans"><p>Потому что неизвестно, какой ответ считать верным при расхождении, и инструмент чтения будет иногда возвращать неверное значение без признака ошибки. Одна система остаётся источником, вторая записывается как копия по явному решению заказчика; иначе расследование первого расхождения займёт неделю в пилоте вместо одного вопроса на discovery.</p></div>
+</details>
+<details>
+<summary>Пилот дал снижение средней длительности обработки на четырнадцать процентов. Какие три объяснения нужно исключить, прежде чем приписать эффект системе?</summary>
+<div class="ans"><p>Эффект наблюдения, сезонность состава обращений и отбор участников. Их влияние контролируется устройством измерения: случайным распределением операторов по группам, ступенчатым подключением очередей в случайном порядке с поправкой на календарное время при анализе и базовой линией, снятой до объявления о пилоте.</p></div>
+</details>
+</div>
+
+<div class="recap">
+<p class="eyebrow">Итог главы</p>
+<ul>
+<li>Формулировка становится проверяемым требованием, когда названы метрика, порог и набор данных; формулировка без них остаётся кандидатом и возвращается в разговор.</li>
+<li>Онтология строится прежде модели: каждая стрелка от системы записи к сущности является интеграцией, которую придётся сопровождать, и из неё же выводится набор инструментов.</li>
+<li>Ограничения различаются по виду и по тому, блокируют они кандидата или сужают его; аппаратные и регуляторные обсуждению не подлежат и определяют архитектуру.</li>
+<li>Пилот выбирается по ценности, осуществимости и малому радиусу поражения, а гипотеза ROI опирается на базовую линию, измеренную до того, как заказчик увидел прототип.</li>
+</ul>
+<p class="seealso"><b>См. также</b>
+<a href="#ch-1" data-secref="1">Глава 1: разговор, превращённый в артефакт</a>
+<a href="#ch-6" data-secref="6">Глава 6: инструменты, выведенные из онтологии</a>
+<a href="#ch-16" data-secref="16">Глава 16: бизнес-кейс по той же схеме</a>
+</p>
+</div>
+</section>
