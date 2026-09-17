@@ -1,4 +1,6 @@
 # Deploy the book to GitHub Pages (fde.ragworld.org).
+# The custom domain is a repository setting (Settings → Pages → Custom domain):
+# the workflow token is not allowed to change Pages settings.
 # Runs on pushes to main and when called from other workflows (the weekly sync).
 name: deploy
 
@@ -43,11 +45,3 @@ jobs:
 
       - id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Bind the fde.ragworld.org domain
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api -X PUT "repos/${{ github.repository }}/pages" \
-            -f cname=fde.ragworld.org || echo "the domain will bind once the DNS record exists"
-        continue-on-error: true

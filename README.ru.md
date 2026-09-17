@@ -79,9 +79,11 @@ python3 tools/check_drift.py   # сверка источников, ваканс
 ## Деплой
 
 GitHub Pages, деплой workflow-ом `.github/workflows/deploy.yml` на каждый
-пуш в `main`. Домен `fde.ragworld.org` привязывается тем же workflow-ом;
-на стороне DNS нужна одна запись CNAME `fde → laputski.github.io`.
-Принудительный HTTPS включается в Settings → Pages после выпуска сертификата.
+пуш в `main`. Сайт отвечает по адресу `laputski.github.io/book-fde`. Для
+домена `fde.ragworld.org` нужны запись CNAME `fde → laputski.github.io` на
+стороне DNS и то же имя в Settings → Pages → Custom domain (токен workflow
+не может менять настройки Pages). Там же включается принудительный HTTPS
+после выпуска сертификата.
 
 ## Самообновление
 

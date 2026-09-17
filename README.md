@@ -89,9 +89,11 @@ seven layer variables; annotations under a listing refer to lines through
 ## Deployment
 
 GitHub Pages, deployed by `.github/workflows/deploy.yml` on every push to
-`main`. The `fde.ragworld.org` domain is bound by the same workflow; on the
-DNS side a single CNAME record `fde → laputski.github.io` is required.
-Enforce HTTPS in Settings → Pages once the certificate is issued.
+`main`. The site answers at `laputski.github.io/book-fde`. The
+`fde.ragworld.org` domain needs a CNAME record `fde → laputski.github.io`
+on the DNS side and the same name in Settings → Pages → Custom domain (the
+workflow token cannot change Pages settings). Enforce HTTPS there once the
+certificate is issued.
 
 ## Self-updating
 
