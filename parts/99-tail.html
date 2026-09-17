@@ -409,6 +409,9 @@ const seen = new Set((store.get("done", "") || "").split(",").filter(Boolean));
 function markHere() {
   let best = null, bestTop = -Infinity;
   for (const el of heads) {
+    // A heading of a hidden detail level has no box and reports top 0, which
+    // would beat every heading already scrolled past; hidden headings are skipped.
+    if (el.getClientRects().length === 0) continue;
     const top = el.getBoundingClientRect().top;
     if (top <= 120 && top > bestTop) { bestTop = top; best = el; }
   }
